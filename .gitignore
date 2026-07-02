@@ -1,0 +1,21 @@
+# dependencies
+/node_modules
+
+# OS / editor
+.DS_Store
+.codex/
+
+# env files — keep only the placeholder examples
+.env
+.env.*
+!.env.example
+
+# typescript build info
+*.tsbuildinfo
+
+# stray phone photos at repo root (not source)
+/*.heic
+/*.jpeg
+/*.jpg
+
+# parking-system/ has its own .gitignore for its subtree (.next, node_modules, .env*, etc.)

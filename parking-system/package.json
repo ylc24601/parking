@@ -1,0 +1,45 @@
+{
+  "name": "parking-system",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:verify": "psql \"postgresql://postgres:postgres@127.0.0.1:54322/postgres\" -v ON_ERROR_STOP=1 -f supabase/tests/verify_schema.sql",
+    "job:friday": "tsx scripts/run-friday-allocation.ts",
+    "job:expire-offers": "tsx scripts/run-expire-offers.ts",
+    "job:release": "tsx scripts/run-release.ts",
+    "job:settle": "tsx scripts/run-settle.ts",
+    "job:auto-finalize": "tsx scripts/run-auto-finalize.ts",
+    "job:dispatch": "tsx scripts/run-dispatch-notifications.ts",
+    "staff:set-pin": "tsx scripts/set-staff-pin.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "next": "16.2.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "^4.1.9",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.9",
+    "supabase": "^2.107.0",
+    "tailwindcss": "^4",
+    "tsx": "^4.19.0",
+    "typescript": "^5",
+    "vitest": "^4.1.9"
+  }
+}
