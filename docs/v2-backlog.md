@@ -18,7 +18,7 @@
 - **v2 Auto-finalize fallback（內部 job：忘記結束時自動 settle + finalize）：✅ 已完成（2026-07-01）**，見 handoff §6.12。**營運兜底、非同工主流程**。
 - 會議回饋大多是**可直接做的微調**；唯一較大的是「移車聯絡」，要走教會 LINE OA、且卡在「會友未全加入 OA」。
 - **Phase 3 已結案（2026-07-01）**：~~① walk-in~~ → ~~② 穩定度~~ → ~~③ 紙本備援清單~~ → ~~④ 結束當週點名~~ → ~~⑤ 真 PIN session~~ → ~~⑥ weekly_events finalize~~ → ~~⑥.5 auto-finalize fallback~~ 全數完成。
-- **Phase 4 進行中（Notification & LINE Integration）**：**✅ Slice A — LINE notification dispatcher（2026-07-02）**，見 handoff §6.13（outbox → LINE 實際送出：原子 claim/lease 防並發重送 + 顯式 `NOTIFICATION_TRANSPORT` 模式 + 型別化失敗分類 + backoff）。**下一步：移車請求模板 + `POST /api/staff/move-car` + Staff 列動作 + OA 加入狀態 gating**（ops-blocked：OA 加入率 / 文案定稿 / per-user `line_id` 綁定；ops 軌並行推）。
+- **Phase 4 進行中（Notification & LINE Integration）**：**✅ Slice A — LINE notification dispatcher（2026-07-02）**（handoff §6.13）+ **✅ Slice B — Staff「請車主移車」move-car request（2026-07-03）**（handoff §6.14：`owner_notifiable` Staff-safe 投影 + 伺服器端車主解析 + enqueue → dispatcher 送出；Staff 列「請移車」動作）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；dispatcher 排程綁定（Vercel Cron）供近即時送達。**
 
 ---
 
@@ -62,9 +62,8 @@
 - **為什麼**：真正場景是**移車** —— 教會有些車位需請特定車主移車，同工要能通知到該車車主；地下室只有 WiFi，`tel:` 撥不通、個人 LINE 要加好友且露個資 → 只能走教會 OA 代發。
 - **範圍**：
   - ✅ **Slice A — LINE notification dispatcher（已完成 2026-07-02，見 handoff §6.13）**：outbox → LINE 實際送出。**原子 claim/lease（`FOR UPDATE SKIP LOCKED` + `processing` 狀態 + `locked_at/locked_by`）防並發重送**；**顯式 `NOTIFICATION_TRANSPORT=mock|line`（缺 token fail-fast、不靜默假送）**；型別化失敗分類（retryable/terminal/config-abort）+ backoff 重試 + `X-Line-Retry-Key` 冪等；`last_error` 只存 sanitized 碼。`job:dispatch` CLI + 內部 route（counts-only）。驗證：`npm test` 324 / `RUN_DB_TESTS=1` 357 / `db:verify` 17/17 + 實機 E2E（含並發恰一次 push、config-fail 不異動）。
-  - 🔜 新增「**移車請求**」通知模板（現有模板沒有這項）。**ops-blocked：文案定稿。**
-  - 🔜 Staff 列上新增「請車主移車」動作 → 系統用 OA 推播給該車主。
-  - 🔜 **OA 加入狀態處理**：未加入 OA 的車主 → 動作 disabled，標「此車主無法 LINE 通知」，現場改人工/廣播。（dispatcher 已對無 `line_id` 者標 `failed:no_line_id`；UI gating 待此 slice。）
+  - ✅ **Slice B — Staff「請車主移車」（已完成 2026-07-03，見 handoff §6.14）**：新「**移車請求**」模板（`move_car_request`，版本 A 暫定文案）+ `POST /api/staff/move-car`（伺服器端車主解析、Staff-safe DTO）+ Staff 列「請移車」動作。**OA 加入狀態 gating** 已做：`staff_checkin_view` 加 `owner_notifiable` 布林，未綁定/walk-in → 按鈕 disabled 標「此車主未綁定 LINE，無法通知」。enqueue → §6.13 dispatcher 送出。驗證：`npm test` 341 / `RUN_DB_TESTS=1` 378 / `db:verify` 18/18 + cookie/PIN 實機 E2E。
+  - **go-live 前置（ops）**：真實 OA channel token、移車文案定稿、per-member `line_id` 綁定流程；緊急/其他版本（B/C/D）文案。
 - **依賴（卡點）**：
   1. **OA 加入率**：停車會友未全部加入 → 需推動加入（報名要求 / 主日公告 / QR）。**ops 待辦**。
   2. **移車推播文案**：教會語氣，需有人擬。

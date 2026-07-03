@@ -1,8 +1,8 @@
 # 教會主日停車管理系統 — 開發交接文件（Current Handoff）
 
-> 最後更新：2026-07-02 ｜ **Phase 3 已結案；Phase 4 進行中（Slice A 完成）** ｜ 範圍：Phase 0、Phase 1、Phase 2 Slice 1–4、Phase 3 Slice 1 + v2 全部切片（walk-in / 穩定度 / 紙本備援 / 結束當週點名 / 真 PIN session / weekly_events finalize / auto-finalize fallback）+ **Phase 4 Slice A — LINE notification dispatcher（outbox → LINE 實際送出：原子 claim/lease + 顯式 transport 模式 + 型別化失敗分類）** 全數完成
+> 最後更新：2026-07-03 ｜ **Phase 3 已結案；Phase 4 進行中（Slice A + B 完成）** ｜ 範圍：Phase 0、Phase 1、Phase 2 Slice 1–4、Phase 3 Slice 1 + v2 全部切片（walk-in / 穩定度 / 紙本備援 / 結束當週點名 / 真 PIN session / weekly_events finalize / auto-finalize fallback）+ **Phase 4 Slice A — LINE notification dispatcher** + **Phase 4 Slice B — Staff「請車主移車」（move-car request：`owner_notifiable` 隱私投影 + 伺服器端車主解析 + enqueue → dispatcher 送出）** 全數完成
 >
-> **本階段：Phase 4 — Notification & LINE Integration**。**Slice A（notification dispatcher）已完成**（見 §6.13）。**下一步：移車請求模板 + `POST /api/staff/move-car` + Staff 列動作 + OA 加入狀態 gating**（ops-blocked：OA 加入率 / 文案定稿 / per-user `line_id` 綁定）。見 [v2-backlog.md](v2-backlog.md) §2 與 §9 Deferred。
+> **本階段：Phase 4 — Notification & LINE Integration**。**Slice A（dispatcher）+ Slice B（移車請求）已完成**（見 §6.13 / §6.14）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；以及 dispatcher 排程綁定（Vercel Cron）供近即時送達。** 見 [v2-backlog.md](v2-backlog.md) §2 與 §9 Deferred。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
 > 程式碼根目錄：`parking-system/`（`@/*` alias 指向該目錄）
 
@@ -27,18 +27,18 @@
 | Phase 3 v2 weekly_events finalize | settle 後標 `finalized`，finalized event 擋所有 Staff 寫入（check-in/walk-in/settle）、讀取仍可 | ✅ 完成 |
 | Phase 3 v2 Auto-finalize fallback | 內部 job（job-secret）掃過寬限期仍 `open` 的過去週，逐筆 settle + finalize；**營運兜底、非同工主流程** | ✅ 完成 |
 | **Phase 4 Slice A** | **LINE notification dispatcher**：outbox → LINE 實際送出（原子 claim/lease 防並發重送 + 顯式 `NOTIFICATION_TRANSPORT` 模式 + 型別化失敗分類 + backoff 重試）| ✅ 完成 |
+| **Phase 4 Slice B** | **Staff「請車主移車」**：`staff_checkin_view` 加 Staff-safe `owner_notifiable` 布林 + 伺服器端車主解析（不洩 `line_id`/`user_id`）+ enqueue `move_car_request` → dispatcher 送出；Staff 列上「請移車」動作 | ✅ 完成 |
 
 **主日完整生命週期（分配 → 取消/遞補 → 釋出/出席 → 結算）已全部落地，並補上 Staff 現場頁
 （點名/補點名/walk-in 登記/誤點復原/離線只讀/紙本備援清單/結束當週點名/真 PIN session/結束整週 finalize/auto-finalize fallback）。
 Phase 3（Staff 現場頁 + v2 全部切片）至此結案。** 下一階段為 **Phase 4 — Notification & LINE Integration**
 （LINE notification dispatcher + 移車通知、Member/Admin UI），見 [v2-backlog.md](v2-backlog.md) 與 §9 Deferred。
 
-**目前測試狀態（Phase 4 Slice A 本回合實跑）：** `tsc --noEmit` ✅、`eslint` ✅、`next build` ✅（`/api/internal/jobs/dispatch-notifications` 註冊為 ƒ dynamic）、
-`npm test`（不接 DB）**324 passed / 27 skipped**（+33：templates 7 / lineTransport 15 / dispatch service 11 / dispatch route 6，扣重疊）、
-`RUN_DB_TESTS=1 npm test`（接本機 Supabase）**357 passed**（+6：`notification-dispatch.db.test.ts`）、`npm run db:verify` **17/17 PASS**（新增 16 lease 欄+processing、17 claim RPC grant）。
-dispatcher 已完成**實機 E2E**：CLI `job:dispatch`（mock）seed pending → `{ scanned:1, sent:1 }`、DB 列 `sent`+`sent_at`+清 lock；
-`NOTIFICATION_TRANSPORT=line` 無 token → CLI exit 1 / HTTP **500**、**列不被異動**（仍 `pending`、無 lock）；
-HTTP route 無 secret **401** / `limit:0` **400** / 正常 **200 counts-only**（無 `line_id`/文案）。
+**目前測試狀態（Phase 4 Slice B 本回合實跑）：** `tsc --noEmit` ✅、`eslint` ✅、`next build` ✅（`/api/staff/move-car` 註冊為 ƒ dynamic）、
+`npm test`（不接 DB）**341 passed / 33 skipped**（+move-car：templates +2 / moveCarService 7 / moveCarRoute 9；並修 owner_notifiable 新欄位的既有 fixtures）、
+`RUN_DB_TESTS=1 npm test`（接本機 Supabase）**378 passed**（+4：`move-car.db.test.ts`）、`npm run db:verify` **18/18 PASS**（新增 18：view 有 `owner_notifiable`、無 `line_id`/`phone`）。
+move-car 已完成**cookie/PIN 實機 HTTP E2E**：未登入 **401** → PIN 登入 **200** → walk-in **422 `not_notifiable`** → 會友 **200 `{queued:true}`**（回應無 `line_id`/`user_id`/車牌）→
+DB `move_car_request` 列（`user_id`+車牌）→ 同分鐘再送 **200、仍 1 列**（冪等）→ `job:dispatch`（mock）**sent** → finalized event **409 `event_finalized`**。
 **本機 Supabase stack 目前已停止。**
 
 **架構分層（Slice 1–4 一致）：** thin route（`/api/internal/*`，job-secret 驗證）→ service（商業邏輯，呼叫 Phase 0 純函式）
@@ -441,6 +441,38 @@ read → 外部 LINE push → status-guarded update 的流程**在並發 dispatc
 
 ---
 
+## 6.14 Phase 4 Slice B — Staff「請車主移車」(move-car request)（本次完成）
+
+Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某台車的車主**來移車 —— 透過教會 LINE OA 代發，**不暴露任何人的電話/個人 LINE**。
+車主收到推播；同工看不到聯絡資訊。疊在 §6.13 dispatcher 之上：route **只 enqueue**，dispatcher 負責送出。
+以 Slice A 的 **mock transport** 完整 E2E；**go-live 前置（真實 OA token / 文案定稿 / per-member `line_id` 綁定）為 ops 軌，不擋開發**（本刀用 [oa-onboarding-and-move-car-copy.md](oa-onboarding-and-move-car-copy.md) §二 版本 A 草稿為暫定文案）。
+
+### 隱私縫（核心）
+`staff_checkin_view`（`0004`）**刻意不曝 `user_id`/`line_id`**（只有 name/plate/`is_priority`/status/attended_at）。因此：
+- **UI** 要能逐列知道車主是否可通知，**又不能看到 `line_id`** → view 加 Staff-safe 布林 **`owner_notifiable`**（同 `is_priority` 手法：只曝「可否推播」的布林，不曝事實本身）。
+- **Server** 自行從底表解析車主（`user_id`→ enqueue 目標；車牌 → 訊息）；這些**都不回傳給 client**。route 回應只有旗標，**絕不含 `line_id`/`user_id`/車牌/文案**。
+- walk-in 無 `user_id` → 天生不可通知；會友須有 `line_id` 才可通知。
+
+- **Migration `0013_staff_view_owner_notifiable.sql`**：`create or replace view staff_checkin_view … , (u.line_id is not null) as owner_notifiable`（新欄附在最後，replace 合法且保留 grant）。
+  `verify_schema.sql` 加斷言 18：view **有** `owner_notifiable`、**無** `line_id`/`phone_number`。**無 outbox schema 變更**；`move_car_request` 只是新 `template_key` 字串（非 enum）。
+- **Types**：`StaffCheckInRow`/client `StaffRow` 加 `owner_notifiable: boolean`；`NotificationTemplate` 加 `'move_car_request'`。`staffCache` `SCHEMA_VERSION` 1→2（列形變 → 舊快取視為過期）。
+- **Template `move_car_request`**（`templates.ts`）：版本 A 暫定文案，只讀 `payload.license_plate`。
+- **Repository `getMoveCarTarget(reservationId)`**：**一次查詢** join `reservations→users→vehicles`（**LEFT JOIN + `coalesce(v.license_plate, r.walk_in_license_plate)`**，故 walk-in 仍解析為 `not_notifiable` 而非 `not_found`），投影 `(u.line_id is not null) as notifiable`。**raw `line_id` 不離開 repo**。回傳 `{ weekly_event_id, user_id, status, license_plate, notifiable }`。walk-in insert 的 Staff-safe 映射 `owner_notifiable=false`。
+- **Service `moveCarService.requestMoveCar`**：`getMoveCarTarget` → wrong_event guard → **actionable-status gate（僅 `STAFF_CHECKIN_STATUSES`；`pending`/`waiting`/`cancelled_*`/`no_show` → `not_notifiable`、不 enqueue）** → 無 `user_id`（walk-in）/ 不 notifiable → `not_notifiable` → 否則 `enqueueOutbox` 一列 `move_car_request`。
+  **dedupe_key = `move_car:{rid}:{分鐘 ISO}`**：同一分鐘連點合併為一列，**兩次都回 `{ queued:true }`（dedupe 收合＝冪等成功，非失敗）**；隔分鐘再送則新列。
+- **Route `POST /api/staff/move-car`**（薄包裝，鏡射 checkin route）：`getStaffSession` → `requireWritableEvent`（finalized → 409）→ body `{ reservationId }`（缺 → 400）→ `requestMoveCar`。
+  `queued` → 200 `{ ok:true, queued:true }`；`not_notifiable` → **422**；`wrong_event` → 409；`not_found` → 404；else 500。**Staff-safe DTO：只有旗標。**
+- **UI（`StaffCheckIn.tsx`）**：每列加精簡「請移車」次動作（≥44px），`!owner_notifiable`（walk-in/未綁定）或 finalized 時 **disabled** 並標「此車主未綁定 LINE，無法通知」；點擊 → 二次確認 sheet（「透過教會 LINE 通知 {車牌} 的車主移車？」）+ **離線守則** + **送出前 `commitPending()` flush 未送出的點名（失敗則中止）**。
+  文案（enqueue-only，不暗示即時送達）：`queued`→「已建立移車通知，系統將透過 LINE 發送」；422→「此車主未綁定 LINE，無法通知」；409 finalized → `applyFinalized409` 轉唯讀。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`/`eslint`/`next build` ✅（`/api/staff/move-car` ƒ dynamic）。測試：`npm test` **341 / 33 skipped**（templates +2 / moveCarService 7 / moveCarRoute 9 + 修 owner_notifiable fixtures）；
+  `RUN_DB_TESTS=1` **378 passed**（新增 `move-car.db.test.ts` 4：`owner_notifiable` 投影 / 會友 enqueue→dispatch sent / walk-in not_notifiable / 無 line_id 會友 not_notifiable，皆用自建 user 避免 reservation 衝突）；`db:verify` **18/18**。
+- **實機 cookie/PIN HTTP E2E**：未登入 **401** → PIN 登入 **200** → walk-in **422** → 會友 **200 `{queued:true}`**（回應無 `line_id`/`user_id`/車牌）→ DB `move_car_request` 列正確 → 同分鐘再送 **200、仍 1 列**（冪等）→ `job:dispatch`（mock）**sent** → finalized event **409 `event_finalized`**。
+- **仍 deferred（go-live 前置，ops 軌）**：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；緊急/其他版本（B/C/D）；dispatcher 排程綁定（Vercel Cron）供近即時；限定「車已在場」狀態（暫交同工判斷）。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
@@ -462,15 +494,15 @@ read → 外部 LINE push → status-guarded update 的流程**在並發 dispatc
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `npm test`（不接 DB） | ✅ **324 passed / 27 skipped**（本回合實跑；`*.db.test.ts` 被 gate 跳過） |
-| `npm run db:reset` | ✅ 套用 `0001–0012` + seed |
-| `npm run db:verify` | ✅ **17/17** schema 斷言 PASS |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **357 passed** |
+| `npm test`（不接 DB） | ✅ **341 passed / 33 skipped**（本回合實跑；`*.db.test.ts` 被 gate 跳過） |
+| `npm run db:reset` | ✅ 套用 `0001–0013` + seed |
+| `npm run db:verify` | ✅ **18/18** schema 斷言 PASS |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **378 passed** |
 
-> 上表全為 **Phase 4 Slice A（notification dispatcher）本回合實測**（含 `db:reset 0001–0012`、`db:verify` 17/17、`RUN_DB_TESTS=1` 357）。下方 Slice 4 專屬涵蓋為當時紀錄。
+> 上表全為 **Phase 4 Slice B（move-car）本回合實測**（含 `db:reset 0001–0013`、`db:verify` 18/18、`RUN_DB_TESTS=1` 378）。下方 Slice 4 專屬涵蓋為當時紀錄。
 
 **測試檔：** 純函式 `tests/unit/allocation/*`（含 `scenario.test.ts` 全週情境）；服務 `tests/unit/server/*`（mock repo）；
-整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。
+整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch,move-car}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。
 
 **Slice 4 整合測試涵蓋：** 結算前 release sweep 補抓 approved-逾時列、`released_late → no_show`、P3 `penalty_score+1`、
 P2 `consecutive_no_show→4` 開 alert、**結算不寫 outbox**、冪等重跑（settled 0、不重複加分/開 alert）、**跨 event 的 open-alert
@@ -506,8 +538,9 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 | Staff service worker / 冷啟動離線（PWA） | 後續（P2.5） | 真正離線冷啟需 SW；紙本備援（§6.8）為現階段務實 fallback |
 | 成員 / Admin 對外 API + UI（P2-first rollout） | 後續切片 | 第一版優先 P2 流程；P1 UI / P3 申請 / P3 penalty admin 以 feature flag / deferred 預留 |
 | ~~LINE notification dispatcher（outbox → LINE 實際送出）~~ | ✅ **完成（Phase 4 Slice A，§6.13）** | 原子 claim/lease 防並發重送 + 顯式 `NOTIFICATION_TRANSPORT` 模式（缺 token fail-fast、不靜默假送）+ 型別化失敗分類 + backoff 重試；`job:dispatch` CLI / 內部 route |
-| **移車請求模板 + `POST /api/staff/move-car` + Staff 列動作 + OA 加入狀態 gating** | **Phase 4 下一 slice** | ops-blocked：OA 加入率 / 文案定稿 / per-user `line_id` 綁定；未加入者列上 disabled「此車主未綁定 LINE，無法通知」 |
-| dispatcher 排程綁定（Vercel Cron）/ `dryRun` 預覽 / `failed` dead-letter view / per-user LINE 綁定流程 / LIFF / LINE webhook（含「正在路上」回覆入口） | 後續 | §6.13 提供 route + CLI，實際排程掛載延後 |
+| ~~移車請求模板 + `POST /api/staff/move-car` + Staff 列動作 + OA 加入狀態 gating~~ | ✅ **完成（Phase 4 Slice B，§6.14）** | `owner_notifiable` Staff-safe 投影 + 伺服器端車主解析（不洩 `line_id`/`user_id`）；enqueue → dispatcher 送出；列上「請移車」disabled/labeled |
+| **移車 go-live 前置**：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程 | **ops 軌** | §6.14 已用 mock transport 全綠；上線需真實憑證與綁定；緊急/其他版本（B/C/D）文案另備 |
+| dispatcher 排程綁定（Vercel Cron，供移車近即時送達）/ `dryRun` 預覽 / `failed` dead-letter view / per-user LINE 綁定流程 / LIFF / LINE webhook（含「正在路上」回覆入口） | 後續 | §6.13 提供 route + CLI，實際排程掛載延後；移車目前靠 `job:dispatch` 手動排空 |
 | **牧養關懷 alert 處理（resolution）UI** | Admin 切片 | `pastoral_care_alerts` 已可開立；`resolved_at/resolved_by/note` 欄位已就緒但暫不寫入 |
 | 其餘兩種 §7 牧養觸發（短期行動不便到期 / 幼兒資格到期）每日排程 | 後續 | 目前僅實作「連續未到」觸發 |
 | **P1 全職同工 `weekly_staff_allocations` no-show 處理** | 後續 | 與 reservation 結算分離；Slice 4 只結算 reservation（P2/P3） |
@@ -519,7 +552,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 ## 10. 本機開發備忘（重點，詳見 development_plan §12）
 
-- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0012` + seed）/ `db:verify` / `db:stop`。
+- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0013` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
 - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。

@@ -49,6 +49,14 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     markOutboxSent: vi.fn(async () => {}),
     markOutboxRetry: vi.fn(async () => {}),
     markOutboxFailed: vi.fn(async () => {}),
+    // Phase 4 Slice B — move-car
+    getMoveCarTarget: vi.fn(async () => ({
+      weekly_event_id: 'event-1',
+      user_id: 'u1',
+      status: 'attended' as const,
+      license_plate: 'ABC-1234',
+      notifiable: true,
+    })),
     // Slice 4
     getReleasedLateForSettlement: vi.fn(async () => []),
     getPenaltyCountersForUsers: vi.fn(async () => []),

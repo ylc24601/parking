@@ -35,6 +35,7 @@ function toStaffRow(r: StaffRow & { weekly_event_id?: string }): StaffRow {
     is_priority: r.is_priority,
     status: r.status,
     attended_at: r.attended_at,
+    owner_notifiable: r.owner_notifiable ?? false,
   }
 }
 
@@ -73,6 +74,8 @@ export default function StaffCheckIn({
   const [walkInBusy, setWalkInBusy] = useState(false)
   const [settleOpen, setSettleOpen] = useState(false)
   const [settleBusy, setSettleBusy] = useState(false)
+  const [moveCarRow, setMoveCarRow] = useState<StaffRow | null>(null)
+  const [moveCarBusy, setMoveCarBusy] = useState(false)
 
   // Undo-window state lives in refs so the setTimeout never reads stale state.
   const pendingRef = useRef<{
@@ -421,6 +424,64 @@ export default function StaffCheckIn({
     }
   }
 
+  // 請車主移車: enqueue a LINE OA push to the car's owner. Only for a member row with a
+  // bound line_id (owner_notifiable) — the button is disabled otherwise. The owner is
+  // resolved server-side; nothing here or in the response reveals contact info.
+  function openMoveCar(r: StaffRow) {
+    if (settleBusy || finalized || moveCarBusy) return
+    if (!r.owner_notifiable) return
+    setMoveCarRow(r)
+  }
+
+  async function submitMoveCar() {
+    const r = moveCarRow
+    if (!r || moveCarBusy || settleBusy || finalized) return
+    if (isOffline()) {
+      setToast('目前離線，請恢復網路後再操作')
+      return
+    }
+    // Flush an un-sent undo check-in first (same guard as settle); abort if it can't commit.
+    const flushed = await commitPending()
+    if (!flushed) {
+      setToast('尚有點名未送出，請重試')
+      return
+    }
+    setMoveCarBusy(true)
+    try {
+      const res = await fetch('/api/staff/move-car', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reservationId: r.reservation_id }),
+      })
+      if (res.status === 401) {
+        router.refresh()
+        return
+      }
+      if (await applyFinalized409(res)) {
+        setMoveCarRow(null)
+        return
+      }
+      if (res.status === 422) {
+        setToast('此車主未綁定 LINE，無法通知')
+        setMoveCarRow(null)
+        return
+      }
+      if (!res.ok) {
+        // Server/HTTP error is not the same as offline — allow a retry from the open sheet.
+        setToast('移車通知失敗，請重試')
+        return
+      }
+      setMoveCarRow(null)
+      // Enqueue-only: don't imply instant delivery (dispatcher sends on its schedule).
+      setToast('已建立移車通知，系統將透過 LINE 發送')
+    } catch {
+      setOffline(true)
+      setToast('移車通知失敗，請重試')
+    } finally {
+      setMoveCarBusy(false)
+    }
+  }
+
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-slate-950 text-slate-100">
       {/* Header */}
@@ -547,18 +608,30 @@ export default function StaffCheckIn({
                     </p>
                   </div>
 
-                  {!done && (
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    {!done && (
+                      <button
+                        type="button"
+                        onClick={() => tapCheckIn(r)}
+                        disabled={finalized}
+                        className={`h-12 rounded-xl px-5 text-base font-medium disabled:opacity-40 ${
+                          released ? 'bg-amber-600 text-white active:bg-amber-700' : 'bg-sky-600 text-white active:bg-sky-700'
+                        }`}
+                      >
+                        {released ? '補點名' : '點名'}
+                      </button>
+                    )}
+                    {/* 請車主移車 — OA push. Disabled for walk-ins / owners without a LINE binding. */}
                     <button
                       type="button"
-                      onClick={() => tapCheckIn(r)}
-                      disabled={finalized}
-                      className={`h-12 shrink-0 rounded-xl px-5 text-base font-medium disabled:opacity-40 ${
-                        released ? 'bg-amber-600 text-white active:bg-amber-700' : 'bg-sky-600 text-white active:bg-sky-700'
-                      }`}
+                      onClick={() => openMoveCar(r)}
+                      disabled={finalized || settleBusy || !r.owner_notifiable}
+                      title={r.owner_notifiable ? undefined : '此車主未綁定 LINE，無法通知'}
+                      className="h-11 rounded-lg border border-violet-700 px-3 text-sm font-medium text-violet-200 active:bg-violet-900/40 disabled:opacity-30"
                     >
-                      {released ? '補點名' : '點名'}
+                      請移車
                     </button>
-                  )}
+                  </div>
                 </li>
               )
             })}
@@ -676,6 +749,44 @@ export default function StaffCheckIn({
                 className="h-12 flex-1 rounded-xl bg-rose-600 text-base font-medium text-white active:bg-rose-700 disabled:opacity-50"
               >
                 {settleBusy ? '結算中…' : '確認結束'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {moveCarRow && (
+        <div className="fixed inset-0 z-20 flex flex-col justify-end bg-black/50">
+          <button
+            type="button"
+            aria-label="關閉"
+            className="flex-1"
+            onClick={() => !moveCarBusy && setMoveCarRow(null)}
+          />
+          <div className="mx-auto w-full max-w-md rounded-t-2xl border-t border-slate-700 bg-slate-900 px-4 pb-6 pt-4">
+            <h2 className="text-lg font-semibold">請車主移車</h2>
+            <p className="mt-3 text-sm text-slate-300">
+              透過教會 LINE 通知車牌 <span className="font-mono tracking-wide">{rowPlate(moveCarRow)}</span> 的車主移車？
+            </p>
+            <p className="mt-2 text-xs text-slate-500">
+              通知由教會官方帳號代發，不會顯示您的個人聯絡方式。
+            </p>
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setMoveCarRow(null)}
+                disabled={moveCarBusy}
+                className="h-12 flex-1 rounded-xl bg-slate-800 text-base text-slate-200 active:bg-slate-700 disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitMoveCar()}
+                disabled={moveCarBusy}
+                className="h-12 flex-1 rounded-xl bg-violet-600 text-base font-medium text-white active:bg-violet-700 disabled:opacity-50"
+              >
+                {moveCarBusy ? '傳送中…' : '送出通知'}
               </button>
             </div>
           </div>

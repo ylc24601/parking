@@ -50,6 +50,14 @@ const RENDERERS: Record<NotificationTemplate, (p: Payload) => string> = {
     return `【教會停車】您好 🙏 提醒您 ${label} 的車位保留至 10:45。若您正在路上，請回覆「正在路上」，我們會為您保留至 10:55，謝謝您。`
   },
 
+  // Staff-initiated: ask a specific car's owner to move it (OA push, no personal contact shown).
+  // Provisional version-A copy (docs/oa-onboarding-and-move-car-copy.md §二 A); final wording is
+  // church sign-off. Reads only the plate persisted on the row.
+  move_car_request: p => {
+    const plate = typeof p.license_plate === 'string' && p.license_plate ? p.license_plate : '（車牌未提供）'
+    return `【教會停車】您好 🙏 您停在地下室的車（車牌 ${plate}）需要麻煩您移車，請您方便時盡快到地下室處理，現場有停車同工協助，謝謝您的配合！`
+  },
+
   // Reserved template keys not currently enqueued; render a safe generic line rather than throw.
   staff_reminder: () => '【教會停車】同工提醒：請確認本週現場點名與車位狀況，謝謝您的服事。',
   admin_finalize_reminder: () => '【教會停車】提醒：本週點名尚未結束，請記得於系統執行「結束當週點名」，謝謝。',

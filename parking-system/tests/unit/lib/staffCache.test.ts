@@ -20,7 +20,7 @@ class MemStorage {
 const KEY = 'staff_checkin_cache'
 const event = { id: 'e1', sunday_date: '2026-06-21' }
 const rows = [
-  { reservation_id: 'r1', display_name: '會友一', license_plate: 'ABC-1234', walk_in_name: null, walk_in_license_plate: null, is_priority: true, status: 'approved', attended_at: null },
+  { reservation_id: 'r1', display_name: '會友一', license_plate: 'ABC-1234', walk_in_name: null, walk_in_license_plate: null, is_priority: true, status: 'approved', attended_at: null, owner_notifiable: true },
 ]
 
 beforeEach(() => {
@@ -35,7 +35,7 @@ describe('staffCache save/load round-trip', () => {
     saveStaffCache(event, rows)
     const c = loadStaffCache()
     expect(c).not.toBeNull()
-    expect(c!.schemaVersion).toBe(1)
+    expect(c!.schemaVersion).toBe(2)
     expect(typeof c!.cachedAt).toBe('string')
     expect(c!.event).toEqual(event)
     expect(c!.rows).toEqual(rows)
@@ -71,7 +71,7 @@ describe('staffCache save/load round-trip', () => {
 describe('isCacheCurrent', () => {
   const now = new Date()
   const base = (): StaffCache => ({
-    schemaVersion: 1,
+    schemaVersion: 2,
     cachedAt: now.toISOString(),
     event: { id: 'e1', sunday_date: currentSundayISO(now) },
     rows,
@@ -92,7 +92,7 @@ describe('isCacheCurrent', () => {
   })
 
   it('false on schemaVersion mismatch', () => {
-    expect(isCacheCurrent({ ...base(), schemaVersion: 2 }, now)).toBe(false)
+    expect(isCacheCurrent({ ...base(), schemaVersion: 999 }, now)).toBe(false)
   })
 })
 

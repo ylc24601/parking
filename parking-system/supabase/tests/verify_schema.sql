@@ -203,6 +203,19 @@ begin
   raise notice 'PASS: claim_notification_outbox present with service_role execute grant';
 end $$;
 
+-- ── 18. staff_checkin_view exposes owner_notifiable, still hides line_id/phone (Phase 4 B) ─
+do $$
+declare leaked int;
+begin
+  perform 1 from information_schema.columns
+    where table_name = 'staff_checkin_view' and column_name = 'owner_notifiable';
+  if not found then raise exception 'FAIL: staff_checkin_view missing owner_notifiable'; end if;
+  select count(*) into leaked from information_schema.columns
+    where table_name = 'staff_checkin_view' and column_name in ('line_id', 'phone_number');
+  if leaked <> 0 then raise exception 'FAIL: staff_checkin_view leaks % contact column(s)', leaked; end if;
+  raise notice 'PASS: staff_checkin_view exposes owner_notifiable, hides line_id/phone';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

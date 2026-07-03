@@ -145,6 +145,17 @@ export interface ClaimedOutboxRow {
   dedupe_key: string
 }
 
+// Phase 4 Slice B — server-side resolution for a move-car request. Projects `notifiable`
+// (member has a line_id) rather than the line_id itself, and coalesces the plate so a walk-in
+// still resolves. Raw line_id never leaves the repo; none of this is returned to Staff.
+export interface MoveCarTarget {
+  weekly_event_id: string
+  user_id: string | null            // null for a walk-in → not notifiable
+  status: ReservationStatus
+  license_plate: string | null
+  notifiable: boolean               // user_id present AND that user has a bound line_id
+}
+
 const parseDate = (v: string | null | undefined): Date | null => (v ? new Date(v) : null)
 
 // Reservation statuses surfaced on the Staff on-site check-in list (Phase 3).
@@ -196,6 +207,7 @@ function rowToStaffCheckIn(row: Record<string, unknown>): StaffCheckInRow {
     is_priority: row.is_priority as boolean,
     status: row.status as ReservationStatus,
     attended_at: parseDate(row.attended_at as string | null),
+    owner_notifiable: (row.owner_notifiable as boolean | null) ?? false,
   }
 }
 
@@ -213,6 +225,7 @@ function rawReservationToStaffCheckIn(row: Record<string, unknown>): StaffCheckI
     is_priority: (row.effective_priority as number) <= 2,
     status: row.status as ReservationStatus,
     attended_at: parseDate(row.attended_at as string | null),
+    owner_notifiable: false, // a walk-in has no member owner → never LINE-notifiable
   }
 }
 
@@ -323,6 +336,9 @@ export interface ParkingRepository {
   markOutboxSent(id: string, worker: string, sentAtIso: string): Promise<void>
   markOutboxRetry(id: string, worker: string, nextRetryAtIso: string, retryCount: number, lastErrorCode: string): Promise<void>
   markOutboxFailed(id: string, worker: string, lastErrorCode: string): Promise<void>
+  // Phase 4 Slice B — resolve a move-car target (owner user_id + plate + notifiability).
+  // Returns null only when the reservation id doesn't exist (a walk-in still resolves).
+  getMoveCarTarget(reservationId: string): Promise<MoveCarTarget | null>
   // Slice 4
   getReleasedLateForSettlement(eventId: string): Promise<Reservation[]>
   getPenaltyCountersForUsers(userIds: string[]): Promise<Array<{ user_id: string } & PenaltyCounters>>
@@ -715,6 +731,31 @@ export function createParkingRepository(
         .eq('status', 'processing')
         .eq('locked_by', worker)
       if (error) throw new Error(`markOutboxFailed failed: ${error.message}`)
+    },
+
+    async getMoveCarTarget(reservationId) {
+      // Embed the owner (users) and vehicle via their FKs. line_id is read only to derive the
+      // `notifiable` boolean here and is then discarded — it never leaves this function.
+      const { data, error } = await client
+        .from('reservations')
+        .select('weekly_event_id, user_id, status, walk_in_license_plate, users(line_id), vehicles(license_plate)')
+        .eq('id', reservationId)
+        .maybeSingle()
+      if (error) throw new Error(`getMoveCarTarget failed: ${error.message}`)
+      if (!data) return null
+      const row = data as Record<string, unknown>
+      const u = row.users as { line_id: string | null } | Array<{ line_id: string | null }> | null
+      const v = row.vehicles as { license_plate: string | null } | Array<{ license_plate: string | null }> | null
+      const owner = Array.isArray(u) ? u[0] : u
+      const vehicle = Array.isArray(v) ? v[0] : v
+      const userId = (row.user_id as string | null) ?? null
+      return {
+        weekly_event_id: row.weekly_event_id as string,
+        user_id: userId,
+        status: row.status as ReservationStatus,
+        license_plate: (vehicle?.license_plate ?? (row.walk_in_license_plate as string | null)) ?? null,
+        notifiable: !!(userId && owner?.line_id),
+      }
     },
 
     // ── Slice 4 ──────────────────────────────────────────────────────────────────
