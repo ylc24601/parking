@@ -100,10 +100,22 @@ export function httpLineTransport(token: string): LineTransport {
   }
 }
 
+// Production runtime signal (Phase 4 Slice C). VERCEL_ENV is authoritative on Vercel;
+// otherwise fall back to NODE_ENV. Preview/dev deploys are NOT production.
+export function isProductionRuntime(): boolean {
+  const vercelEnv = process.env.VERCEL_ENV
+  if (vercelEnv) return vercelEnv === 'production'
+  return process.env.NODE_ENV === 'production'
+}
+
 // ── Explicit mode selection (no silent fallback) ─────────────────────────────────
 export function getLineTransport(): LineTransport {
   const mode = process.env.NOTIFICATION_TRANSPORT
-  if (mode === 'mock') return mockLineTransport
+  if (mode === 'mock') {
+    // A production deploy must never silently no-op real notifications.
+    if (isProductionRuntime()) throw new TransportConfigError('mock_in_production')
+    return mockLineTransport
+  }
   if (mode === 'line') {
     const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
     if (!token || token.trim() === '') throw new TransportConfigError('missing_line_token')

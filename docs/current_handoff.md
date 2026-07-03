@@ -1,8 +1,8 @@
 # 教會主日停車管理系統 — 開發交接文件（Current Handoff）
 
-> 最後更新：2026-07-03 ｜ **Phase 3 已結案；Phase 4 進行中（Slice A + B 完成）** ｜ 範圍：Phase 0、Phase 1、Phase 2 Slice 1–4、Phase 3 Slice 1 + v2 全部切片（walk-in / 穩定度 / 紙本備援 / 結束當週點名 / 真 PIN session / weekly_events finalize / auto-finalize fallback）+ **Phase 4 Slice A — LINE notification dispatcher** + **Phase 4 Slice B — Staff「請車主移車」（move-car request：`owner_notifiable` 隱私投影 + 伺服器端車主解析 + enqueue → dispatcher 送出）** 全數完成
+> 最後更新：2026-07-04 ｜ **Phase 3 已結案；Phase 4 進行中（Slice A + B + C 完成）** ｜ 範圍：Phase 0、Phase 1、Phase 2 Slice 1–4、Phase 3 Slice 1 + v2 全部切片（walk-in / 穩定度 / 紙本備援 / 結束當週點名 / 真 PIN session / weekly_events finalize / auto-finalize fallback）+ **Phase 4 Slice A — LINE notification dispatcher** + **Phase 4 Slice B — Staff「請車主移車」** + **Phase 4 Slice C — dispatcher ops hardening（排程綁定 + dryRun 預覽 + outbox 健康度可視 + production transport guard）** 全數完成
 >
-> **本階段：Phase 4 — Notification & LINE Integration**。**Slice A（dispatcher）+ Slice B（移車請求）已完成**（見 §6.13 / §6.14）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；以及 dispatcher 排程綁定（Vercel Cron）供近即時送達。** 見 [v2-backlog.md](v2-backlog.md) §2 與 §9 Deferred。
+> **本階段：Phase 4 — Notification & LINE Integration**。**Slice A（dispatcher）+ B（移車請求）+ C（ops hardening）已完成**（見 §6.13 / §6.14 / §6.15）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；正式排程掛載（Vercel Pro cron 或外部排程，見 [dispatcher-ops.md](dispatcher-ops.md)）。** 見 [v2-backlog.md](v2-backlog.md) §2 與 §9 Deferred。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
 > 程式碼根目錄：`parking-system/`（`@/*` alias 指向該目錄）
 
@@ -28,17 +28,19 @@
 | Phase 3 v2 Auto-finalize fallback | 內部 job（job-secret）掃過寬限期仍 `open` 的過去週，逐筆 settle + finalize；**營運兜底、非同工主流程** | ✅ 完成 |
 | **Phase 4 Slice A** | **LINE notification dispatcher**：outbox → LINE 實際送出（原子 claim/lease 防並發重送 + 顯式 `NOTIFICATION_TRANSPORT` 模式 + 型別化失敗分類 + backoff 重試）| ✅ 完成 |
 | **Phase 4 Slice B** | **Staff「請車主移車」**：`staff_checkin_view` 加 Staff-safe `owner_notifiable` 布林 + 伺服器端車主解析（不洩 `line_id`/`user_id`）+ enqueue `move_car_request` → dispatcher 送出；Staff 列上「請移車」動作 | ✅ 完成 |
+| **Phase 4 Slice C** | **Dispatcher ops hardening**：dispatch route 加 GET（Vercel Cron / 外部排程）+ `cronOrJobSecretValid`（x-job-secret 或 `Bearer $CRON_SECRET`）+ `dryRun` 無異動預覽 + `outbox_health` RPC/route/CLI 健康度可視（operation-safe）+ production 拒 `mock`（`mock_in_production`）| ✅ 完成 |
 
 **主日完整生命週期（分配 → 取消/遞補 → 釋出/出席 → 結算）已全部落地，並補上 Staff 現場頁
 （點名/補點名/walk-in 登記/誤點復原/離線只讀/紙本備援清單/結束當週點名/真 PIN session/結束整週 finalize/auto-finalize fallback）。
 Phase 3（Staff 現場頁 + v2 全部切片）至此結案。** 下一階段為 **Phase 4 — Notification & LINE Integration**
 （LINE notification dispatcher + 移車通知、Member/Admin UI），見 [v2-backlog.md](v2-backlog.md) 與 §9 Deferred。
 
-**目前測試狀態（Phase 4 Slice B 本回合實跑）：** `tsc --noEmit` ✅、`eslint` ✅、`next build` ✅（`/api/staff/move-car` 註冊為 ƒ dynamic）、
-`npm test`（不接 DB）**341 passed / 33 skipped**（+move-car：templates +2 / moveCarService 7 / moveCarRoute 9；並修 owner_notifiable 新欄位的既有 fixtures）、
-`RUN_DB_TESTS=1 npm test`（接本機 Supabase）**378 passed**（+4：`move-car.db.test.ts`）、`npm run db:verify` **18/18 PASS**（新增 18：view 有 `owner_notifiable`、無 `line_id`/`phone`）。
-move-car 已完成**cookie/PIN 實機 HTTP E2E**：未登入 **401** → PIN 登入 **200** → walk-in **422 `not_notifiable`** → 會友 **200 `{queued:true}`**（回應無 `line_id`/`user_id`/車牌）→
-DB `move_car_request` 列（`user_id`+車牌）→ 同分鐘再送 **200、仍 1 列**（冪等）→ `job:dispatch`（mock）**sent** → finalized event **409 `event_finalized`**。
+**目前測試狀態（Phase 4 Slice C 本回合實跑）：** `tsc --noEmit` ✅、`eslint` ✅、`next build` ✅（`/api/internal/jobs/dispatch-notifications` GET+POST、`/api/internal/jobs/outbox-status` ƒ dynamic）、
+`npm test`（不接 DB）**365 passed / 37 skipped**（+ jobAuth / lineTransport prod-guard / previewDispatch / dispatch route GET+dryRun / outbox-status route / outboxHealthService）、
+`RUN_DB_TESTS=1 npm test`（接本機 Supabase）**405 passed**（+3：`outbox-health.db.test.ts`；Slice A 並發「一列恰一次 push」測試維持綠）、`npm run db:verify` **19/19 PASS**（新增 19：`outbox_health` 存在 + service_role execute）。
+Slice C 已完成**實機 E2E**：`?dryRun=1`（x-job-secret）→ 預覽計數、**列仍 `pending`**；`Authorization: Bearer $CRON_SECRET` → **200**（cron auth）；無/錯 secret → **401**；
+真跑 GET（無 dryRun）→ **sent**；`GET /outbox-status` → 健康度計數（sensitive scan 0）；`VERCEL_ENV=production` + `mock` → dispatch **500 `mock_in_production`**、列未異動（dryRun 仍 200）。
+排程/預覽/健康度 runbook 見 [dispatcher-ops.md](dispatcher-ops.md)。
 **本機 Supabase stack 目前已停止。**
 
 **架構分層（Slice 1–4 一致）：** thin route（`/api/internal/*`，job-secret 驗證）→ service（商業邏輯，呼叫 Phase 0 純函式）
@@ -469,7 +471,31 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 - 靜態：`tsc`/`eslint`/`next build` ✅（`/api/staff/move-car` ƒ dynamic）。測試：`npm test` **341 / 33 skipped**（templates +2 / moveCarService 7 / moveCarRoute 9 + 修 owner_notifiable fixtures）；
   `RUN_DB_TESTS=1` **378 passed**（新增 `move-car.db.test.ts` 4：`owner_notifiable` 投影 / 會友 enqueue→dispatch sent / walk-in not_notifiable / 無 line_id 會友 not_notifiable，皆用自建 user 避免 reservation 衝突）；`db:verify` **18/18**。
 - **實機 cookie/PIN HTTP E2E**：未登入 **401** → PIN 登入 **200** → walk-in **422** → 會友 **200 `{queued:true}`**（回應無 `line_id`/`user_id`/車牌）→ DB `move_car_request` 列正確 → 同分鐘再送 **200、仍 1 列**（冪等）→ `job:dispatch`（mock）**sent** → finalized event **409 `event_finalized`**。
-- **仍 deferred（go-live 前置，ops 軌）**：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；緊急/其他版本（B/C/D）；dispatcher 排程綁定（Vercel Cron）供近即時；限定「車已在場」狀態（暫交同工判斷）。
+- **仍 deferred（go-live 前置，ops 軌）**：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；緊急/其他版本（B/C/D）；限定「車已在場」狀態（暫交同工判斷）。（dispatcher 排程綁定已於 §6.15 提供，正式掛載仍待部署。）
+
+---
+
+## 6.15 Phase 4 Slice C — Dispatcher ops hardening（本次完成）
+
+讓 §6.13 dispatcher **可正式營運、供移車近即時送達**：排程綁定、無異動預覽、outbox 健康度可視、production transport guard。
+**純後端/ops**：不動 Staff UI、不做 LINE webhook / LIFF / Admin UI / 新移車版本。所有新回應 **operation-safe**（計數 / 通知型別名 / sanitized 錯誤碼 / 時間戳；絕不含 `line_id`/`user_id`/電話/車牌/訊息本文/違規/牧養）。
+排程/預覽/健康度操作見 [dispatcher-ops.md](dispatcher-ops.md)。
+
+- **排程綁定（雙軌）**：`app/api/internal/jobs/dispatch-notifications/route.ts` 加 **GET** handler（Vercel Cron 與多數外部排程用 GET）、與既有 POST 共用 `handle()`；兩者以
+  **`cronOrJobSecretValid`（`server/http/jobAuth.ts`）** 驗證 —— 接受 `x-job-secret==JOB_TRIGGER_SECRET` **或** `Authorization: Bearer==CRON_SECRET`（Vercel Cron 自動帶）。
+  **fail-closed**：secret 未設/空字串一律不符；`Authorization` 僅認 `Bearer <token>` scheme。**不 commit `*/2` 的 `vercel.json`**（Hobby 部署會失敗）→ 改附 `vercel.pro.example.json` + runbook；route 兩種 auth 皆支援，之後啟用只是設定。
+- **`dryRun` 無異動預覽**：`previewDispatch()`（`notificationDispatchService.ts`，**獨立函式，不解析 transport、不 claim、不寫**）讀 `outbox_health` 回 `{ dryRun, due, dueByTemplate, staleProcessing, batchLimit }`。`dispatchNotifications` **完全未動**（Slice A 測試全綠）。CLI `--dry-run`、route `?dryRun=1` / `{dryRun:true}`。
+- **健康度可視**：**Migration `0014_outbox_health_rpc.sql`** —— read-only `outbox_health(p_now, p_lease_seconds) returns jsonb`，**僅顯式聚合表達式**（`count`/`min`/`jsonb_object_agg` over grouped counts，絕不 select 原始列欄位）：
+  `due` / `due_by_template` / `pending` / `retrying` / `processing` / `stale_processing` / `failed` / `failed_by_error`（sanitized code→count）/ `sent_last_24h` / `oldest_*`/`next_retry_at`。grant execute → service_role。`verify_schema` 斷言 19。
+  經 `getOutboxHealth`（`outboxHealthService.ts` / repo `getOutboxHealth`）暴露於 **`GET /api/internal/jobs/outbox-status`** 與 **CLI `npm run job:outbox-status`**。
+- **Production transport guard**：`lineTransport.getLineTransport()` 於 production runtime（`VERCEL_ENV==='production'`，否則 `NODE_ENV`）**拒 `mock`** → `TransportConfigError('mock_in_production')`，避免正式部署靜默丟訊息（`line` 缺 token 仍 throw）。僅作用於真送出路徑，preview/health 不受影響。
+- **並發安全（釐清）**：重疊呼叫安全來自 **我們的 `processing` lease + `locked_by` guard（Slice A 原子 `FOR UPDATE SKIP LOCKED` claim）**，**非** Vercel 保證不重疊 —— runbook 明載，並保留 Slice A「兩 dispatcher 一列恰一次 push」測試。
+- **CLI/env/config**：`scripts/run-outbox-status.ts` + `npm run job:outbox-status`；`run-dispatch-notifications.ts` 加 `--dry-run`；`.env.example` 加 `CRON_SECRET`；新 `vercel.pro.example.json`。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`/`eslint`/`next build` ✅（dispatch route GET+POST、`outbox-status` ƒ dynamic）。測試：`npm test` **365 / 37 skipped**；`RUN_DB_TESTS=1` **405**（新增 `outbox-health.db.test.ts` 3：健康度聚合正確 / 輸出 leak-scan / previewDispatch 零異動）；`db:verify` **19/19**。
+- **實機 E2E**：`?dryRun=1`（x-job-secret）→ 預覽、列仍 `pending`；`Bearer $CRON_SECRET` → 200；無/錯 secret → 401；真跑 GET → `sent`；`/outbox-status` → 健康度（sensitive scan 0）；`VERCEL_ENV=production`+`mock` → **500 `mock_in_production`**、列未異動、dryRun 仍 200。
+- **仍 deferred**：正式排程掛載（Vercel Pro cron 或外部排程實際綁定 + 監控告警）；`closed` 狀態語意；健康度告警門檻自動化。
 
 ---
 
@@ -494,15 +520,15 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `npm test`（不接 DB） | ✅ **341 passed / 33 skipped**（本回合實跑；`*.db.test.ts` 被 gate 跳過） |
-| `npm run db:reset` | ✅ 套用 `0001–0013` + seed |
-| `npm run db:verify` | ✅ **18/18** schema 斷言 PASS |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **378 passed** |
+| `npm test`（不接 DB） | ✅ **365 passed / 37 skipped**（本回合實跑；`*.db.test.ts` 被 gate 跳過） |
+| `npm run db:reset` | ✅ 套用 `0001–0014` + seed |
+| `npm run db:verify` | ✅ **19/19** schema 斷言 PASS |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **405 passed** |
 
-> 上表全為 **Phase 4 Slice B（move-car）本回合實測**（含 `db:reset 0001–0013`、`db:verify` 18/18、`RUN_DB_TESTS=1` 378）。下方 Slice 4 專屬涵蓋為當時紀錄。
+> 上表全為 **Phase 4 Slice C（dispatcher ops hardening）本回合實測**（含 `db:reset 0001–0014`、`db:verify` 19/19、`RUN_DB_TESTS=1` 405）。下方 Slice 4 專屬涵蓋為當時紀錄。
 
 **測試檔：** 純函式 `tests/unit/allocation/*`（含 `scenario.test.ts` 全週情境）；服務 `tests/unit/server/*`（mock repo）；
-整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch,move-car}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。
+整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch,move-car,outbox-health}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。
 
 **Slice 4 整合測試涵蓋：** 結算前 release sweep 補抓 approved-逾時列、`released_late → no_show`、P3 `penalty_score+1`、
 P2 `consecutive_no_show→4` 開 alert、**結算不寫 outbox**、冪等重跑（settled 0、不重複加分/開 alert）、**跨 event 的 open-alert
@@ -540,7 +566,8 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 | ~~LINE notification dispatcher（outbox → LINE 實際送出）~~ | ✅ **完成（Phase 4 Slice A，§6.13）** | 原子 claim/lease 防並發重送 + 顯式 `NOTIFICATION_TRANSPORT` 模式（缺 token fail-fast、不靜默假送）+ 型別化失敗分類 + backoff 重試；`job:dispatch` CLI / 內部 route |
 | ~~移車請求模板 + `POST /api/staff/move-car` + Staff 列動作 + OA 加入狀態 gating~~ | ✅ **完成（Phase 4 Slice B，§6.14）** | `owner_notifiable` Staff-safe 投影 + 伺服器端車主解析（不洩 `line_id`/`user_id`）；enqueue → dispatcher 送出；列上「請移車」disabled/labeled |
 | **移車 go-live 前置**：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程 | **ops 軌** | §6.14 已用 mock transport 全綠；上線需真實憑證與綁定；緊急/其他版本（B/C/D）文案另備 |
-| dispatcher 排程綁定（Vercel Cron，供移車近即時送達）/ `dryRun` 預覽 / `failed` dead-letter view / per-user LINE 綁定流程 / LIFF / LINE webhook（含「正在路上」回覆入口） | 後續 | §6.13 提供 route + CLI，實際排程掛載延後；移車目前靠 `job:dispatch` 手動排空 |
+| ~~dispatcher 排程綁定 + `dryRun` 預覽 + outbox 健康度可視 + production transport guard~~ | ✅ **完成（Phase 4 Slice C，§6.15）** | GET+cron/job auth、`?dryRun=1`/`--dry-run`、`outbox_health` RPC + `/outbox-status` + `job:outbox-status`、`mock_in_production` guard；runbook [dispatcher-ops.md](dispatcher-ops.md) |
+| dispatcher **正式排程掛載**（Vercel Pro cron 或外部排程實際綁定）+ 監控告警 / `failed` dead-letter 處理 / per-user LINE 綁定流程 / LIFF / LINE webhook（含「正在路上」回覆入口） | 後續 | §6.15 提供 route + CLI + runbook；實際部署掛載仍待 go-live；移車目前靠 `job:dispatch` 手動排空 |
 | **牧養關懷 alert 處理（resolution）UI** | Admin 切片 | `pastoral_care_alerts` 已可開立；`resolved_at/resolved_by/note` 欄位已就緒但暫不寫入 |
 | 其餘兩種 §7 牧養觸發（短期行動不便到期 / 幼兒資格到期）每日排程 | 後續 | 目前僅實作「連續未到」觸發 |
 | **P1 全職同工 `weekly_staff_allocations` no-show 處理** | 後續 | 與 reservation 結算分離；Slice 4 只結算 reservation（P2/P3） |
@@ -552,7 +579,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 ## 10. 本機開發備忘（重點，詳見 development_plan §12）
 
-- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0013` + seed）/ `db:verify` / `db:stop`。
+- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0014` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
 - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。

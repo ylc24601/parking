@@ -20,6 +20,7 @@
     "job:settle": "tsx scripts/run-settle.ts",
     "job:auto-finalize": "tsx scripts/run-auto-finalize.ts",
     "job:dispatch": "tsx scripts/run-dispatch-notifications.ts",
+    "job:outbox-status": "tsx scripts/run-outbox-status.ts",
     "staff:set-pin": "tsx scripts/set-staff-pin.ts"
   },
   "dependencies": {

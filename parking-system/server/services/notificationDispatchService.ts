@@ -69,6 +69,33 @@ export async function dispatchNotifications(
   return summary
 }
 
+// Phase 4 Slice C — no-mutation dispatch preview. Reads the operation-safe outbox_health
+// aggregate and returns the "what a real run would attempt" subset. It NEVER resolves the
+// transport and NEVER claims/mutates — a separate function so no mutation path is reachable.
+export interface DispatchPreview {
+  dryRun: true
+  due: number
+  dueByTemplate: Record<string, number>
+  staleProcessing: number
+  batchLimit: number
+}
+
+export async function previewDispatch(
+  params: { now?: Date; limit?: number } = {},
+  repo: ParkingRepository = createParkingRepository(),
+): Promise<DispatchPreview> {
+  const now = params.now ?? new Date()
+  const batchLimit = params.limit ?? NOTIFICATION_DISPATCH_BATCH
+  const health = await repo.getOutboxHealth(now.toISOString(), NOTIFICATION_LEASE_SECONDS)
+  return {
+    dryRun: true,
+    due: health.due,
+    dueByTemplate: health.due_by_template,
+    staleProcessing: health.stale_processing,
+    batchLimit,
+  }
+}
+
 async function dispatchRow(
   row: ClaimedOutboxRow,
   worker: string,
