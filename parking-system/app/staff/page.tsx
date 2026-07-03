@@ -34,6 +34,7 @@ export default async function StaffPage() {
         is_priority: r.is_priority,
         status: r.status,
         attended_at: r.attended_at ? r.attended_at.toISOString() : null,
+        owner_notifiable: r.owner_notifiable,
       }))
     : []
 

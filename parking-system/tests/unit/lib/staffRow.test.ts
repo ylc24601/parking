@@ -19,6 +19,7 @@ function row(over: Partial<StaffRow>): StaffRow {
     is_priority: false,
     status: 'approved',
     attended_at: null,
+    owner_notifiable: false,
     ...over,
   }
 }

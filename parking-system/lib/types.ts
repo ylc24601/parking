@@ -108,6 +108,7 @@ export interface StaffCheckInRow {
   is_priority: boolean                 // effective_priority <= 2, reason hidden
   status: ReservationStatus
   attended_at: Date | null
+  owner_notifiable: boolean            // LINE-reachable owner? (member with a line_id); no line_id leaked
 }
 
 // ── Output Types ───────────────────────────────────────────────────────────
@@ -128,6 +129,7 @@ export type NotificationTemplate =
   | 'p2_arrival_reminder'
   | 'staff_reminder'
   | 'admin_finalize_reminder'
+  | 'move_car_request'
 
 export interface PenaltyUpdate {
   user_id: string

@@ -18,6 +18,7 @@ export interface StaffRow {
   is_priority: boolean
   status: string
   attended_at: string | null
+  owner_notifiable: boolean
 }
 
 // Statuses that count as "已到" (attended one way or another).

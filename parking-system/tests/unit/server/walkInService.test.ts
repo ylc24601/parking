@@ -16,6 +16,7 @@ const listRow = (over: Partial<StaffCheckInRow>): StaffCheckInRow => ({
   is_priority: false,
   status: 'approved',
   attended_at: null,
+  owner_notifiable: false,
   ...over,
 })
 

@@ -5,7 +5,9 @@ import type { StaffRow } from '@/lib/staffRow'
 // Written ONLY after server-confirmed data; pending/optimistic state is never cached.
 
 const KEY = 'staff_checkin_cache'
-const SCHEMA_VERSION = 1
+// Bump when the cached StaffRow shape changes so old caches are treated stale.
+// v2: added owner_notifiable (Phase 4 Slice B move-car).
+const SCHEMA_VERSION = 2
 const MAX_AGE_MS = 12 * 60 * 60 * 1000 // 12h — a cache older than this is not "today"
 const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000
 

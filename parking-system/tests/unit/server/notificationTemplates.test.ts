@@ -40,7 +40,18 @@ describe('renderTemplate', () => {
     expect(renderTemplate('p2_arrival_reminder', { sunday_date: '2026-06-21' })).toContain('2026-06-21')
   })
 
+  it('renders move_car_request with the plate', () => {
+    const text = renderTemplate('move_car_request', { license_plate: 'ABC-1234' })
+    expect(text).toContain('【教會停車】')
+    expect(text).toContain('ABC-1234')
+    expect(text).toContain('移車')
+  })
+
+  it('renders move_car_request with a fallback when the plate is missing', () => {
+    expect(renderTemplate('move_car_request', {})).toContain('車牌未提供')
+  })
+
   it('throws on an unknown template_key', () => {
-    expect(() => renderTemplate('move_car_request', {})).toThrow(/unknown template_key/)
+    expect(() => renderTemplate('totally_unknown_key', {})).toThrow(/unknown template_key/)
   })
 })
