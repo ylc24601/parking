@@ -11,11 +11,15 @@ try {
   /* env may be provided by the shell instead */
 }
 
-import { dispatchNotifications } from '../server/services/notificationDispatchService'
+import { dispatchNotifications, previewDispatch } from '../server/services/notificationDispatchService'
 
 function argValue(flag: string): string | undefined {
   const i = process.argv.indexOf(flag)
   return i >= 0 ? process.argv[i + 1] : undefined
+}
+
+function hasFlag(flag: string): boolean {
+  return process.argv.includes(flag)
 }
 
 function fail(message: string): never {
@@ -42,8 +46,11 @@ function resolveNowArg(): Date | undefined {
 async function main() {
   const limit = resolveLimitArg()
   const now = resolveNowArg()
-  const summary = await dispatchNotifications({ limit, now })
-  console.log(JSON.stringify(summary, null, 2))
+  // --dry-run: no-mutation preview (never resolves transport, never claims).
+  const result = hasFlag('--dry-run')
+    ? await previewDispatch({ limit, now })
+    : await dispatchNotifications({ limit, now })
+  console.log(JSON.stringify(result, null, 2))
 }
 
 main().catch(err => {

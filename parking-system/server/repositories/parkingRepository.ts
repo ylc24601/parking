@@ -132,6 +132,24 @@ export interface SettlementResult {
   alerts_created: number
 }
 
+// Phase 4 Slice C — operation-safe aggregate health of notification_outbox (from the
+// outbox_health RPC). Counts / notification-type names / sanitized error codes / timestamps
+// only — no per-row or sensitive fields.
+export interface OutboxHealth {
+  due: number
+  due_by_template: Record<string, number>
+  pending: number
+  retrying: number
+  processing: number
+  stale_processing: number
+  failed: number
+  failed_by_error: Record<string, number>
+  sent_last_24h: number
+  oldest_pending_at: string | null
+  oldest_failed_at: string | null
+  next_retry_at: string | null
+}
+
 // Phase 4 Slice A — a notification_outbox row claimed by the dispatcher (already flipped
 // to 'processing' and leased). line_id is joined in the claim RPC (null if the recipient
 // has no LINE binding → undeliverable). Sensitive fields never leave this shape.
@@ -336,6 +354,8 @@ export interface ParkingRepository {
   markOutboxSent(id: string, worker: string, sentAtIso: string): Promise<void>
   markOutboxRetry(id: string, worker: string, nextRetryAtIso: string, retryCount: number, lastErrorCode: string): Promise<void>
   markOutboxFailed(id: string, worker: string, lastErrorCode: string): Promise<void>
+  // Phase 4 Slice C — operation-safe aggregate health (dryRun preview + ops visibility).
+  getOutboxHealth(nowIso: string, leaseSeconds: number): Promise<OutboxHealth>
   // Phase 4 Slice B — resolve a move-car target (owner user_id + plate + notifiability).
   // Returns null only when the reservation id doesn't exist (a walk-in still resolves).
   getMoveCarTarget(reservationId: string): Promise<MoveCarTarget | null>
@@ -731,6 +751,15 @@ export function createParkingRepository(
         .eq('status', 'processing')
         .eq('locked_by', worker)
       if (error) throw new Error(`markOutboxFailed failed: ${error.message}`)
+    },
+
+    async getOutboxHealth(nowIso, leaseSeconds) {
+      const { data, error } = await client.rpc('outbox_health', {
+        p_now: nowIso,
+        p_lease_seconds: leaseSeconds,
+      })
+      if (error) throw new Error(`outbox_health failed: ${error.message}`)
+      return data as OutboxHealth
     },
 
     async getMoveCarTarget(reservationId) {

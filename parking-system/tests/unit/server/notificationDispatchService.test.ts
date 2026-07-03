@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeMockRepo, asRepo, type MockRepo } from './mockRepo'
-import { dispatchNotifications } from '@/server/services/notificationDispatchService'
+import { dispatchNotifications, previewDispatch } from '@/server/services/notificationDispatchService'
 import {
   NOTIFICATION_DISPATCH_BATCH,
   NOTIFICATION_LEASE_SECONDS,
@@ -152,5 +152,47 @@ describe('dispatchNotifications', () => {
     expect(repo.markOutboxFailed).not.toHaveBeenCalled()
     expect(repo.markOutboxRetry).not.toHaveBeenCalled()
     expect((tx.push as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1) // aborted before row 'b'
+  })
+})
+
+describe('previewDispatch (dryRun — no mutation)', () => {
+  const HEALTH = {
+    due: 3, due_by_template: { move_car_request: 2, broadcast_release: 1 },
+    pending: 5, retrying: 1, processing: 1, stale_processing: 1, failed: 2,
+    failed_by_error: { no_line_id: 1, terminal_403: 1 }, sent_last_24h: 9,
+    oldest_pending_at: '2026-06-21T01:00:00Z', oldest_failed_at: null, next_retry_at: '2026-06-21T03:00:00Z',
+  }
+
+  it('returns the due-preview subset from getOutboxHealth and mutates nothing', async () => {
+    const repo = makeMockRepo({ getOutboxHealth: vi.fn(async () => HEALTH) })
+    const res = await previewDispatch({ now: NOW, limit: 50 }, asRepo(repo))
+    expect(res).toEqual({
+      dryRun: true,
+      due: 3,
+      dueByTemplate: { move_car_request: 2, broadcast_release: 1 },
+      staleProcessing: 1,
+      batchLimit: 50,
+    })
+    expect(repo.getOutboxHealth).toHaveBeenCalledWith(NOW.toISOString(), NOTIFICATION_LEASE_SECONDS)
+    // never claims, never marks, never sends
+    expect(repo.claimOutbox).not.toHaveBeenCalled()
+    expect(repo.markOutboxSent).not.toHaveBeenCalled()
+    expect(repo.markOutboxRetry).not.toHaveBeenCalled()
+    expect(repo.markOutboxFailed).not.toHaveBeenCalled()
+  })
+
+  it('defaults batchLimit to NOTIFICATION_DISPATCH_BATCH', async () => {
+    const repo = makeMockRepo({ getOutboxHealth: vi.fn(async () => HEALTH) })
+    const res = await previewDispatch({ now: NOW }, asRepo(repo))
+    expect(res.batchLimit).toBe(NOTIFICATION_DISPATCH_BATCH)
+  })
+
+  it('is aggregate-only — never surfaces per-row / sensitive keys', async () => {
+    const repo = makeMockRepo({ getOutboxHealth: vi.fn(async () => HEALTH) })
+    const res = await previewDispatch({ now: NOW }, asRepo(repo))
+    const json = JSON.stringify(res)
+    for (const k of ['payload_json', 'user_id', 'reservation_id', 'dedupe_key', 'line_id', 'license_plate', 'phone']) {
+      expect(json).not.toContain(k)
+    }
   })
 })

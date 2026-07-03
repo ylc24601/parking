@@ -40,6 +40,29 @@ describe('getLineTransport — explicit mode, no silent fallback', () => {
     process.env.NOTIFICATION_TRANSPORT = 'whatever'
     expect(() => getLineTransport()).toThrow(TransportConfigError)
   })
+
+  it('refuses mock in a production runtime (never silently no-ops in prod)', () => {
+    process.env.NOTIFICATION_TRANSPORT = 'mock'
+    process.env.VERCEL_ENV = 'production'
+    expect(() => getLineTransport()).toThrow(/mock_in_production/)
+    // preview/dev deploys are NOT production → mock allowed
+    process.env.VERCEL_ENV = 'preview'
+    expect(getLineTransport()).toBe(mockLineTransport)
+  })
+
+  it('falls back to NODE_ENV when VERCEL_ENV is unset (prod + mock refused)', () => {
+    delete process.env.VERCEL_ENV
+    ;(process.env as Record<string, string | undefined>).NODE_ENV = 'production'
+    process.env.NOTIFICATION_TRANSPORT = 'mock'
+    expect(() => getLineTransport()).toThrow(/mock_in_production/)
+  })
+
+  it('allows line transport in production when a token is present', () => {
+    process.env.VERCEL_ENV = 'production'
+    process.env.NOTIFICATION_TRANSPORT = 'line'
+    process.env.LINE_CHANNEL_ACCESS_TOKEN = 'tok'
+    expect(getLineTransport()).not.toBe(mockLineTransport)
+  })
 })
 
 describe('deriveRetryKey', () => {

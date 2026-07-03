@@ -216,6 +216,17 @@ begin
   raise notice 'PASS: staff_checkin_view exposes owner_notifiable, hides line_id/phone';
 end $$;
 
+-- ── 19. outbox_health exists + service_role execute (Phase 4 C) ────────────────
+do $$
+begin
+  perform 1 from pg_proc where proname = 'outbox_health';
+  if not found then raise exception 'FAIL: outbox_health function missing'; end if;
+  if not has_function_privilege('service_role', 'outbox_health(timestamptz,int)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on outbox_health';
+  end if;
+  raise notice 'PASS: outbox_health present with service_role execute grant';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

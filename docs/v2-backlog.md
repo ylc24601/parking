@@ -18,7 +18,7 @@
 - **v2 Auto-finalize fallback（內部 job：忘記結束時自動 settle + finalize）：✅ 已完成（2026-07-01）**，見 handoff §6.12。**營運兜底、非同工主流程**。
 - 會議回饋大多是**可直接做的微調**；唯一較大的是「移車聯絡」，要走教會 LINE OA、且卡在「會友未全加入 OA」。
 - **Phase 3 已結案（2026-07-01）**：~~① walk-in~~ → ~~② 穩定度~~ → ~~③ 紙本備援清單~~ → ~~④ 結束當週點名~~ → ~~⑤ 真 PIN session~~ → ~~⑥ weekly_events finalize~~ → ~~⑥.5 auto-finalize fallback~~ 全數完成。
-- **Phase 4 進行中（Notification & LINE Integration）**：**✅ Slice A — LINE notification dispatcher（2026-07-02）**（handoff §6.13）+ **✅ Slice B — Staff「請車主移車」move-car request（2026-07-03）**（handoff §6.14：`owner_notifiable` Staff-safe 投影 + 伺服器端車主解析 + enqueue → dispatcher 送出；Staff 列「請移車」動作）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；dispatcher 排程綁定（Vercel Cron）供近即時送達。**
+- **Phase 4 進行中（Notification & LINE Integration）**：**✅ Slice A — LINE notification dispatcher（2026-07-02）**（handoff §6.13）+ **✅ Slice B — Staff「請車主移車」move-car request（2026-07-03）**（handoff §6.14）+ **✅ Slice C — dispatcher ops hardening（2026-07-04）**（handoff §6.15：dispatch GET + Vercel-Cron/x-job-secret 雙軌 auth + `dryRun` 無異動預覽 + `outbox_health` 健康度可視 + production `mock` guard；runbook [dispatcher-ops.md](dispatcher-ops.md)）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；正式排程掛載（Vercel Pro cron 或外部排程）。**
 
 ---
 
