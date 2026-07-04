@@ -53,8 +53,10 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     getOutboxHealth: vi.fn(async () => ({
       due: 0, due_by_template: {}, pending: 0, retrying: 0, processing: 0, stale_processing: 0,
       failed: 0, failed_by_error: {}, sent_last_24h: 0,
-      oldest_pending_at: null, oldest_failed_at: null, next_retry_at: null,
+      oldest_pending_at: null, oldest_due_at: null, oldest_failed_at: null, next_retry_at: null,
     })),
+    // Phase 4 Slice F — dead-letter requeue
+    requeueFailedOutbox: vi.fn(async () => ({ requeued: 0 })),
     // Phase 4 Slice B — move-car
     getMoveCarTarget: vi.fn(async () => ({
       weekly_event_id: 'event-1',

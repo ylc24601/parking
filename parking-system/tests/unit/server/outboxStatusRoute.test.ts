@@ -13,7 +13,7 @@ import { getOutboxHealth } from '@/server/services/outboxHealthService'
 const HEALTH = {
   due: 2, due_by_template: { move_car_request: 2 }, pending: 4, retrying: 1, processing: 0,
   stale_processing: 0, failed: 3, failed_by_error: { no_line_id: 2, terminal_403: 1 },
-  sent_last_24h: 12, oldest_pending_at: '2026-06-21T01:00:00Z', oldest_failed_at: '2026-06-20T09:00:00Z',
+  sent_last_24h: 12, oldest_pending_at: '2026-06-21T01:00:00Z', oldest_due_at: '2026-06-21T01:00:00Z', oldest_failed_at: '2026-06-20T09:00:00Z',
   next_retry_at: '2026-06-21T03:00:00Z',
 }
 const get = (headers: Record<string, string> = { 'x-job-secret': 'secret' }) =>

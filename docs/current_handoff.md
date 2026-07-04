@@ -1,8 +1,8 @@
 # 教會主日停車管理系統 — 開發交接文件（Current Handoff）
 
-> 最後更新：2026-07-04 ｜ **Phase 3 已結案；Phase 4 進行中（Slice A + B + C + D + E 完成）** ｜ 範圍：Phase 0、Phase 1、Phase 2 Slice 1–4、Phase 3 Slice 1 + v2 全部切片（walk-in / 穩定度 / 紙本備援 / 結束當週點名 / 真 PIN session / weekly_events finalize / auto-finalize fallback）+ **Phase 4 Slice A — LINE notification dispatcher** + **Phase 4 Slice B — Staff「請車主移車」** + **Phase 4 Slice C — dispatcher ops hardening（排程綁定 + dryRun 預覽 + outbox 健康度可視 + production transport guard）** + **Phase 4 Slice D — 釋出時通知被釋出成員本人（`reservation_released`）** + **Phase 4 Slice E — 取消確認通知（`reservation_cancelled`）** 全數完成
+> 最後更新：2026-07-04 ｜ **Phase 3 已結案；Phase 4 進行中（Slice A + B + C + D + E + F 完成）** ｜ 範圍：Phase 0、Phase 1、Phase 2 Slice 1–4、Phase 3 Slice 1 + v2 全部切片（walk-in / 穩定度 / 紙本備援 / 結束當週點名 / 真 PIN session / weekly_events finalize / auto-finalize fallback）+ **Phase 4 Slice A — LINE notification dispatcher** + **Phase 4 Slice B — Staff「請車主移車」** + **Phase 4 Slice C — dispatcher ops hardening（排程綁定 + dryRun 預覽 + outbox 健康度可視 + production transport guard）** + **Phase 4 Slice D — 釋出時通知被釋出成員本人（`reservation_released`）** + **Phase 4 Slice E — 取消確認通知（`reservation_cancelled`）** + **Phase 4 Slice F — dispatcher autonomy（健康度告警 + dead-letter requeue + 外部排程 runbook）** 全數完成
 >
-> **本階段：Phase 4 — Notification & LINE Integration**。**Slice A（dispatcher）+ B（移車請求）+ C（ops hardening）+ D（釋出通知本人）+ E（取消確認）已完成**（見 §6.13 / §6.14 / §6.15 / §6.16 / §6.17）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車/釋出/取消文案定稿 + per-member `line_id` 綁定流程；正式排程掛載（Vercel Pro cron 或外部排程，見 [dispatcher-ops.md](dispatcher-ops.md)）。** 見 [v2-backlog.md](v2-backlog.md) §2 與 §9 Deferred。
+> **本階段：Phase 4 — Notification & LINE Integration**。**Slice A（dispatcher）+ B（移車請求）+ C（ops hardening）+ D（釋出通知本人）+ E（取消確認）+ F（告警/requeue）已完成**（見 §6.13 / §6.14 / §6.15 / §6.16 / §6.17 / §6.18）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車/釋出/取消文案定稿 + per-member `line_id` 綁定流程；正式排程由外部排程器掛載（cron-job.org / crontab，見 [dispatcher-ops.md](dispatcher-ops.md)；不 commit live scheduler artifact）。** 見 [v2-backlog.md](v2-backlog.md) §2 與 §9 Deferred。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
 > 程式碼根目錄：`parking-system/`（`@/*` alias 指向該目錄）
 
@@ -31,18 +31,18 @@
 | **Phase 4 Slice C** | **Dispatcher ops hardening**：dispatch route 加 GET（Vercel Cron / 外部排程）+ `cronOrJobSecretValid`（x-job-secret 或 `Bearer $CRON_SECRET`）+ `dryRun` 無異動預覽 + `outbox_health` RPC/route/CLI 健康度可視（operation-safe）+ production 拒 `mock`（`mock_in_production`）| ✅ 完成 |
 | **Phase 4 Slice D** | **釋出時通知被釋出成員本人**：主日釋出 sweep 將 `approved`→`released_late` 時，除對候補者廣播外，另發一則 `reservation_released` 給被釋出的車主（一次性 `released_owner:<id>` dedupe；資訊性、無罰責、`已於 {time} 釋出` 非期限）；migration `0015` 4-arg `apply_release`（+ 3-arg 相容 wrapper），owner notice 僅由本 sweep `released` CTE 產生並三重再驗證（reservation_id/user_id/template）；**結算 pre-sweep 靜默**（`notifyReleasedOwners:false`）| ✅ 完成 |
 | **Phase 4 Slice E** | **取消確認通知**：會友取消預約時，除既有「遞補 offer 給下一位候補」外，另發一則 `reservation_cancelled` 給**取消者本人**（一次性 `cancel_notice:<id>` dedupe；`cancelled_late`/`cancelled_by_user` 兩種措辭、無罰責、指回報名系統）；migration `0016` 8-arg `apply_cancellation`（+ 7-arg 相容 wrapper），confirmation 僅由本次 `cancelled` CTE 產生、三重再驗證，且 `cancel_status` **由 RPC 轉態後狀態權威決定**（非 TS payload）；**限會友自行取消**，未來 admin/staff 取消需另立模板 | ✅ 完成 |
+| **Phase 4 Slice F** | **Dispatcher autonomy**：健康度**告警**（`GET /outbox-alert` + `job:outbox-alert`，健康=200／不健康=503 讓外部 monitor 無整合即可告警；門檻 env，pilot 預設 `0/0/15`；backlog 訊號用新的 `outbox_health.oldest_due_at` 只看 due 列）+ **dead-letter requeue**（`POST /requeue-failed` + `job:requeue-failed`，**dryRun 預設**、僅 `failed→pending`、預設 max 50/硬上限 500、可選 sanitized `errorCode`、**手動限定不排程**）；migration `0017`（`outbox_health` 加 `oldest_due_at` + `requeue_failed_outbox` RPC）；排程走**外部排程器（cron-job.org / crontab）文件化，不 commit live artifact** | ✅ 完成 |
 
 **主日完整生命週期（分配 → 取消/遞補 → 釋出/出席 → 結算）已全部落地，並補上 Staff 現場頁
 （點名/補點名/walk-in 登記/誤點復原/離線只讀/紙本備援清單/結束當週點名/真 PIN session/結束整週 finalize/auto-finalize fallback）。
 Phase 3（Staff 現場頁 + v2 全部切片）至此結案。** 下一階段為 **Phase 4 — Notification & LINE Integration**
 （LINE notification dispatcher + 移車通知、Member/Admin UI），見 [v2-backlog.md](v2-backlog.md) 與 §9 Deferred。
 
-**目前測試狀態（Phase 4 Slice E 本回合實跑）：** `tsc --noEmit` ✅、`eslint` ✅、`next build` ✅、
-`npm test`（不接 DB）**372 passed / 43 skipped**（+ `cancelReservation` cancel-notice（三路徑 + no-op）/ `reservation_cancelled` 模板兩態 render + fallback）、
-`RUN_DB_TESTS=1 npm test`（接本機 Supabase）**419 passed**（新增 `cancel-confirm-notice.db.test.ts`：canceller confirmation scoping / 兩種 cancel_status / 一次性 dedupe / payload leak-scan）、`npm run db:verify` **21/21 PASS**（新增斷言 21：`apply_cancellation` 8-arg + 7-arg wrapper + service_role execute）。
-Slice E 已完成**實機 E2E**（mock transport）：取消 approved → outbox 同時有 `offer_2hr_confirm`（給候補）與 `cancel_notice:<id>`（`reservation_cancelled`，payload 僅 `cancel_status: cancelled_late`，由 RPC 權威決定）；render 出「您本週已核准的停車預約已為您取消，車位將釋出給候補的弟兄姊妹…」；
-mock dispatch 兩則皆 **sent**；**重跑取消 → 0 重複** confirmation（no-op / dedupe）。
-排程/預覽/健康度 runbook 見 [dispatcher-ops.md](dispatcher-ops.md)。
+**目前測試狀態（Phase 4 Slice F 本回合實跑）：** `tsc --noEmit` ✅、`eslint` ✅、`next build` ✅（新 `/api/internal/jobs/outbox-alert`、`/api/internal/jobs/requeue-failed` ƒ dynamic）、
+`npm test`（不接 DB）**399 passed / 47 skipped**（+ `evaluateOutboxAlert`/thresholds、alert route 200/503、`requeueFailed` dryRun/bounds/filter、requeue route dryRun 預設/400）、
+`RUN_DB_TESTS=1 npm test`（接本機 Supabase）**451 passed**（新增 `outbox-requeue.db.test.ts`：`oldest_due_at` 只看 due、requeue 只 `failed→pending` 且不動其他四狀態、errorCode/max、重跑 0、leak-scan）、`npm run db:verify` **22/22 PASS**（新增斷言 22：`requeue_failed_outbox` + service_role execute）。
+Slice F 已完成**實機 E2E**（route handler + mock transport）：無 secret → **401**；2 筆 failed → `GET /outbox-alert` **503** `breaches:['failed_over_max']`；`requeue-failed` dryRun `wouldRequeue:2`（不異動）→ apply（`errorCode:http_500`）`requeued:2`；`dispatch` **sent 2**；再查 `/outbox-alert` → **200 healthy**。
+排程/告警/requeue/rollback runbook 見 [dispatcher-ops.md](dispatcher-ops.md)。**排程為外部排程器文件化，不 commit live artifact；requeue 手動限定不排程。**
 **本機 Supabase stack 本回合啟動並實跑，驗證後可停止。**
 
 **架構分層（Slice 1–4 一致）：** thin route（`/api/internal/*`，job-secret 驗證）→ service（商業邏輯，呼叫 Phase 0 純函式）
@@ -534,6 +534,24 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 
 ---
 
+## 6.18 Phase 4 Slice F — Dispatcher autonomy：健康度告警 + dead-letter requeue（本次完成）
+
+讓通知管線能**無人值守營運**：Slice A–E 管線可用，但（1）無 live 排程（只手動 `job:dispatch`），（2）`outbox_health`（§6.15）只暴露數據、無人**據以告警**，（3）`failed` 列為終態、無回收手段。本刀補齊告警 + 回收 + runbook，**不新增外部相依、不 commit live 排程 artifact**。**純後端/ops**，所有新回應 operation-safe（counts / 狀態名 / sanitized 碼 / 門檻名 / 時間戳）。
+
+- **`outbox_health` 加 `oldest_due_at`**（migration `0017`）：現有 `oldest_pending_at` 無法區分「到期未送」與「刻意排未來」→ 誤報。新 `oldest_due_at = min(created_at) over is_due` 只看 due 列（`is_due` 已要求 `next_retry_at <= now`），backlog 告警據此，未來排程列不會誤觸。
+- **健康度告警（scheduler-surfaced）**：純函式 `evaluateOutboxAlert(health, thresholds)`（`outboxAlertService.ts`）→ operation-safe reason codes（`failed_over_max` / `stale_processing_over_max` / `due_backlog_stale`）。route **`GET /api/internal/jobs/outbox-alert`** 把結果**編進 HTTP 狀態：健康 200 / 不健康 503**，讓任何 monitor/cron（`curl -f`、uptime 檢查）**零整合**即可告警；CLI `job:outbox-alert` 不健康時 exit 非 0。門檻 env（`OUTBOX_ALERT_FAILED_MAX`/`STALE_MAX`/`PENDING_STALE_MINUTES`），**pilot 敏感預設 `0/0/15`**（任一 failed 或 stale 即告警；due backlog >15 分＝排程未在排空），可調高。
+- **Dead-letter requeue（手動限定）**：migration `0017` RPC `requeue_failed_outbox(p_now,p_max,p_error_code)`——**只 `failed→pending`**（WHERE 守；絕不動 sent/processing/pending/retrying），reset `retry_count/next_retry_at/locked_*/last_error`，`FOR UPDATE SKIP LOCKED`，**無 DELETE/無破壞性清理**。service `requeueFailed`（`requeueFailedService.ts`）**dryRun 預設 true**（dryRun 用 `failed_by_error` 算 `wouldRequeue`、零讀寫；只有顯式 `dryRun:false` 才動）、**max 預設 50 / 硬上限 500 / 正整數驗證**、空白 `errorCode`→null（只比對 sanitized 碼）。route **`POST /api/internal/jobs/requeue-failed`**（POST-only、dryRun 預設）、CLI `job:requeue-failed`（`--apply`/`--max`/`--error`，預設 dry run）。**必須手動、不排程**（dispatch/outbox-alert 可排程）。
+- **排程機制（決策）**：**外部排程器 only、文件化**（cron-job.org / crontab，見 runbook；`https://<host>` placeholder、無真 URL/secret）——**不 commit `vercel.json`/GitHub workflow**。App 為 scheduler-ready，實際掛載由使用者設 secret + 部署後啟用。
+- **Rollback**：停送＝停用外部 cron；疑似壞送迴圈＝切 `NOTIFICATION_TRANSPORT=mock`（注意 prod `mock_in_production` guard，需搭配暫停排程或非 prod 環境）；修好後用 `requeue-failed`（先 dry run 再 `--apply`）。
+- **OA 環境**：本刀**不接教會正式 OA**；測試用 `mock`，手動驗證用自備 test OA（env 於 repo 外）。正式 OA 為 **final pilot/production** 步驟，前置：真 token、文案定稿、`line_id` 就緒、rollback 就緒。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`/`eslint`/`next build` ✅（`outbox-alert`/`requeue-failed` ƒ dynamic）。測試：`npm test` **399 / 47 skipped**；`RUN_DB_TESTS=1` **451**（新增 `outbox-requeue.db.test.ts`）；`db:verify` **22/22**。
+- **實機 E2E**（route handler + mock）：無 secret→401；2 failed → `/outbox-alert` **503** `['failed_over_max']`；`requeue-failed` dryRun `wouldRequeue:2`（不異動）→ apply（`errorCode:http_500`）`requeued:2`；`dispatch` **sent 2**；再查 → **200 healthy**。
+- **仍 deferred**：live 排程 artifact（vercel.json/GH workflow）；push-channel 告警（Slack/email/LINE-admin）；`requeue-failed` 排程化；接教會正式 OA；`line_id` 綁定 / webhook / LIFF；文案定稿。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
@@ -555,15 +573,15 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `npm test`（不接 DB） | ✅ **372 passed / 43 skipped**（本回合實跑；`*.db.test.ts` 被 gate 跳過） |
-| `npm run db:reset` | ✅ 套用 `0001–0016` + seed |
-| `npm run db:verify` | ✅ **21/21** schema 斷言 PASS |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **419 passed** |
+| `npm test`（不接 DB） | ✅ **399 passed / 47 skipped**（本回合實跑；`*.db.test.ts` 被 gate 跳過） |
+| `npm run db:reset` | ✅ 套用 `0001–0017` + seed |
+| `npm run db:verify` | ✅ **22/22** schema 斷言 PASS |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **451 passed** |
 
-> 上表全為 **Phase 4 Slice E（取消確認通知）本回合實測**（含 `db:reset 0001–0016`、`db:verify` 21/21、`RUN_DB_TESTS=1` 419）。下方 Slice 4 專屬涵蓋為當時紀錄。
+> 上表全為 **Phase 4 Slice F（dispatcher autonomy）本回合實測**（含 `db:reset 0001–0017`、`db:verify` 22/22、`RUN_DB_TESTS=1` 451）。下方 Slice 4 專屬涵蓋為當時紀錄。
 
 **測試檔：** 純函式 `tests/unit/allocation/*`（含 `scenario.test.ts` 全週情境）；服務 `tests/unit/server/*`（mock repo）；
-整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch,move-car,outbox-health,release-owner-notice,cancel-confirm-notice}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。
+整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch,move-car,outbox-health,release-owner-notice,cancel-confirm-notice,outbox-requeue}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。
 
 **Slice 4 整合測試涵蓋：** 結算前 release sweep 補抓 approved-逾時列、`released_late → no_show`、P3 `penalty_score+1`、
 P2 `consecutive_no_show→4` 開 alert、**結算不寫 outbox**、冪等重跑（settled 0、不重複加分/開 alert）、**跨 event 的 open-alert
@@ -602,7 +620,8 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 | ~~移車請求模板 + `POST /api/staff/move-car` + Staff 列動作 + OA 加入狀態 gating~~ | ✅ **完成（Phase 4 Slice B，§6.14）** | `owner_notifiable` Staff-safe 投影 + 伺服器端車主解析（不洩 `line_id`/`user_id`）；enqueue → dispatcher 送出；列上「請移車」disabled/labeled |
 | **通知 go-live 前置**：真實 OA channel token + 移車/釋出/取消文案定稿 + per-member `line_id` 綁定流程 | **ops 軌** | §6.14/§6.16/§6.17 已用 mock transport 全綠；上線需真實憑證與綁定；`move_car_request`/`reservation_released`/`reservation_cancelled` 文案與緊急/其他版本（B/C/D）、admin/staff 取消措辭另備 |
 | ~~dispatcher 排程綁定 + `dryRun` 預覽 + outbox 健康度可視 + production transport guard~~ | ✅ **完成（Phase 4 Slice C，§6.15）** | GET+cron/job auth、`?dryRun=1`/`--dry-run`、`outbox_health` RPC + `/outbox-status` + `job:outbox-status`、`mock_in_production` guard；runbook [dispatcher-ops.md](dispatcher-ops.md) |
-| dispatcher **正式排程掛載**（Vercel Pro cron 或外部排程實際綁定）+ 監控告警 / `failed` dead-letter 處理 / per-user LINE 綁定流程 / LIFF / LINE webhook（含「正在路上」回覆入口） | 後續 | §6.15 提供 route + CLI + runbook；實際部署掛載仍待 go-live；移車目前靠 `job:dispatch` 手動排空 |
+| ~~dispatcher 健康度**監控告警** + `failed` **dead-letter 處理** + 外部排程 runbook~~ | ✅ **完成（Phase 4 Slice F，§6.18）** | `GET /outbox-alert`（200/503）+ `job:outbox-alert`；`requeue-failed`（手動、dryRun 預設、`failed→pending`）；`outbox_health.oldest_due_at`；外部排程器文件化（不 commit live artifact） |
+| dispatcher **正式排程實際掛載**（外部排程器設 secret + 部署後啟用）/ push-channel 告警（Slack/email/LINE-admin）/ per-user LINE 綁定流程 / LIFF / LINE webhook（含「正在路上」回覆入口） | go-live / 後續 | §6.18 App 為 scheduler-ready；實際掛載需部署 + secret；移車/通知目前靠 `job:dispatch` 手動或外部 cron 排空 |
 | **牧養關懷 alert 處理（resolution）UI** | Admin 切片 | `pastoral_care_alerts` 已可開立；`resolved_at/resolved_by/note` 欄位已就緒但暫不寫入 |
 | 其餘兩種 §7 牧養觸發（短期行動不便到期 / 幼兒資格到期）每日排程 | 後續 | 目前僅實作「連續未到」觸發 |
 | **P1 全職同工 `weekly_staff_allocations` no-show 處理** | 後續 | 與 reservation 結算分離；Slice 4 只結算 reservation（P2/P3） |
