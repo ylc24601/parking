@@ -57,6 +57,8 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     })),
     // Phase 4 Slice F — dead-letter requeue
     requeueFailedOutbox: vi.fn(async () => ({ requeued: 0 })),
+    // Phase 5A — pending LINE binding capture
+    capturePendingBinding: vi.fn(async () => ({ captured: 1, superseded: false })),
     // Phase 4 Slice B — move-car
     getMoveCarTarget: vi.fn(async () => ({
       weekly_event_id: 'event-1',

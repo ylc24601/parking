@@ -374,6 +374,14 @@ export interface ParkingRepository {
   // Phase 4 Slice B — resolve a move-car target (owner user_id + plate + notifiability).
   // Returns null only when the reservation id doesn't exist (a walk-in still resolves).
   getMoveCarTarget(reservationId: string): Promise<MoveCarTarget | null>
+  // Phase 5A — capture a pending LINE binding claim (upserts the member's active pending row).
+  // Never writes users.line_id; the returned value is counts-only (no userId / code).
+  capturePendingBinding(args: {
+    lineUserId: string
+    code: string
+    eventType: string
+    nowIso: string
+  }): Promise<{ captured: number; superseded: boolean }>
   // Slice 4
   getReleasedLateForSettlement(eventId: string): Promise<Reservation[]>
   getPenaltyCountersForUsers(userIds: string[]): Promise<Array<{ user_id: string } & PenaltyCounters>>
@@ -787,6 +795,18 @@ export function createParkingRepository(
       })
       if (error) throw new Error(`requeue_failed_outbox failed: ${error.message}`)
       return data as RequeueFailedResult
+    },
+
+    async capturePendingBinding({ lineUserId, code, eventType, nowIso }) {
+      const { data, error } = await client.rpc('capture_pending_binding', {
+        p_line_user_id: lineUserId,
+        p_code: code,
+        p_event_type: eventType,
+        p_now: nowIso,
+      })
+      if (error) throw new Error(`capture_pending_binding failed: ${error.message}`)
+      const row = data as { captured: number; superseded: boolean }
+      return { captured: row.captured, superseded: row.superseded }
     },
 
     async getMoveCarTarget(reservationId) {

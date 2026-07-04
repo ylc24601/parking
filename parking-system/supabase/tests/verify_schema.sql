@@ -262,6 +262,27 @@ begin
   raise notice 'PASS: requeue_failed_outbox present with service_role execute grant';
 end $$;
 
+-- ── 23. pending_binding table + partial unique index + capture RPC grant (Phase 5A) ─
+do $$
+begin
+  perform 1 from pg_class where relname = 'pending_binding' and relkind = 'r';
+  if not found then raise exception 'FAIL: pending_binding table missing'; end if;
+
+  perform 1 from pg_indexes where indexname = 'pending_binding_active_uq';
+  if not found then raise exception 'FAIL: pending_binding_active_uq partial unique index missing'; end if;
+
+  perform 1 from pg_proc where proname = 'capture_pending_binding';
+  if not found then raise exception 'FAIL: capture_pending_binding function missing'; end if;
+
+  if not has_function_privilege('service_role', 'capture_pending_binding(text,text,text,timestamptz)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on capture_pending_binding';
+  end if;
+  if not has_table_privilege('service_role', 'pending_binding', 'insert') then
+    raise exception 'FAIL: service_role lacks insert on pending_binding';
+  end if;
+  raise notice 'PASS: pending_binding table + active-uq index + capture_pending_binding grant present';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='
