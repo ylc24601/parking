@@ -15,6 +15,8 @@ describe('renderTemplate', () => {
       ['offer_auto_approved', {}],
       ['broadcast_release', { released_count: 2 }],
       ['reservation_released', { released_at: '2026-06-21T02:45:00Z' }],
+      ['reservation_cancelled', { cancel_status: 'cancelled_late' }],
+      ['reservation_cancelled', { cancel_status: 'cancelled_by_user' }],
       ['p2_arrival_reminder', { sunday_date: '2026-06-21' }],
     ]
     for (const [key, payload] of cases) {
@@ -69,6 +71,21 @@ describe('renderTemplate', () => {
     expect(text).toContain('【教會停車】')
     expect(text).toContain('釋出')
     expect(renderTemplate('reservation_released', { released_at: 'not-a-date' })).toContain('釋出')
+  })
+
+  it('renders reservation_cancelled with distinct wording per cancel_status, and a neutral fallback', () => {
+    const late = renderTemplate('reservation_cancelled', { cancel_status: 'cancelled_late' })
+    const byUser = renderTemplate('reservation_cancelled', { cancel_status: 'cancelled_by_user' })
+    expect(late).toContain('【教會停車】')
+    expect(late).toContain('已核准')          // gave up an approved seat
+    expect(late).toContain('釋出給候補')
+    expect(byUser).toContain('申請／候補')      // was pending/waiting
+    expect(late).not.toBe(byUser)
+    // unknown / missing status → the neutral (cancelled_by_user) line, never a throw or wrong wording
+    expect(renderTemplate('reservation_cancelled', {})).toBe(byUser)
+    expect(renderTemplate('reservation_cancelled', { cancel_status: 'weird' })).toBe(byUser)
+    // no penalty / personal data in either line
+    for (const t of [late, byUser]) expect(t).not.toMatch(/罰|penalty|逾期|名字|車牌/)
   })
 
   it('throws on an unknown template_key', () => {

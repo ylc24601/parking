@@ -1,8 +1,8 @@
 # 教會主日停車管理系統 — 開發交接文件（Current Handoff）
 
-> 最後更新：2026-07-04 ｜ **Phase 3 已結案；Phase 4 進行中（Slice A + B + C + D 完成）** ｜ 範圍：Phase 0、Phase 1、Phase 2 Slice 1–4、Phase 3 Slice 1 + v2 全部切片（walk-in / 穩定度 / 紙本備援 / 結束當週點名 / 真 PIN session / weekly_events finalize / auto-finalize fallback）+ **Phase 4 Slice A — LINE notification dispatcher** + **Phase 4 Slice B — Staff「請車主移車」** + **Phase 4 Slice C — dispatcher ops hardening（排程綁定 + dryRun 預覽 + outbox 健康度可視 + production transport guard）** + **Phase 4 Slice D — 釋出時通知被釋出成員本人（`reservation_released`）** 全數完成
+> 最後更新：2026-07-04 ｜ **Phase 3 已結案；Phase 4 進行中（Slice A + B + C + D + E 完成）** ｜ 範圍：Phase 0、Phase 1、Phase 2 Slice 1–4、Phase 3 Slice 1 + v2 全部切片（walk-in / 穩定度 / 紙本備援 / 結束當週點名 / 真 PIN session / weekly_events finalize / auto-finalize fallback）+ **Phase 4 Slice A — LINE notification dispatcher** + **Phase 4 Slice B — Staff「請車主移車」** + **Phase 4 Slice C — dispatcher ops hardening（排程綁定 + dryRun 預覽 + outbox 健康度可視 + production transport guard）** + **Phase 4 Slice D — 釋出時通知被釋出成員本人（`reservation_released`）** + **Phase 4 Slice E — 取消確認通知（`reservation_cancelled`）** 全數完成
 >
-> **本階段：Phase 4 — Notification & LINE Integration**。**Slice A（dispatcher）+ B（移車請求）+ C（ops hardening）+ D（釋出通知本人）已完成**（見 §6.13 / §6.14 / §6.15 / §6.16）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車/釋出文案定稿 + per-member `line_id` 綁定流程；正式排程掛載（Vercel Pro cron 或外部排程，見 [dispatcher-ops.md](dispatcher-ops.md)）。** 見 [v2-backlog.md](v2-backlog.md) §2 與 §9 Deferred。
+> **本階段：Phase 4 — Notification & LINE Integration**。**Slice A（dispatcher）+ B（移車請求）+ C（ops hardening）+ D（釋出通知本人）+ E（取消確認）已完成**（見 §6.13 / §6.14 / §6.15 / §6.16 / §6.17）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車/釋出/取消文案定稿 + per-member `line_id` 綁定流程；正式排程掛載（Vercel Pro cron 或外部排程，見 [dispatcher-ops.md](dispatcher-ops.md)）。** 見 [v2-backlog.md](v2-backlog.md) §2 與 §9 Deferred。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
 > 程式碼根目錄：`parking-system/`（`@/*` alias 指向該目錄）
 
@@ -30,17 +30,18 @@
 | **Phase 4 Slice B** | **Staff「請車主移車」**：`staff_checkin_view` 加 Staff-safe `owner_notifiable` 布林 + 伺服器端車主解析（不洩 `line_id`/`user_id`）+ enqueue `move_car_request` → dispatcher 送出；Staff 列上「請移車」動作 | ✅ 完成 |
 | **Phase 4 Slice C** | **Dispatcher ops hardening**：dispatch route 加 GET（Vercel Cron / 外部排程）+ `cronOrJobSecretValid`（x-job-secret 或 `Bearer $CRON_SECRET`）+ `dryRun` 無異動預覽 + `outbox_health` RPC/route/CLI 健康度可視（operation-safe）+ production 拒 `mock`（`mock_in_production`）| ✅ 完成 |
 | **Phase 4 Slice D** | **釋出時通知被釋出成員本人**：主日釋出 sweep 將 `approved`→`released_late` 時，除對候補者廣播外，另發一則 `reservation_released` 給被釋出的車主（一次性 `released_owner:<id>` dedupe；資訊性、無罰責、`已於 {time} 釋出` 非期限）；migration `0015` 4-arg `apply_release`（+ 3-arg 相容 wrapper），owner notice 僅由本 sweep `released` CTE 產生並三重再驗證（reservation_id/user_id/template）；**結算 pre-sweep 靜默**（`notifyReleasedOwners:false`）| ✅ 完成 |
+| **Phase 4 Slice E** | **取消確認通知**：會友取消預約時，除既有「遞補 offer 給下一位候補」外，另發一則 `reservation_cancelled` 給**取消者本人**（一次性 `cancel_notice:<id>` dedupe；`cancelled_late`/`cancelled_by_user` 兩種措辭、無罰責、指回報名系統）；migration `0016` 8-arg `apply_cancellation`（+ 7-arg 相容 wrapper），confirmation 僅由本次 `cancelled` CTE 產生、三重再驗證，且 `cancel_status` **由 RPC 轉態後狀態權威決定**（非 TS payload）；**限會友自行取消**，未來 admin/staff 取消需另立模板 | ✅ 完成 |
 
 **主日完整生命週期（分配 → 取消/遞補 → 釋出/出席 → 結算）已全部落地，並補上 Staff 現場頁
 （點名/補點名/walk-in 登記/誤點復原/離線只讀/紙本備援清單/結束當週點名/真 PIN session/結束整週 finalize/auto-finalize fallback）。
 Phase 3（Staff 現場頁 + v2 全部切片）至此結案。** 下一階段為 **Phase 4 — Notification & LINE Integration**
 （LINE notification dispatcher + 移車通知、Member/Admin UI），見 [v2-backlog.md](v2-backlog.md) 與 §9 Deferred。
 
-**目前測試狀態（Phase 4 Slice D 本回合實跑）：** `tsc --noEmit` ✅、`eslint` ✅、`next build` ✅、
-`npm test`（不接 DB）**370 passed / 40 skipped**（+ `releaseExpired` owner-notice / `runRelease` dedupe + 結算靜默 / `reservation_released` 模板 render）、
-`RUN_DB_TESTS=1 npm test`（接本機 Supabase）**414 passed**（新增 `release-owner-notice.db.test.ts`：scoping / 一次性 dedupe / payload leak-scan）、`npm run db:verify` **20/20 PASS**（新增斷言 20：`apply_release` 4-arg + 3-arg wrapper + service_role execute）。
-Slice D 已完成**實機 E2E**（mock transport）：釋出 sweep → outbox 同時有 `released_owner:<id>`（`reservation_released`，payload 僅 `released_at`）與 `broadcast_release`；render 出資訊性文案「您本週保留的車位已於 10:46 釋出…請前往地下室現場洽詢停車同工」；
-mock dispatch 兩則皆 **sent**；**重跑釋出 → 0 重複** owner notice（dedupe）；結算 pre-sweep 對被釋出者 **靜默**（`notifyReleasedOwners:false`）。
+**目前測試狀態（Phase 4 Slice E 本回合實跑）：** `tsc --noEmit` ✅、`eslint` ✅、`next build` ✅、
+`npm test`（不接 DB）**372 passed / 43 skipped**（+ `cancelReservation` cancel-notice（三路徑 + no-op）/ `reservation_cancelled` 模板兩態 render + fallback）、
+`RUN_DB_TESTS=1 npm test`（接本機 Supabase）**419 passed**（新增 `cancel-confirm-notice.db.test.ts`：canceller confirmation scoping / 兩種 cancel_status / 一次性 dedupe / payload leak-scan）、`npm run db:verify` **21/21 PASS**（新增斷言 21：`apply_cancellation` 8-arg + 7-arg wrapper + service_role execute）。
+Slice E 已完成**實機 E2E**（mock transport）：取消 approved → outbox 同時有 `offer_2hr_confirm`（給候補）與 `cancel_notice:<id>`（`reservation_cancelled`，payload 僅 `cancel_status: cancelled_late`，由 RPC 權威決定）；render 出「您本週已核准的停車預約已為您取消，車位將釋出給候補的弟兄姊妹…」；
+mock dispatch 兩則皆 **sent**；**重跑取消 → 0 重複** confirmation（no-op / dedupe）。
 排程/預覽/健康度 runbook 見 [dispatcher-ops.md](dispatcher-ops.md)。
 **本機 Supabase stack 本回合啟動並實跑，驗證後可停止。**
 
@@ -513,7 +514,23 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 ### 驗證（本回合實跑）
 - 靜態：`tsc`/`eslint`/`next build` ✅。測試：`npm test` **370 / 40 skipped**；`RUN_DB_TESTS=1` **414**（新增 `release-owner-notice.db.test.ts`：一次性 dedupe、只對本 sweep 釋出者、payload 只含 `released_at` 的 leak-scan）；`db:verify` **20/20**。
 - **實機 E2E**（本機 Supabase、mock transport）：釋出 → outbox 同時有 `released_owner:<id>` 與 `broadcast_release`；render 出資訊性文案（`已於 10:46 釋出`）；mock dispatch 兩則皆 `sent`；重跑釋出 **0 重複**；結算 pre-sweep 對被釋出者靜默。
-- **仍 deferred**：`reservation_released`/`move_car_request` 文案教會定稿；per-member `line_id` 綁定；取消確認通知（member 自行取消，另刀）；`no_show`/牧養通知（刻意延後）。
+- **仍 deferred**：`reservation_released`/`move_car_request` 文案教會定稿；per-member `line_id` 綁定；`no_show`/牧養通知（刻意延後）。（取消確認通知已於 §6.17 Slice E 完成。）
+
+---
+
+## 6.17 Phase 4 Slice E — 取消確認通知（本次完成）
+
+補上取消流程的通知缺口：會友取消預約時，`apply_cancellation`（migration 0006）**已通知遞補的下一位候補**（`offer_2hr_confirm`/`reservation_approved`），但**取消者本人卻收不到任何確認**。本刀補一則確認給取消者。**純後端/producer**：不動 member/Staff/Admin UI、不做 webhook/LIFF、不動 dispatcher/排程，既有遞補 offer 通知不變。
+
+- **新模板 `reservation_cancelled`**（`lib/types.ts` union + `templates.ts` RENDERER）：只讀 `cancel_status` 分兩種措辭 —— `cancelled_late`（放掉已核准車位）「…已核准的停車預約已為您取消，車位將釋出給候補…」／`cancelled_by_user`（原 pending/waiting）「…停車申請／候補已為您取消…」；**任何非 `cancelled_late` 值（含缺漏）皆走中性 `cancelled_by_user` 措辭**（不誤導、不 throw）。**限會友自行取消**（renderer 註解明載）；未來 admin/staff 取消為不同 actor，需另立模板、勿沿用此措辭。無罰責、無個資、指回報名系統。
+- **Producer**：`cancelReservation`（`cancellationService.ts`）在算出 `cancelStatus` 後建一則 confirmation `OutboxRow`（`user_id: r.user_id`、`reservation_id: r.id`、`template_key: 'reservation_cancelled'`、**payload `{}`——`cancel_status` 由 RPC 權威決定**），dedupe key **一次性 `cancel_notice:${reservationId}`**（一筆預約只取消一次 → 至多一則、重跑 `ON CONFLICT DO NOTHING`）；三條 `applyCancellation` 路徑（純取消／approved 無候補／approved 有遞補）皆帶入。已取消的冪等 no-op 路徑**不呼叫 RPC** → 不重發。offer-race retry（`apply_offer`）不需改：confirmation 已由首次 `applyCancellation` 的 `cancelled` CTE 入列。`CancelSummary` 加 `confirmationEnqueued`。
+- **原子入列**：migration **`0016_cancel_confirm_notice.sql`** 加 **8-arg `apply_cancellation`**，第 8 參數 `p_cancel_notice`；保留舊 **7-arg 為相容 wrapper**（空陣列委派，非破壞性）。`cancelled` CTE 改 `returning id, user_id, status`；新 `ins_cancel` CTE **僅 join 本次 `cancelled` CTE**（非所有已取消列），三重再驗證 `id=reservation_id` **且** `user_id=user_id` **且** `template_key='reservation_cancelled'`，收件人與 **`payload_json = jsonb_build_object('cancel_status', cancelled.status)` 皆取自轉態後的列**（TS 錯無法寄錯人／渲染錯措辭；`cancelled.status` 天生只會是兩個白名單值）。既有 `sub`/`ins`（遞補）CTE 不變。`verify_schema` 斷言 **21**。
+- **Repository**：`applyCancellation` args 加 `cancelNotice: OutboxRow[]` → `p_cancel_notice`；`CancellationResult` 加 `cancel_notice_enqueued`。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`/`eslint`/`next build` ✅。測試：`npm test` **372 / 43 skipped**；`RUN_DB_TESTS=1` **419**（新增 `cancel-confirm-notice.db.test.ts`：canceller confirmation 只由本次 cancel 產生、兩種 `cancel_status`、一次性 dedupe、payload 只含 `cancel_status` 的 leak-scan）；`db:verify` **21/21**。
+- **實機 E2E**（本機 Supabase、mock transport）：取消 approved → outbox 同時有 `offer_2hr_confirm`（候補）與 `cancel_notice:<id>`（`reservation_cancelled`，payload `cancel_status: cancelled_late` 由 RPC 決定）；render 出取消確認文案；mock dispatch 兩則皆 `sent`；重跑取消 **0 重複**。
+- **仍 deferred**：`reservation_cancelled`/`reservation_released`/`move_car_request` 文案教會定稿；admin/staff 取消的另立措辭；per-member `line_id` 綁定；`no_show`/牧養通知（刻意延後）。
 
 ---
 
@@ -538,15 +555,15 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `npm test`（不接 DB） | ✅ **370 passed / 40 skipped**（本回合實跑；`*.db.test.ts` 被 gate 跳過） |
-| `npm run db:reset` | ✅ 套用 `0001–0015` + seed |
-| `npm run db:verify` | ✅ **20/20** schema 斷言 PASS |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **414 passed** |
+| `npm test`（不接 DB） | ✅ **372 passed / 43 skipped**（本回合實跑；`*.db.test.ts` 被 gate 跳過） |
+| `npm run db:reset` | ✅ 套用 `0001–0016` + seed |
+| `npm run db:verify` | ✅ **21/21** schema 斷言 PASS |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **419 passed** |
 
-> 上表全為 **Phase 4 Slice D（釋出時通知被釋出成員本人）本回合實測**（含 `db:reset 0001–0015`、`db:verify` 20/20、`RUN_DB_TESTS=1` 414）。下方 Slice 4 專屬涵蓋為當時紀錄。
+> 上表全為 **Phase 4 Slice E（取消確認通知）本回合實測**（含 `db:reset 0001–0016`、`db:verify` 21/21、`RUN_DB_TESTS=1` 419）。下方 Slice 4 專屬涵蓋為當時紀錄。
 
 **測試檔：** 純函式 `tests/unit/allocation/*`（含 `scenario.test.ts` 全週情境）；服務 `tests/unit/server/*`（mock repo）；
-整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch,move-car,outbox-health,release-owner-notice}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。
+整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch,move-car,outbox-health,release-owner-notice,cancel-confirm-notice}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。
 
 **Slice 4 整合測試涵蓋：** 結算前 release sweep 補抓 approved-逾時列、`released_late → no_show`、P3 `penalty_score+1`、
 P2 `consecutive_no_show→4` 開 alert、**結算不寫 outbox**、冪等重跑（settled 0、不重複加分/開 alert）、**跨 event 的 open-alert
@@ -583,7 +600,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 | 成員 / Admin 對外 API + UI（P2-first rollout） | 後續切片 | 第一版優先 P2 流程；P1 UI / P3 申請 / P3 penalty admin 以 feature flag / deferred 預留 |
 | ~~LINE notification dispatcher（outbox → LINE 實際送出）~~ | ✅ **完成（Phase 4 Slice A，§6.13）** | 原子 claim/lease 防並發重送 + 顯式 `NOTIFICATION_TRANSPORT` 模式（缺 token fail-fast、不靜默假送）+ 型別化失敗分類 + backoff 重試；`job:dispatch` CLI / 內部 route |
 | ~~移車請求模板 + `POST /api/staff/move-car` + Staff 列動作 + OA 加入狀態 gating~~ | ✅ **完成（Phase 4 Slice B，§6.14）** | `owner_notifiable` Staff-safe 投影 + 伺服器端車主解析（不洩 `line_id`/`user_id`）；enqueue → dispatcher 送出；列上「請移車」disabled/labeled |
-| **通知 go-live 前置**：真實 OA channel token + 移車/釋出文案定稿 + per-member `line_id` 綁定流程 | **ops 軌** | §6.14/§6.16 已用 mock transport 全綠；上線需真實憑證與綁定；`move_car_request`/`reservation_released` 文案與緊急/其他版本（B/C/D）另備 |
+| **通知 go-live 前置**：真實 OA channel token + 移車/釋出/取消文案定稿 + per-member `line_id` 綁定流程 | **ops 軌** | §6.14/§6.16/§6.17 已用 mock transport 全綠；上線需真實憑證與綁定；`move_car_request`/`reservation_released`/`reservation_cancelled` 文案與緊急/其他版本（B/C/D）、admin/staff 取消措辭另備 |
 | ~~dispatcher 排程綁定 + `dryRun` 預覽 + outbox 健康度可視 + production transport guard~~ | ✅ **完成（Phase 4 Slice C，§6.15）** | GET+cron/job auth、`?dryRun=1`/`--dry-run`、`outbox_health` RPC + `/outbox-status` + `job:outbox-status`、`mock_in_production` guard；runbook [dispatcher-ops.md](dispatcher-ops.md) |
 | dispatcher **正式排程掛載**（Vercel Pro cron 或外部排程實際綁定）+ 監控告警 / `failed` dead-letter 處理 / per-user LINE 綁定流程 / LIFF / LINE webhook（含「正在路上」回覆入口） | 後續 | §6.15 提供 route + CLI + runbook；實際部署掛載仍待 go-live；移車目前靠 `job:dispatch` 手動排空 |
 | **牧養關懷 alert 處理（resolution）UI** | Admin 切片 | `pastoral_care_alerts` 已可開立；`resolved_at/resolved_by/note` 欄位已就緒但暫不寫入 |
