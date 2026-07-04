@@ -552,6 +552,24 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 
 ---
 
+## 6.19 Phase 5 Slice A — LINE webhook + pending binding capture（本次完成）
+
+真正的 go-live 送達卡點是**沒有東西寫 `users.line_id`**——dispatcher 對每列標 `no_line_id`、即使有真 token 也送不到人。而 LINE `userId` **只能**由 webhook/LIFF 事件取得（OA 後台看不到 userId）。本刀跨過先前每刀刻意守住的 no-webhook 邊界，用**最薄**方式補上「擷取」端：會友加了 OA 後傳 `綁定 <code>` / `bind <code>`，webhook 記一筆 **pending 綁定申領**。**本刀不寫 `users.line_id`**（由下一刀 5B 審核 pending → 寫入，遵守 `users_line_id_key`）。規劃見 [go-live-readiness.md](go-live-readiness.md)。
+
+- **capture-only、零回覆**：webhook 只**驗簽 → 擷取 → 回 200**，**不 reply、不 push、不 broadcast**。推播是 `userId` 點對點，故本刀可安全指向教會正式 OA 做 dry-run 而不會外溢全體會友（見 go-live-readiness §2）。單次測試推播為**另一個手動 gated 腳本**，不與 webhook 耦合。
+- **簽章驗證用 raw body**：`POST /api/line/webhook`（Node runtime、`nodejs`）先 `request.text()` 讀原始 bytes 再驗 `x-line-signature`（HMAC-SHA256 base64，`LINE_CHANNEL_SECRET`，`server/http/lineSignature.ts`，timing-safe、fail-closed）。**簽章無效 → 401 且不寫 DB**。驗簽後即使 payload 畸形/不支援也**回 200 不 throw**（LINE 對非 2xx 會重送）。
+- **最小解析（tightened）**：只認 `綁定 <code>` / `bind <code>` / `BIND <code>`；code 正規化（trim + uppercase）後須符 `^[A-Z0-9-]{4,16}$`。不符 → 回 200 但**不建列**（counts-only `ignored`）。**follow 事件只計數不建申領**。**不儲存任意聊天文字**（`pendingBindingService.ts` 純函式 `parseBindCode` 可單測）。
+- **一 LINE 帳號一筆 active pending**（migration `0018`）：partial unique `pending_binding_active_uq (line_user_id) where status='pending'`；同一 userId 重送 → RPC `capture_pending_binding` 以 `ON CONFLICT ... where status='pending'` **原地 upsert**（新 code 勝、`superseded_count++`、更新 `last_submitted_at`/`last_event_type`），`xmax<>0` 區分 insert/update 供計數——**不灌爆表**。RPC 回傳 counts-only（`captured`/`superseded`），**永不回/記 userId 或 code**。表 RLS deny-all + service_role 顯式 grant（0004 blanket grant 為當時一次性，本表在其後建立）。
+- **隱私**：`line_user_id`/`submitted_code` 存在本表（這正是目的），但**不得**流入 log / error / `notification_outbox.last_error`。
+- **送出鎖 posture**：新增 `LINE_CHANNEL_SECRET`（驗 inbound webhook，與授權 outbound 的 `LINE_CHANNEL_ACCESS_TOKEN` 不同）＋ `LINE_SEND_ENABLED=false`（本刀無讀者，文件化 go-live 安全鎖 + 未來單次測試推播閘門）。正式預約通知仍由 `NOTIFICATION_TRANSPORT` 掌控、**維持關閉**。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`/`eslint`/`next build` ✅（`/api/line/webhook` ƒ dynamic、Node runtime）。測試：`npm test` **414 / 57 skipped**（新增 `pendingBindingService.test.ts` + `lineSignature.test.ts`）；`RUN_DB_TESTS=1` **471**（新增 `pending-binding.db.test.ts`，走真 route handler → 本機 Supabase）；`db:verify` **23/23**（新增 assertion #23）。
+- **實機 E2E**（route handler + 本機 DB）：正確簽章 `bind abc-123` → 200 `captured:1`、pending 列 `ABC-123`/`superseded_count:0`；同 userId 重送 `綁定 xyz789` → `superseded:1`、仍一列 `XYZ789`/`superseded_count:1`；壞簽章 → **401 不建列**；`請問怎麼停車？` → 200 `ignored:1` 不建列；`users.line_id` 全程未寫。
+- **仍 deferred**：**5B**（admin/script 審核 pending → 寫 `users.line_id`，遵守 partial unique）；LIFF；webhook 自動回覆/「正在路上」入口；單次測試推播腳本；接教會正式 OA + 真 token + 文案定稿。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
@@ -621,7 +639,9 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 | **通知 go-live 前置**：真實 OA channel token + 移車/釋出/取消文案定稿 + per-member `line_id` 綁定流程 | **ops 軌** | §6.14/§6.16/§6.17 已用 mock transport 全綠；上線需真實憑證與綁定；`move_car_request`/`reservation_released`/`reservation_cancelled` 文案與緊急/其他版本（B/C/D）、admin/staff 取消措辭另備 |
 | ~~dispatcher 排程綁定 + `dryRun` 預覽 + outbox 健康度可視 + production transport guard~~ | ✅ **完成（Phase 4 Slice C，§6.15）** | GET+cron/job auth、`?dryRun=1`/`--dry-run`、`outbox_health` RPC + `/outbox-status` + `job:outbox-status`、`mock_in_production` guard；runbook [dispatcher-ops.md](dispatcher-ops.md) |
 | ~~dispatcher 健康度**監控告警** + `failed` **dead-letter 處理** + 外部排程 runbook~~ | ✅ **完成（Phase 4 Slice F，§6.18）** | `GET /outbox-alert`（200/503）+ `job:outbox-alert`；`requeue-failed`（手動、dryRun 預設、`failed→pending`）；`outbox_health.oldest_due_at`；外部排程器文件化（不 commit live artifact） |
-| dispatcher **正式排程實際掛載**（外部排程器設 secret + 部署後啟用）/ push-channel 告警（Slack/email/LINE-admin）/ per-user LINE 綁定流程 / LIFF / LINE webhook（含「正在路上」回覆入口） | go-live / 後續 | §6.18 App 為 scheduler-ready；實際掛載需部署 + secret；移車/通知目前靠 `job:dispatch` 手動或外部 cron 排空 |
+| dispatcher **正式排程實際掛載**（外部排程器設 secret + 部署後啟用）/ push-channel 告警（Slack/email/LINE-admin）/ LIFF / webhook 自動回覆（含「正在路上」回覆入口） | go-live / 後續 | §6.18 App 為 scheduler-ready；實際掛載需部署 + secret；移車/通知目前靠 `job:dispatch` 手動或外部 cron 排空 |
+| ~~LINE webhook + pending binding 擷取（`綁定 <code>` → pending 申領，不寫 `users.line_id`）~~ | ✅ **完成（Phase 5A，§6.19）** | 驗簽（raw body HMAC）+ capture-only 零回覆 + `0018` `pending_binding` 一帳號一 active pending（upsert）+ counts-only；可安全對正式 OA dry-run。**規劃 [go-live-readiness.md](go-live-readiness.md)** |
+| **Phase 5B — pending 綁定審核 → 寫 `users.line_id`**（admin/script approval，遵守 `users_line_id_key` partial unique；接上 dispatcher 真送達） | **下一刀** | §6.19 只擷取 pending；5B 完成後綁定會友即可真送達（需搭真 token） |
 | **牧養關懷 alert 處理（resolution）UI** | Admin 切片 | `pastoral_care_alerts` 已可開立；`resolved_at/resolved_by/note` 欄位已就緒但暫不寫入 |
 | 其餘兩種 §7 牧養觸發（短期行動不便到期 / 幼兒資格到期）每日排程 | 後續 | 目前僅實作「連續未到」觸發 |
 | **P1 全職同工 `weekly_staff_allocations` no-show 處理** | 後續 | 與 reservation 結算分離；Slice 4 只結算 reservation（P2/P3） |
