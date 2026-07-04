@@ -73,7 +73,7 @@ describe('settle', () => {
     const r = releasedLate({ effective_priority: 3 })
     const repo = makeMockRepo({
       getReservationsForRelease: vi.fn(async () => { order.push('release-read'); return [] }),
-      applyRelease: vi.fn(async () => { order.push('release-apply'); return { released: 0, outbox_enqueued: 0 } }),
+      applyRelease: vi.fn(async () => { order.push('release-apply'); return { released: 0, outbox_enqueued: 0, owner_notices_enqueued: 0 } }),
       getReleasedLateForSettlement: vi.fn(async () => { order.push('settle-read'); return [r] }),
       getPenaltyCountersForUsers: vi_fn([ctr(r.user_id!, 0, 0)]),
     })
@@ -85,7 +85,7 @@ describe('settle', () => {
   it('no released_late → early return, no settlement applied', async () => {
     const repo = makeMockRepo({
       getReleasedLateForSettlement: vi_fn([]),
-      applyRelease: vi.fn(async () => ({ released: 2, outbox_enqueued: 0 })),
+      applyRelease: vi.fn(async () => ({ released: 2, outbox_enqueued: 0, owner_notices_enqueued: 0 })),
     })
 
     const summary = await settle({ eventId: EVENT, now: T.SUN_1230 }, asRepo(repo))

@@ -227,6 +227,18 @@ begin
   raise notice 'PASS: outbox_health present with service_role execute grant';
 end $$;
 
+-- ── 20. apply_release 4-arg (owner notices) + 3-arg wrapper, service_role execute (Phase 4 D) ─
+do $$
+begin
+  if not has_function_privilege('service_role', 'apply_release(uuid,timestamptz,jsonb,jsonb)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on 4-arg apply_release (owner notices)';
+  end if;
+  if not has_function_privilege('service_role', 'apply_release(uuid,timestamptz,jsonb)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on 3-arg apply_release wrapper';
+  end if;
+  raise notice 'PASS: apply_release 4-arg + 3-arg wrapper present with service_role execute grant';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

@@ -45,6 +45,15 @@ const RENDERERS: Record<NotificationTemplate, (p: Payload) => string> = {
   broadcast_release: () =>
     '【教會停車】您好 🙏 現在有停車名額釋出，歡迎候補的弟兄姊妹前往地下室停車（現場先到先停、不保證保留），謝謝您。',
 
+  // Sunday release sweep: tell the member whose reserved seat was released (missed check-in) —
+  // informational, no penalty/reprimand. `released_at` is the RELEASE time (not the deadline);
+  // it must not promise on-site spots exist. Provisional copy; final wording is church sign-off.
+  reservation_released: p => {
+    const at = taipeiTime(p.released_at)
+    const when = at ? `已於 ${at} 釋出` : '已釋出'
+    return `【教會停車】您好 🙏 您本週保留的車位${when}。若仍需停車，請前往地下室現場洽詢停車同工，將依現場狀況協助，謝謝您。`
+  },
+
   p2_arrival_reminder: p => {
     const label = typeof p.sunday_date === 'string' ? p.sunday_date : '本主日'
     return `【教會停車】您好 🙏 提醒您 ${label} 的車位保留至 10:45。若您正在路上，請回覆「正在路上」，我們會為您保留至 10:55，謝謝您。`

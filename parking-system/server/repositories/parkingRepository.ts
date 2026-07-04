@@ -95,7 +95,8 @@ export interface PenaltyCounters {
 
 export interface ReleaseResult {
   released: number
-  outbox_enqueued: number
+  outbox_enqueued: number        // broadcast_release rows enqueued (waiting users)
+  owner_notices_enqueued: number // reservation_released rows enqueued (released owners)
 }
 
 // Penalty recovery payload for apply_attendance (null for walk-in). Dates are strings:
@@ -333,7 +334,12 @@ export interface ParkingRepository {
   getReservationsForRelease(eventId: string): Promise<Reservation[]>
   getPenaltyCounters(userId: string): Promise<PenaltyCounters>
   getP2ArrivalReminderTargets(eventId: string): Promise<Reservation[]>
-  applyRelease(eventId: string, nowIso: string, broadcast: OutboxRow[]): Promise<ReleaseResult>
+  applyRelease(
+    eventId: string,
+    nowIso: string,
+    broadcast: OutboxRow[],
+    ownerNotices: OutboxRow[],
+  ): Promise<ReleaseResult>
   applyAttendance(args: {
     eventId: string
     reservationId: string
@@ -641,11 +647,12 @@ export function createParkingRepository(
       return (data ?? []).map(rowToReservation)
     },
 
-    async applyRelease(eventId, nowIso, broadcast) {
+    async applyRelease(eventId, nowIso, broadcast, ownerNotices) {
       const { data, error } = await client.rpc('apply_release', {
         p_event_id: eventId,
         p_now: nowIso,
         p_broadcast: broadcast,
+        p_owner_notices: ownerNotices,
       })
       if (error) throw new Error(`apply_release failed: ${error.message}`)
       return data as ReleaseResult

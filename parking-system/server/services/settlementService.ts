@@ -28,7 +28,9 @@ export async function settle(
   const { eventId, now = new Date() } = params
 
   // 1) Final release sweep — promote any approved-but-past-deadline rows to released_late.
-  const release = await runRelease({ eventId, now }, repo)
+  // These rows are settled to no_show right below; the pastoral path stays silent, so the
+  // release-owner notice is suppressed here (a normal near-real-time sweep still sends it).
+  const release = await runRelease({ eventId, now, notifyReleasedOwners: false }, repo)
 
   // 2) Reload what is now released_late.
   const released = await repo.getReleasedLateForSettlement(eventId)

@@ -131,6 +131,43 @@ describe('releaseExpired', () => {
     expect(outbox).toHaveLength(0)
   })
 
+  // ── Owner notice (the member whose own seat was released) ───────────────────────
+  it('notifies the released owner with reservation_released (id/user/released_at)', () => {
+    const approved = p3({ status: 'approved' })
+    const { outbox } = releaseExpired([approved], T.SUN_1031)
+
+    const owner = outbox.filter(o => o.template_key === 'reservation_released')
+    expect(owner).toHaveLength(1)
+    expect(owner[0].reservation_id).toBe(approved.id)
+    expect(owner[0].user_id).toBe(approved.user_id)
+    // released_at is the SWEEP time, not the deadline
+    expect(owner[0].payload).toEqual({ released_at: T.SUN_1031.toISOString() })
+  })
+
+  it('emits one owner notice per released row and none for held/other statuses', () => {
+    const relP3 = p3({ status: 'approved' })       // due at 10:30 → released at 10:45
+    const relP2 = p2({ status: 'approved' })        // due at 10:45 → released at 10:45
+    const heldP2OnWay = p2OnWay({ status: 'approved' }) // due at 10:55 → held
+    const attended = p3({ status: 'attended' })
+    const waitingRow = makeReservation({ status: 'waiting' })
+    const { outbox } = releaseExpired(
+      [relP3, relP2, heldP2OnWay, attended, waitingRow],
+      T.SUN_1045,
+    )
+
+    const owner = outbox.filter(o => o.template_key === 'reservation_released')
+    expect(owner.map(o => o.reservation_id).sort()).toEqual([relP3.id, relP2.id].sort())
+    // never to the held on-the-way P2, the attended row, or waiting users
+    expect(owner.map(o => o.reservation_id)).not.toContain(heldP2OnWay.id)
+    expect(owner.map(o => o.reservation_id)).not.toContain(attended.id)
+    expect(owner.map(o => o.reservation_id)).not.toContain(waitingRow.id)
+  })
+
+  it('emits no owner notice when nothing was released', () => {
+    const { outbox } = releaseExpired([p3({ status: 'attended' })], T.SUN_1031)
+    expect(outbox.filter(o => o.template_key === 'reservation_released')).toHaveLength(0)
+  })
+
   // ── Idempotency ────────────────────────────────────────────────────────────────
   it('is idempotent: second run releases nothing more', () => {
     const { reservations: firstPass } = releaseExpired([p3({ status: 'approved' })], T.SUN_1031)
