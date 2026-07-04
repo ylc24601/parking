@@ -54,6 +54,17 @@ const RENDERERS: Record<NotificationTemplate, (p: Payload) => string> = {
     return `【教會停車】您好 🙏 您本週保留的車位${when}。若仍需停車，請前往地下室現場洽詢停車同工，將依現場狀況協助，謝謝您。`
   },
 
+  // Member SELF-cancellation confirmation only — the「已為您取消」wording assumes the member acted.
+  // Do NOT reuse for an admin/staff-initiated cancellation (different actor → different wording);
+  // that would need its own template. Reads only the row's `cancel_status` (authoritative from the
+  // apply_cancellation RPC state); any value other than `cancelled_late` uses the neutral line.
+  reservation_cancelled: p => {
+    if (p.cancel_status === 'cancelled_late') {
+      return '【教會停車】您好 🙏 您本週已核准的停車預約已為您取消，車位將釋出給候補的弟兄姊妹。若需重新申請請至報名系統，謝謝您。'
+    }
+    return '【教會停車】您好 🙏 您本週的停車申請／候補已為您取消。若需重新申請請至報名系統，謝謝您。'
+  },
+
   p2_arrival_reminder: p => {
     const label = typeof p.sunday_date === 'string' ? p.sunday_date : '本主日'
     return `【教會停車】您好 🙏 提醒您 ${label} 的車位保留至 10:45。若您正在路上，請回覆「正在路上」，我們會為您保留至 10:55，謝謝您。`

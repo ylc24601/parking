@@ -239,6 +239,18 @@ begin
   raise notice 'PASS: apply_release 4-arg + 3-arg wrapper present with service_role execute grant';
 end $$;
 
+-- ── 21. apply_cancellation 8-arg (cancel notice) + 7-arg wrapper, service_role execute (Phase 4 E) ─
+do $$
+begin
+  if not has_function_privilege('service_role', 'apply_cancellation(uuid,uuid,text,text,timestamptz,jsonb,jsonb,jsonb)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on 8-arg apply_cancellation (cancel notice)';
+  end if;
+  if not has_function_privilege('service_role', 'apply_cancellation(uuid,uuid,text,text,timestamptz,jsonb,jsonb)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on 7-arg apply_cancellation wrapper';
+  end if;
+  raise notice 'PASS: apply_cancellation 8-arg + 7-arg wrapper present with service_role execute grant';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

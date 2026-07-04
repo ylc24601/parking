@@ -72,7 +72,8 @@ export interface SubstitutePayload {
 export interface CancellationResult {
   cancelled: number
   substitute_applied: number
-  outbox_enqueued: number
+  outbox_enqueued: number         // substitute-offer rows enqueued
+  cancel_notice_enqueued: number  // confirmation rows enqueued to the cancelling member
 }
 
 export interface OfferResult {
@@ -319,6 +320,7 @@ export interface ParkingRepository {
     nowIso: string
     substitute: SubstitutePayload | null
     outbox: OutboxRow[]
+    cancelNotice: OutboxRow[]   // confirmation to the cancelling member (enqueued iff cancel fires)
   }): Promise<CancellationResult>
   applyOffer(eventId: string, substitute: SubstitutePayload, outbox: OutboxRow[]): Promise<OfferResult>
   applyOfferResolution(args: {
@@ -580,6 +582,7 @@ export function createParkingRepository(
         p_now: args.nowIso,
         p_substitute: args.substitute,
         p_outbox: args.outbox,
+        p_cancel_notice: args.cancelNotice,
       })
       if (error) throw new Error(`apply_cancellation failed: ${error.message}`)
       return data as CancellationResult

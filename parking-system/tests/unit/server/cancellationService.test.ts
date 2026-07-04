@@ -26,9 +26,18 @@ describe('cancelReservation', () => {
 
     expect(summary.cancelStatus).toBe('cancelled_by_user')
     expect(summary.substituteOffered).toBe(false)
+    expect(summary.confirmationEnqueued).toBe(true)
     expect(repo.applyCancellation).toHaveBeenCalledOnce()
     expect(repo.applyCancellation.mock.calls[0][0].substitute).toBeNull()
     expect(repo.applyCancellation.mock.calls[0][0].cancelStatus).toBe('cancelled_by_user')
+
+    // a cancel-confirmation is queued to the cancelling member, keyed once-per-reservation.
+    const notice = repo.applyCancellation.mock.calls[0][0].cancelNotice
+    expect(notice).toHaveLength(1)
+    expect(notice[0].template_key).toBe('reservation_cancelled')
+    expect(notice[0].user_id).toBe(r.user_id)
+    expect(notice[0].reservation_id).toBe(r.id)
+    expect(notice[0].dedupe_key).toBe(`cancel_notice:${r.id}`)
   })
 
   it('waiting → cancelled_by_user with no substitute', async () => {
@@ -59,6 +68,11 @@ describe('cancelReservation', () => {
     expect(arg.substitute.offer_expires_at).toBe(new Date('2026-06-20T15:00:00Z').toISOString())
     expect(arg.substitute.last_offer_at).toBe(NOW_PRE.toISOString())
     expect(arg.outbox[0].dedupe_key).toBe(`offer:${w1.id}:${NOW_PRE.toISOString()}`)
+    // the cancelling member's confirmation is additive and distinct from the substitute offer.
+    expect(arg.cancelNotice).toHaveLength(1)
+    expect(arg.cancelNotice[0].reservation_id).toBe(r.id)         // the CANCELLER, not the substitute
+    expect(arg.cancelNotice[0].dedupe_key).toBe(`cancel_notice:${r.id}`)
+    expect(summary.confirmationEnqueued).toBe(true)
   })
 
   it('approved (after midnight) → substitute is direct approved with release_deadline_at stamped', async () => {
@@ -88,7 +102,7 @@ describe('cancelReservation', () => {
     const repo = makeMockRepo({
       getReservation: vi_fn(r),
       getWaitingForSubstitution: vi_fn([w1, w2]),
-      applyCancellation: vi.fn(async () => ({ cancelled: 1, substitute_applied: 0, outbox_enqueued: 0 })),
+      applyCancellation: vi.fn(async () => ({ cancelled: 1, substitute_applied: 0, outbox_enqueued: 0, cancel_notice_enqueued: 1 })),
       applyOffer: vi.fn(async () => ({ offered: 1, outbox_enqueued: 1 })),
     })
     const summary = await cancelReservation({ reservationId: r.id, now: NOW_PRE }, asRepo(repo))
@@ -113,6 +127,7 @@ describe('cancelReservation', () => {
     expect(summary.cancelled).toBe(false)
     expect(summary.cancelStatus).toBe('cancelled_late')
     expect(summary.substituteOffered).toBe(false)
+    expect(summary.confirmationEnqueued).toBe(false)   // no RPC → no confirmation
     expect(repo.applyCancellation).not.toHaveBeenCalled()
   })
 })

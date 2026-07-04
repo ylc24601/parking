@@ -127,6 +127,7 @@ export type NotificationTemplate =
   | 'offer_auto_approved'
   | 'broadcast_release'
   | 'reservation_released'
+  | 'reservation_cancelled'
   | 'p2_arrival_reminder'
   | 'staff_reminder'
   | 'admin_finalize_reminder'
