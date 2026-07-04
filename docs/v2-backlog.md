@@ -18,7 +18,7 @@
 - **v2 Auto-finalize fallback（內部 job：忘記結束時自動 settle + finalize）：✅ 已完成（2026-07-01）**，見 handoff §6.12。**營運兜底、非同工主流程**。
 - 會議回饋大多是**可直接做的微調**；唯一較大的是「移車聯絡」，要走教會 LINE OA、且卡在「會友未全加入 OA」。
 - **Phase 3 已結案（2026-07-01）**：~~① walk-in~~ → ~~② 穩定度~~ → ~~③ 紙本備援清單~~ → ~~④ 結束當週點名~~ → ~~⑤ 真 PIN session~~ → ~~⑥ weekly_events finalize~~ → ~~⑥.5 auto-finalize fallback~~ 全數完成。
-- **Phase 4 進行中（Notification & LINE Integration）**：**✅ Slice A — LINE notification dispatcher（2026-07-02）**（handoff §6.13）+ **✅ Slice B — Staff「請車主移車」move-car request（2026-07-03）**（handoff §6.14）+ **✅ Slice C — dispatcher ops hardening（2026-07-04）**（handoff §6.15：dispatch GET + Vercel-Cron/x-job-secret 雙軌 auth + `dryRun` 無異動預覽 + `outbox_health` 健康度可視 + production `mock` guard；runbook [dispatcher-ops.md](dispatcher-ops.md)）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車文案定稿 + per-member `line_id` 綁定流程；正式排程掛載（Vercel Pro cron 或外部排程）。**
+- **Phase 4 進行中（Notification & LINE Integration）**：**✅ Slice A — LINE notification dispatcher（2026-07-02）**（handoff §6.13）+ **✅ Slice B — Staff「請車主移車」move-car request（2026-07-03）**（handoff §6.14）+ **✅ Slice C — dispatcher ops hardening（2026-07-04）**（handoff §6.15：dispatch GET + Vercel-Cron/x-job-secret 雙軌 auth + `dryRun` 無異動預覽 + `outbox_health` 健康度可視 + production `mock` guard；runbook [dispatcher-ops.md](dispatcher-ops.md)）+ **✅ Slice D — 釋出時通知被釋出成員本人（2026-07-04）**（handoff §6.16：`reservation_released` 一則資訊性通知 + `0015` 4-arg `apply_release`/3-arg 相容 wrapper + 結算 pre-sweep 靜默）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車/釋出文案定稿 + per-member `line_id` 綁定流程；正式排程掛載（Vercel Pro cron 或外部排程）。**
 
 ---
 
@@ -63,7 +63,8 @@
 - **範圍**：
   - ✅ **Slice A — LINE notification dispatcher（已完成 2026-07-02，見 handoff §6.13）**：outbox → LINE 實際送出。**原子 claim/lease（`FOR UPDATE SKIP LOCKED` + `processing` 狀態 + `locked_at/locked_by`）防並發重送**；**顯式 `NOTIFICATION_TRANSPORT=mock|line`（缺 token fail-fast、不靜默假送）**；型別化失敗分類（retryable/terminal/config-abort）+ backoff 重試 + `X-Line-Retry-Key` 冪等；`last_error` 只存 sanitized 碼。`job:dispatch` CLI + 內部 route（counts-only）。驗證：`npm test` 324 / `RUN_DB_TESTS=1` 357 / `db:verify` 17/17 + 實機 E2E（含並發恰一次 push、config-fail 不異動）。
   - ✅ **Slice B — Staff「請車主移車」（已完成 2026-07-03，見 handoff §6.14）**：新「**移車請求**」模板（`move_car_request`，版本 A 暫定文案）+ `POST /api/staff/move-car`（伺服器端車主解析、Staff-safe DTO）+ Staff 列「請移車」動作。**OA 加入狀態 gating** 已做：`staff_checkin_view` 加 `owner_notifiable` 布林，未綁定/walk-in → 按鈕 disabled 標「此車主未綁定 LINE，無法通知」。enqueue → §6.13 dispatcher 送出。驗證：`npm test` 341 / `RUN_DB_TESTS=1` 378 / `db:verify` 18/18 + cookie/PIN 實機 E2E。
-  - **go-live 前置（ops）**：真實 OA channel token、移車文案定稿、per-member `line_id` 綁定流程；緊急/其他版本（B/C/D）文案。
+  - ✅ **Slice D — 釋出時通知被釋出成員本人（已完成 2026-07-04，見 handoff §6.16）**：主日釋出 sweep 把 `approved`→`released_late` 時，除候補廣播外另發一則 `reservation_released` 給失去車位的車主（資訊性、無罰責、`已於 {time} 釋出` 非期限、不承諾現場有位）。producer 走 `releaseExpired`/`runRelease`，**一次性 `released_owner:<id>` dedupe**；migration `0015` **4-arg `apply_release`（+ 3-arg 相容 wrapper，非破壞性）**，owner notice 僅由本 sweep `released` CTE 產生並三重再驗證（reservation_id/user_id/template）；**結算 pre-sweep 靜默**（`notifyReleasedOwners:false`，牧養路徑不發通知）。驗證：`npm test` 370 / `RUN_DB_TESTS=1` 414 / `db:verify` 20/20 + 實機 E2E（mock transport，重跑 0 重複）。
+  - **go-live 前置（ops）**：真實 OA channel token、移車/釋出文案定稿、per-member `line_id` 綁定流程；緊急/其他版本（B/C/D）文案。
 - **依賴（卡點）**：
   1. **OA 加入率**：停車會友未全部加入 → 需推動加入（報名要求 / 主日公告 / QR）。**ops 待辦**。
   2. **移車推播文案**：教會語氣，需有人擬。
