@@ -15,11 +15,13 @@ const approvedP2 = (deadline = dl.p2) =>
 const waiting = () => makeReservation({ status: 'waiting', weekly_event_id: EVENT, release_deadline_at: null })
 
 describe('runRelease', () => {
-  it('releases approved rows past their deadline and broadcasts to waiting users', async () => {
+  it('releases approved rows past their deadline: broadcasts to waiting + notifies each released owner', async () => {
     const p3 = approvedP3()
     const p2 = approvedP2()       // deadline 10:45, not yet due at 10:31
     const w = waiting()
-    const applyRelease = vi.fn(async (): Promise<ReleaseResult> => ({ released: 1, outbox_enqueued: 1 }))
+    const applyRelease = vi.fn(
+      async (): Promise<ReleaseResult> => ({ released: 1, outbox_enqueued: 1, owner_notices_enqueued: 1 }),
+    )
     const repo = makeMockRepo({
       getReservationsForRelease: vi.fn(async () => [p3, p2, w]),
       applyRelease,
@@ -29,8 +31,11 @@ describe('runRelease', () => {
 
     expect(summary.released).toBe(1)
     expect(summary.broadcastEnqueued).toBe(1)
+    expect(summary.ownerNoticesEnqueued).toBe(1)
 
-    const [eventId, nowIso, broadcast] = applyRelease.mock.calls[0] as unknown as [string, string, OutboxRow[]]
+    const [eventId, nowIso, broadcast, ownerNotices] = applyRelease.mock.calls[0] as unknown as [
+      string, string, OutboxRow[], OutboxRow[],
+    ]
     expect(eventId).toBe(EVENT)
     expect(nowIso).toBe(T.SUN_1031.toISOString())
     // one broadcast per waiting user, keyed per-sweep, never to the released rows
@@ -38,12 +43,21 @@ describe('runRelease', () => {
     expect(broadcast[0].reservation_id).toBe(w.id)
     expect(broadcast[0].template_key).toBe('broadcast_release')
     expect(broadcast[0].dedupe_key).toBe(`broadcast:${w.id}:${T.SUN_1031.toISOString()}`)
+    // one owner notice for the released P3, keyed once-per-reservation (no time bucket)
+    expect(ownerNotices).toHaveLength(1)
+    expect(ownerNotices[0].reservation_id).toBe(p3.id)
+    expect(ownerNotices[0].user_id).toBe(p3.user_id)
+    expect(ownerNotices[0].template_key).toBe('reservation_released')
+    expect(ownerNotices[0].dedupe_key).toBe(`released_owner:${p3.id}`)
+    expect(ownerNotices[0].payload).toEqual({ released_at: T.SUN_1031.toISOString() })
   })
 
-  it('honours the P2 10:55 grace: a P2 on-the-way is not released at 10:50 → no broadcast', async () => {
+  it('honours the P2 10:55 grace: a P2 on-the-way is not released at 10:50 → no broadcast, no owner notice', async () => {
     const p2grace = approvedP2(dl.p2Grace)  // deadline 10:55
     const w = waiting()
-    const applyRelease = vi.fn(async (): Promise<ReleaseResult> => ({ released: 0, outbox_enqueued: 0 }))
+    const applyRelease = vi.fn(
+      async (): Promise<ReleaseResult> => ({ released: 0, outbox_enqueued: 0, owner_notices_enqueued: 0 }),
+    )
     const repo = makeMockRepo({
       getReservationsForRelease: vi.fn(async () => [p2grace, w]),
       applyRelease,
@@ -52,17 +66,43 @@ describe('runRelease', () => {
     const summary = await runRelease({ eventId: EVENT, now: T.SUN_1050 }, asRepo(repo))
 
     expect(summary.released).toBe(0)
-    const [, , broadcast] = applyRelease.mock.calls[0] as unknown as [string, string, OutboxRow[]]
-    expect(broadcast).toHaveLength(0)   // nothing released → no broadcast wave
+    const [, , broadcast, ownerNotices] = applyRelease.mock.calls[0] as unknown as [
+      string, string, OutboxRow[], OutboxRow[],
+    ]
+    expect(broadcast).toHaveLength(0)      // nothing released → no broadcast wave
+    expect(ownerNotices).toHaveLength(0)   // nothing released → no owner notices
   })
 
-  it('idempotent re-run: nothing left to release → empty broadcast', async () => {
+  it('notifyReleasedOwners:false (settlement pre-sweep) suppresses owner notices, keeps broadcast', async () => {
+    const p3 = approvedP3()
+    const w = waiting()
+    const applyRelease = vi.fn(
+      async (): Promise<ReleaseResult> => ({ released: 1, outbox_enqueued: 1, owner_notices_enqueued: 0 }),
+    )
+    const repo = makeMockRepo({
+      getReservationsForRelease: vi.fn(async () => [p3, w]),
+      applyRelease,
+    })
+
+    await runRelease({ eventId: EVENT, now: T.SUN_1031, notifyReleasedOwners: false }, asRepo(repo))
+
+    const [, , broadcast, ownerNotices] = applyRelease.mock.calls[0] as unknown as [
+      string, string, OutboxRow[], OutboxRow[],
+    ]
+    expect(broadcast).toHaveLength(1)      // waiting still hears freed capacity
+    expect(ownerNotices).toHaveLength(0)   // released owner is NOT notified during settlement
+  })
+
+  it('idempotent re-run: nothing left to release → empty broadcast + empty owner notices', async () => {
     // Everything already released_late → not in the approved/waiting read set.
     const repo = makeMockRepo({ getReservationsForRelease: vi.fn(async () => []) })
     const summary = await runRelease({ eventId: EVENT, now: T.SUN_1230 }, asRepo(repo))
 
     expect(summary.released).toBe(0)
-    const [, , broadcast] = repo.applyRelease.mock.calls[0] as unknown as [string, string, OutboxRow[]]
+    const [, , broadcast, ownerNotices] = repo.applyRelease.mock.calls[0] as unknown as [
+      string, string, OutboxRow[], OutboxRow[],
+    ]
     expect(broadcast).toHaveLength(0)
+    expect(ownerNotices).toHaveLength(0)
   })
 })

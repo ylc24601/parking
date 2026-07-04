@@ -72,15 +72,18 @@ export function buildSundayMidnight(sundayDate: string, timezone: string = 'Asia
 //   - now < release_deadline_at         → not released (still held)
 //   - now >= release_deadline_at, status approved, not yet attended → released_late
 // attended / attended_after_release / cancelled_* / temp_approved are never touched.
-// A broadcast notification goes to all waiting users when anything is released.
+// When anything is released, two notification sets are emitted:
+//   - broadcast_release   → every still-waiting user (freed capacity, first-come)
+//   - reservation_released → each member whose own seat was just released (this sweep)
+// The two are distinguished by template_key so the caller can dedupe them differently.
 //
 // Idempotent: approved reservations become released_late on the first run, so
-// subsequent calls release 0 records and emit no broadcast.
+// subsequent calls release 0 records and emit nothing.
 export function releaseExpired(
   reservations: Reservation[],
   now: Date,
 ): ReleaseResult {
-  let releasedCount = 0
+  const releasedIds = new Set<string>()
   const updated = reservations.map(r => {
     if (
       r.status === 'approved' &&
@@ -88,15 +91,27 @@ export function releaseExpired(
       r.release_deadline_at !== null &&
       now >= r.release_deadline_at
     ) {
-      releasedCount++
+      releasedIds.add(r.id)
       return { ...r, status: 'released_late' as const, released_at: now }
     }
     return r
   })
+  const releasedCount = releasedIds.size
 
   const outbox: NotificationOutboxEntry[] = []
   if (releasedCount > 0) {
+    const releasedAt = now.toISOString()
     for (const r of updated) {
+      // The member who just lost their seat — one informational notice per released row.
+      if (releasedIds.has(r.id)) {
+        outbox.push({
+          user_id: r.user_id,
+          reservation_id: r.id,
+          template_key: 'reservation_released',
+          payload: { released_at: releasedAt },
+        })
+      }
+      // Everyone still waiting hears that capacity opened up.
       if (r.status === 'waiting') {
         outbox.push({
           user_id: r.user_id,
