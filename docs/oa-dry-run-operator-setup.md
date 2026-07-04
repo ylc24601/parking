@@ -48,7 +48,13 @@ LINE_SEND_ENABLED=false                            # 送出鎖
 ## 5. 驗證 pending_binding（限工程／管理者查詢 — `line_user_id` 屬敏感資料）
 
 ```sql
-select line_user_id, submitted_code, status, superseded_count, last_event_type, last_submitted_at
+select
+  left(line_user_id, 6) || '…' || right(line_user_id, 4) as line_user_id_masked,
+  submitted_code,
+  status,
+  superseded_count,
+  last_event_type,
+  last_submitted_at
 from pending_binding
 order by last_submitted_at desc
 limit 20;
