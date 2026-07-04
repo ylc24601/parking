@@ -148,8 +148,13 @@ export interface OutboxHealth {
   failed_by_error: Record<string, number>
   sent_last_24h: number
   oldest_pending_at: string | null
+  oldest_due_at: string | null     // oldest row DUE now (drives the "backlog not draining" alert)
   oldest_failed_at: string | null
   next_retry_at: string | null
+}
+
+export interface RequeueFailedResult {
+  requeued: number
 }
 
 // Phase 4 Slice A — a notification_outbox row claimed by the dispatcher (already flipped
@@ -364,6 +369,8 @@ export interface ParkingRepository {
   markOutboxFailed(id: string, worker: string, lastErrorCode: string): Promise<void>
   // Phase 4 Slice C — operation-safe aggregate health (dryRun preview + ops visibility).
   getOutboxHealth(nowIso: string, leaseSeconds: number): Promise<OutboxHealth>
+  // Phase 4 Slice F — manual-only dead-letter recovery: failed → pending (bounded, optional filter).
+  requeueFailedOutbox(nowIso: string, max: number, errorCode: string | null): Promise<RequeueFailedResult>
   // Phase 4 Slice B — resolve a move-car target (owner user_id + plate + notifiability).
   // Returns null only when the reservation id doesn't exist (a walk-in still resolves).
   getMoveCarTarget(reservationId: string): Promise<MoveCarTarget | null>
@@ -770,6 +777,16 @@ export function createParkingRepository(
       })
       if (error) throw new Error(`outbox_health failed: ${error.message}`)
       return data as OutboxHealth
+    },
+
+    async requeueFailedOutbox(nowIso, max, errorCode) {
+      const { data, error } = await client.rpc('requeue_failed_outbox', {
+        p_now: nowIso,
+        p_max: max,
+        p_error_code: errorCode,
+      })
+      if (error) throw new Error(`requeue_failed_outbox failed: ${error.message}`)
+      return data as RequeueFailedResult
     },
 
     async getMoveCarTarget(reservationId) {

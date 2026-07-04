@@ -102,3 +102,72 @@ LINE_CHANNEL_ACCESS_TOKEN=<channel access token>   # missing → 500 missing_lin
 ```
 
 (`dryRun`/`outbox-status` never touch the transport, so they work regardless.)
+
+---
+
+## Alerting (scheduler-surfaced, zero integration) — Phase 4 Slice F
+
+```bash
+npm run job:outbox-alert        # exits non-zero when unhealthy
+# or schedule:  GET /api/internal/jobs/outbox-alert   (same x-job-secret / cron bearer auth)
+```
+
+The alert check evaluates `outbox_health` against thresholds and **encodes the verdict in the HTTP
+status**: **200 healthy, 503 unhealthy**. Point any monitor/cron that treats non-2xx as an alert
+(cron-job.org failure alerts, an uptime monitor, or `curl -f` in a crontab step) at it — no Slack/email
+integration required. Body: `{ ok, healthy, breaches[], thresholds, failed, stale_processing, oldest_due_at }`.
+
+`breaches` are operation-safe reason codes:
+- **`failed_over_max`** — terminal `failed` rows exceed `OUTBOX_ALERT_FAILED_MAX`.
+- **`stale_processing_over_max`** — stuck leases exceed `OUTBOX_ALERT_STALE_MAX`.
+- **`due_backlog_stale`** — the oldest **due** row is older than `OUTBOX_ALERT_PENDING_STALE_MINUTES`
+  (the dispatcher isn't draining). Uses `oldest_due_at`, so intentionally future-scheduled rows never
+  trip it.
+
+Thresholds are env-tuned (`.env.example`). **Sensitive pilot defaults: `0 / 0 / 15`** — any failed row
+or stale lease alerts, and a due backlog older than 15 min means the scheduler is down/slow. Raise them
+once a steady state is known. Suggested cadence: alert every 5–15 min.
+
+---
+
+## Dead-letter recovery (MANUAL-ONLY) — Phase 4 Slice F
+
+**Do NOT schedule this.** `dispatch` and `outbox-alert` may be scheduled; `requeue-failed` is a
+**human-run recovery step**, used **only after the root cause is fixed** (bad token / config / provider
+outage resolved). It resets terminal `failed` rows back to `pending` for a fresh attempt.
+
+```bash
+npm run job:requeue-failed                          # DRY RUN by default → { wouldRequeue }
+npm run job:requeue-failed -- --apply               # actually requeue (default max 50, hard cap 500)
+npm run job:requeue-failed -- --apply --error terminal_403 --max 100
+# or:  POST /api/internal/jobs/requeue-failed   body { "dryRun": false, "max": 100, "errorCode": "terminal_403" }
+#      dryRun DEFAULTS TO true — you must send "dryRun": false to mutate.
+```
+
+Safety: **only `failed → pending`** (never touches `sent`/`processing`/`pending`/`retrying`); resets
+`retry_count`/`next_retry_at`/`locked_*`/`last_error`; bounded batch; optional **sanitized** `errorCode`
+filter (match the codes in `failed_by_error`, e.g. `terminal_403` — not raw provider text); no deletes /
+no destructive cleanup. Idempotent: re-running requeues only whatever is currently `failed`. After a
+successful requeue, the next dispatch run drains the rows; watch `outbox-alert` clear to 200.
+
+---
+
+## Rollback
+
+- **Stop delivery:** disable the external cron job (remove the scheduled `dispatch` call). Rows keep
+  queuing safely; nothing is lost.
+- **Suspected bad send loop:** set `NOTIFICATION_TRANSPORT=mock` — dispatch then no-ops safely (note the
+  prod `mock_in_production` guard: in a production runtime this fails fast rather than silently dropping,
+  so use it in a non-prod/paused context or alongside pausing the scheduler).
+- **Recover after a fix:** `requeue-failed` (dry-run first, then `--apply`).
+
+---
+
+## OA environment (go-live only)
+
+This runbook's endpoints are transport-agnostic and tested with `NOTIFICATION_TRANSPORT=mock`. The
+**church production OA is not wired here** — wiring `NOTIFICATION_TRANSPORT=line` +
+`LINE_CHANNEL_ACCESS_TOKEN` is a **final pilot / production** step, gated on: real OA token setup,
+message-copy sign-off (`move_car_request` / `reservation_released` / `reservation_cancelled`),
+per-member `line_id` binding readiness, and rollback readiness (above). For manual verification before
+then, use your own **test** OA via local env vars kept **outside the repo**.

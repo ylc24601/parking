@@ -10,7 +10,7 @@ describe('getOutboxHealth', () => {
     const health = {
       due: 1, due_by_template: { move_car_request: 1 }, pending: 1, retrying: 0, processing: 0,
       stale_processing: 0, failed: 0, failed_by_error: {}, sent_last_24h: 0,
-      oldest_pending_at: null, oldest_failed_at: null, next_retry_at: null,
+      oldest_pending_at: null, oldest_due_at: null, oldest_failed_at: null, next_retry_at: null,
     }
     const repo = makeMockRepo({ getOutboxHealth: vi.fn(async () => health) })
     const res = await getOutboxHealth({ now: NOW }, asRepo(repo))

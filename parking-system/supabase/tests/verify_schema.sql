@@ -251,6 +251,17 @@ begin
   raise notice 'PASS: apply_cancellation 8-arg + 7-arg wrapper present with service_role execute grant';
 end $$;
 
+-- ── 22. requeue_failed_outbox exists + service_role execute (Phase 4 F) ─────────
+do $$
+begin
+  perform 1 from pg_proc where proname = 'requeue_failed_outbox';
+  if not found then raise exception 'FAIL: requeue_failed_outbox function missing'; end if;
+  if not has_function_privilege('service_role', 'requeue_failed_outbox(timestamptz,int,text)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on requeue_failed_outbox';
+  end if;
+  raise notice 'PASS: requeue_failed_outbox present with service_role execute grant';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

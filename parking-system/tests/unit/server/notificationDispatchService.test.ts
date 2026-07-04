@@ -160,7 +160,7 @@ describe('previewDispatch (dryRun — no mutation)', () => {
     due: 3, due_by_template: { move_car_request: 2, broadcast_release: 1 },
     pending: 5, retrying: 1, processing: 1, stale_processing: 1, failed: 2,
     failed_by_error: { no_line_id: 1, terminal_403: 1 }, sent_last_24h: 9,
-    oldest_pending_at: '2026-06-21T01:00:00Z', oldest_failed_at: null, next_retry_at: '2026-06-21T03:00:00Z',
+    oldest_pending_at: '2026-06-21T01:00:00Z', oldest_due_at: '2026-06-21T01:00:00Z', oldest_failed_at: null, next_retry_at: '2026-06-21T03:00:00Z',
   }
 
   it('returns the due-preview subset from getOutboxHealth and mutates nothing', async () => {

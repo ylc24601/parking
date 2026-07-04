@@ -21,6 +21,8 @@
     "job:auto-finalize": "tsx scripts/run-auto-finalize.ts",
     "job:dispatch": "tsx scripts/run-dispatch-notifications.ts",
     "job:outbox-status": "tsx scripts/run-outbox-status.ts",
+    "job:outbox-alert": "tsx scripts/run-outbox-alert.ts",
+    "job:requeue-failed": "tsx scripts/run-requeue-failed.ts",
     "staff:set-pin": "tsx scripts/set-staff-pin.ts"
   },
   "dependencies": {
