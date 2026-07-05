@@ -130,13 +130,13 @@ psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -c \
 - ❌ 任何 `users.line_id` 寫入（Phase 5B 未部署）。
 
 ## 收尾完成確認清單
-- [x ] LINE webhook OFF（Use webhook = OFF）
-- [ x] Webhook URL 已清空
-- [ x] tunnel 已停止
-- [ x] Next dev 已停止
-- [ x] Supabase 已停止（`npm run db:stop`）
-- [ x] 未加入 `LINE_CHANNEL_ACCESS_TOKEN`
-- [ x] 無任何 `users.line_id` 寫入
+- [x] LINE webhook OFF（Use webhook = OFF）
+- [x] Webhook URL 已清空
+- [x] tunnel 已停止
+- [x] Next dev 已停止
+- [x] Supabase 已停止（`npm run db:stop`）
+- [x] 未加入 `LINE_CHANNEL_ACCESS_TOKEN`
+- [x] 無任何 `users.line_id` 寫入
 
 ---
 
