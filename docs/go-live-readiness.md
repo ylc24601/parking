@@ -147,7 +147,8 @@ no `line_id`/plate/body ever appears in logs or `last_error`.
 - **Phase 5B — approval → `users.line_id` write.** Admin/script approval that promotes a verified
   pending record into `users.line_id`, **respecting the `users_line_id_key` partial unique index**
   (explicit conflict handling). After this, real delivery to bound members works with a production
-  token.
+  token. **Shipped: Slice 1 (RPCs, handoff §6.20) + Slice 2 (issue/approve/reject CLI, handoff
+  §6.21).** Operator runbook: [binding-ops.md](binding-ops.md).
 
 The smallest concrete Phase 5A implementation plan is proposed separately for review before any
 code is edited.

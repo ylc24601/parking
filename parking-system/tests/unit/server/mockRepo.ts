@@ -62,6 +62,16 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     // Phase 5B — approve / reject pending binding
     approvePendingBinding: vi.fn(async () => ({ approved: 1, would_approve: true, reason: 'approved' })),
     rejectPendingBinding: vi.fn(async () => ({ rejected: 1, reason: 'rejected' })),
+    // Phase 5B Slice 2 — issue + approve preview
+    insertBindingCode: vi.fn(async () => ({ inserted: true })),
+    getUserDisplayName: vi.fn(async () => '王小明'),
+    getBindingApprovalPreview: vi.fn(async () => ({
+      pending_status: 'pending',
+      line_user_id: 'Udeadbeefdeadbeefdeadbeefdeadbeef',
+      submitted_code: 'ABCD-2345',
+      matched_user_id: 'user-1',
+      matched_display_name: '王小明',
+    })),
     // Phase 4 Slice B — move-car
     getMoveCarTarget: vi.fn(async () => ({
       weekly_event_id: 'event-1',

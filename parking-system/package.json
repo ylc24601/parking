@@ -23,6 +23,9 @@
     "job:outbox-status": "tsx scripts/run-outbox-status.ts",
     "job:outbox-alert": "tsx scripts/run-outbox-alert.ts",
     "job:requeue-failed": "tsx scripts/run-requeue-failed.ts",
+    "binding:issue": "tsx scripts/run-binding-issue.ts",
+    "binding:approve": "tsx scripts/run-binding-approve.ts",
+    "binding:reject": "tsx scripts/run-binding-reject.ts",
     "staff:set-pin": "tsx scripts/set-staff-pin.ts"
   },
   "dependencies": {
