@@ -587,6 +587,22 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 
 ---
 
+## 6.21 Phase 5B Slice 2 — binding CLI（issue/approve/reject，本次完成）
+
+把 Slice 1 的 RPC 包成 operator CLI，讓同工「發碼 → 人工核准」。**無新 schema**（騎在 `0019`）、無 UI/LIFF/webhook 回覆/送出。
+
+- **`lib/binding.ts`（純函式，單測）**：`generateBindingCode()` 隨機 `XXXX-XXXX`（**不含易混淆 `0/O/1/I/L`**，符 `^[A-Z0-9-]{4,16}$`）；`normalizeBindingCode`（trim+upper）；`maskLineUserId`（`left6…right4`，短值退化為 `first2****`，**永不回完整值**）；`maskCode`（`ABCD-****`）。
+- **`bindingAdminService.ts`**：`issueBindingCode`（產碼或驗自訂碼、`expires_at=now+ttl`、唯一碰撞重試、回**完整 code** 供 CLI 印一次 + 會友姓名）；`previewApproveBinding`（**server 端遮罩**後回 masked 欄位＋以 RPC dry-run 取得 predicted reason，**不寫**）；`applyApproveBinding`（RPC `dry_run=false`）；`rejectBinding`（trim + 非空）。raw `line_user_id`/code **不離開 service**（唯一例外＝issue 的一次性 code 回傳）。
+- **repo**：`insertBindingCode`（唯一碰撞回 `inserted:false` 供重試，其餘 throw）、`getBindingApprovalPreview`（pending + code→user + display_name 的 raw 讀，供 service 遮罩）、`getUserDisplayName`。
+- **CLI**（`scripts/run-binding-*.ts` + `package.json`）：`binding:issue`（**code 只印一次** + shell-history 警語）／`binding:approve`（**預設 dry-run**，`--apply` 才寫，輸出遮罩）／`binding:reject`（`--reason` 稽核，警告勿放 id/code）。
+- **operator 文件** [binding-ops.md](binding-ops.md)（端到端流程、typed reason 表、隱私規則、一次性印碼與 shell-history 警語）；go-live-readiness 交叉連結。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`/`eslint` ✅。測試：`npm test` **432 / 71 skipped**（新增 `lib/binding.test.ts` + `bindingAdminService.test.ts`，含**無 raw `line_user_id`/完整 code 外洩**斷言）；`RUN_DB_TESTS=1` **503**（新增 `binding-cli.db.test.ts`：issue→preview 遮罩不寫→apply 寫入/consume/approved→idempotent→reject→自訂碼碰撞）；`db:verify` **24/24**（無 schema 變更）。
+- **仍 deferred**：Admin/Member UI、LIFF、webhook 綁定成功回覆、rebind/unbind、bulk approve、**教會正式 OA capture dry-run**、真 OA token + `NOTIFICATION_TRANSPORT=line`。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
@@ -659,7 +675,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 | dispatcher **正式排程實際掛載**（外部排程器設 secret + 部署後啟用）/ push-channel 告警（Slack/email/LINE-admin）/ LIFF / webhook 自動回覆（含「正在路上」回覆入口） | go-live / 後續 | §6.18 App 為 scheduler-ready；實際掛載需部署 + secret；移車/通知目前靠 `job:dispatch` 手動或外部 cron 排空 |
 | ~~LINE webhook + pending binding 擷取（`綁定 <code>` → pending 申領，不寫 `users.line_id`）~~ | ✅ **完成（Phase 5A，§6.19）** | 驗簽（raw body HMAC）+ capture-only 零回覆 + `0018` `pending_binding` 一帳號一 active pending（upsert）+ counts-only；可安全對正式 OA dry-run。**規劃 [go-live-readiness.md](go-live-readiness.md)** |
 | ~~**Phase 5B Slice 1** — binding 審核 RPC（`binding_codes` + approve/reject，schema/RPC only）~~ | ✅ **完成（§6.20）** | `0019` `binding_codes` + `pending_binding` 稽核欄 + `approve_pending_binding`（by pending id、dry-run、typed reason）/`reject_pending_binding`；DB/RPC only、無 CLI/送出 |
-| **Phase 5B Slice 2** — binding CLI（`binding:issue`/`approve`/`reject`）+ masked 預覽 + operator 文件 | **下一刀** | 騎在 Slice 1 之上；approve 預設 dry-run、`--apply` 才寫；issue 預設隨機 code 且只印一次；其餘一律遮罩 |
+| ~~**Phase 5B Slice 2** — binding CLI（`binding:issue`/`approve`/`reject`）+ masked 預覽 + operator 文件~~ | ✅ **完成（§6.21）** | `lib/binding.ts` 產碼/遮罩 + `bindingAdminService` + 3 支 CLI + [binding-ops.md](binding-ops.md)；approve 預設 dry-run、`--apply` 才寫；issue 隨機碼只印一次；無 schema 變更 |
 | Phase 5B 之後：綁定會友即可真送達（需搭真 OA token + `NOTIFICATION_TRANSPORT=line`）；仍需一次**教會正式 OA** capture dry-run | go-live | 見 [go-live-readiness.md](go-live-readiness.md)、[oa-dry-run-tunnel-runbook.md](oa-dry-run-tunnel-runbook.md) |
 | **牧養關懷 alert 處理（resolution）UI** | Admin 切片 | `pastoral_care_alerts` 已可開立；`resolved_at/resolved_by/note` 欄位已就緒但暫不寫入 |
 | 其餘兩種 §7 牧養觸發（短期行動不便到期 / 幼兒資格到期）每日排程 | 後續 | 目前僅實作「連續未到」觸發 |

@@ -394,6 +394,27 @@ export interface ParkingRepository {
     reason: string
     nowIso: string
   }): Promise<{ rejected: number; reason: string }>
+  // Phase 5B Slice 2 — issue a binding code. `inserted:false` iff the code already exists (unique
+  // conflict) so the caller can regenerate; other DB errors throw.
+  insertBindingCode(args: {
+    code: string
+    userId: string
+    expiresAtIso: string
+    createdBy?: string | null
+    note?: string | null
+  }): Promise<{ inserted: boolean }>
+  // Phase 5B Slice 2 — resolve a member's display name (issue validation + confirmation). Null if
+  // the user id doesn't exist.
+  getUserDisplayName(userId: string): Promise<string | null>
+  // Phase 5B Slice 2 — raw fields for the approve preview (the SERVICE masks them before output;
+  // they are never printed/logged raw). Returns null only when the pending id doesn't exist.
+  getBindingApprovalPreview(pendingId: string): Promise<{
+    pending_status: string
+    line_user_id: string
+    submitted_code: string
+    matched_user_id: string | null
+    matched_display_name: string | null
+  } | null>
   // Slice 4
   getReleasedLateForSettlement(eventId: string): Promise<Reservation[]>
   getPenaltyCountersForUsers(userIds: string[]): Promise<Array<{ user_id: string } & PenaltyCounters>>
@@ -839,6 +860,67 @@ export function createParkingRepository(
       })
       if (error) throw new Error(`reject_pending_binding failed: ${error.message}`)
       return data as { rejected: number; reason: string }
+    },
+
+    async insertBindingCode({ code, userId, expiresAtIso, createdBy = null, note = null }) {
+      const { error } = await client.from('binding_codes').insert({
+        code, user_id: userId, expires_at: expiresAtIso, created_by: createdBy, note,
+      })
+      if (error) {
+        if (error.code === '23505') return { inserted: false } // unique code conflict → caller regenerates
+        throw new Error(`insertBindingCode failed: ${error.message}`)
+      }
+      return { inserted: true }
+    },
+
+    async getUserDisplayName(userId) {
+      const { data, error } = await client
+        .from('users')
+        .select('display_name')
+        .eq('id', userId)
+        .maybeSingle()
+      if (error) throw new Error(`getUserDisplayName failed: ${error.message}`)
+      return (data as { display_name: string } | null)?.display_name ?? null
+    },
+
+    async getBindingApprovalPreview(pendingId) {
+      const { data: p, error: pe } = await client
+        .from('pending_binding')
+        .select('status, line_user_id, submitted_code')
+        .eq('id', pendingId)
+        .maybeSingle()
+      if (pe) throw new Error(`getBindingApprovalPreview failed: ${pe.message}`)
+      if (!p) return null
+      const pending = p as { status: string; line_user_id: string; submitted_code: string }
+
+      // Resolve the code's member (if the submitted code matches an issued one) for the operator to
+      // confirm WHO is being bound. No FK between submitted_code and binding_codes, so look it up.
+      const { data: c, error: ce } = await client
+        .from('binding_codes')
+        .select('user_id')
+        .eq('code', pending.submitted_code)
+        .maybeSingle()
+      if (ce) throw new Error(`getBindingApprovalPreview code lookup failed: ${ce.message}`)
+      const matchedUserId = (c as { user_id: string } | null)?.user_id ?? null
+
+      let matchedDisplayName: string | null = null
+      if (matchedUserId) {
+        const { data: u, error: ue } = await client
+          .from('users')
+          .select('display_name')
+          .eq('id', matchedUserId)
+          .maybeSingle()
+        if (ue) throw new Error(`getBindingApprovalPreview user lookup failed: ${ue.message}`)
+        matchedDisplayName = (u as { display_name: string } | null)?.display_name ?? null
+      }
+
+      return {
+        pending_status: pending.status,
+        line_user_id: pending.line_user_id,
+        submitted_code: pending.submitted_code,
+        matched_user_id: matchedUserId,
+        matched_display_name: matchedDisplayName,
+      }
     },
 
     async getMoveCarTarget(reservationId) {
