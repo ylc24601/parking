@@ -8,6 +8,19 @@
 
 ---
 
+## ✅ 執行結果（2026-07-05，PASS）
+
+已依本 runbook 對**教會正式 OA** 完成 capture-only dry-run，通過：
+
+- LINE console **Verify → 200**；webhook 收訊正常（本機 `next dev` + tunnel + 正式 OA）。
+- `綁定 TEST01` → 同帳號 `bind test-02` 重送 → `pending_binding` **僅一列**：`submitted_code=TEST-02`、`superseded_count=1`、`status=pending`、`last_event_type=message` ⇒ **原地 supersede 確認**（未灌爆表）。
+- `你好`（非綁定）**未建列**；測試者**未收到任何回覆**；`next dev` log **無** userId / code。
+- 全程未送出、未寫 `users.line_id`；`LINE_CHANNEL_ACCESS_TOKEN` 未設定。
+
+**結論：webhook 收訊 + 綁定擷取在正式 OA 上運作正常 → 解鎖 Phase 5B（人工審核 → 寫 `users.line_id`，遵守 `users_line_id_key`）。** 收尾見第 7 步（webhook 關閉 + URL 清空後才停 tunnel）。
+
+---
+
 ## 前置：拿到 channel secret
 LINE Developers → 教會 OA 的 **Messaging API channel** → **Basic settings** → 複製 **Channel secret**（等下貼進 `.env.local`）。
 > 這是 channel **secret**（驗證收訊用），不是 access token；access token 這次**不要**設。
@@ -107,13 +120,13 @@ psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -c \
 - ❌ 任何 `users.line_id` 寫入（Phase 5B 未部署）。
 
 ## 收尾完成確認清單
-- [ ] LINE webhook OFF（Use webhook = OFF）
-- [ ] Webhook URL 已清空
-- [ ] tunnel 已停止
-- [ ] Next dev 已停止
-- [ ] Supabase 已停止（`npm run db:stop`）
-- [ ] 未加入 `LINE_CHANNEL_ACCESS_TOKEN`
-- [ ] 無任何 `users.line_id` 寫入
+- [x ] LINE webhook OFF（Use webhook = OFF）
+- [ x] Webhook URL 已清空
+- [ x] tunnel 已停止
+- [ x] Next dev 已停止
+- [ x] Supabase 已停止（`npm run db:stop`）
+- [ x] 未加入 `LINE_CHANNEL_ACCESS_TOKEN`
+- [ x] 無任何 `users.line_id` 寫入
 
 ---
 
