@@ -8,16 +8,26 @@
 
 ---
 
-## ✅ 執行結果（2026-07-05，PASS）
+## ✅ 執行結果（2026-07-05，PASS — 使用「開發者/測試 OA」，非教會正式 OA）
 
-已依本 runbook 對**教會正式 OA** 完成 capture-only dry-run，通過：
+> ⚠️ 本次 PASS 是用**開發者自有的測試 OA（developer/test OA）**跑的，**不是教會正式 OA**。
+> **教會正式 OA 的 dry-run 仍待進行（pending）。** 本結果**不代表**教會正式 OA 已驗證。
 
-- LINE console **Verify → 200**；webhook 收訊正常（本機 `next dev` + tunnel + 正式 OA）。
-- `綁定 TEST01` → 同帳號 `bind test-02` 重送 → `pending_binding` **僅一列**：`submitted_code=TEST-02`、`superseded_count=1`、`status=pending`、`last_event_type=message` ⇒ **原地 supersede 確認**（未灌爆表）。
-- `你好`（非綁定）**未建列**；測試者**未收到任何回覆**；`next dev` log **無** userId / code。
-- 全程未送出、未寫 `users.line_id`；`LINE_CHANNEL_ACCESS_TOKEN` 未設定。
+**這次「有」確認（用測試 OA）：**
+- tunnel 連通 + LINE console **Verify → 200** + webhook 收訊。
+- **簽章驗證**（`x-line-signature` HMAC / `LINE_CHANNEL_SECRET`）正確。
+- **`pending_binding` 擷取**：`綁定 TEST01` → 同帳號 `bind test-02` 重送 → **僅一列**（`submitted_code=TEST-02`、`superseded_count=1`、`status=pending`、`last_event_type=message`）⇒ **原地 supersede 確認**（未灌爆表）。
+- `你好`（非綁定）**未建列**；測試者**未收到任何回覆**；log **無** userId / code。
+- 全程**未送出任何 LINE 訊息**、**未寫 `users.line_id`**；`LINE_CHANNEL_ACCESS_TOKEN` 未設定。
 
-**結論：webhook 收訊 + 綁定擷取在正式 OA 上運作正常 → 解鎖 Phase 5B（人工審核 → 寫 `users.line_id`，遵守 `users_line_id_key`）。** 收尾見第 7 步（webhook 關閉 + URL 清空後才停 tunnel）。
+**這次「未」確認（仍待教會正式 OA dry-run）：**
+- ❌ 教會正式 OA 的 **channel secret**。
+- ❌ 教會正式 OA 的 **webhook 後台設定**。
+- ❌ **正式會友的 userId 擷取**（正式環境）。
+
+> 🔒 本次測試擷取到的任何 `line_user_id` 屬**測試 OA、可丟棄**，**不得**當作教會正式綁定資料使用（userId 依 Provider 綁定，測試 OA 的值在正式 OA 無效）。
+
+**結論：程式路徑（tunnel + webhook + 驗簽 + 擷取 + supersede）在測試 OA 上運作正常 → 可據以規劃 Phase 5B（人工審核 → 寫 `users.line_id`，遵守 `users_line_id_key`）。但 go-live 送達前，仍需完成一次「教會正式 OA」的 capture dry-run。** 收尾見第 7 步（webhook 關閉 + URL 清空後才停 tunnel）。
 
 ---
 
