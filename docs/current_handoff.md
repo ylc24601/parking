@@ -570,6 +570,23 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 
 ---
 
+## 6.20 Phase 5B Slice 1 — binding 審核 RPC（schema + approve/reject，本次完成）
+
+5A 只擷取 `pending_binding{line_user_id, submitted_code}`，但**沒有東西說明某個 code 屬於哪位會友**。本刀補上身分對應 + 審核端：新增 `binding_codes`（一次性 code 於線下發給**已知會友** → `user_id`）與原子的 approve/reject RPC，把 pending 申領升級成 `users.line_id`。**DB/RPC only — 無 CLI、無 UI、無送出**（CLI 為 Slice 2）。身分＝雙因子：持有 code 證明會友（`binding_codes.user_id`）、5A webhook 擷取證明 LINE 帳號（`pending_binding.line_user_id`）。**審核為人工把關**（在 Slice 2 CLI 層以 `--apply`）；本刀 RPC 提供顯式 dry-run 讓 CLI 預覽 typed 結果而不寫入。
+
+- **migration `0019`**：`binding_codes`（`code` unique + `^[A-Z0-9-]{4,16}$` check、`user_id`→users、`expires_at`、`consumed_at`/`consumed_pending_binding_id`/`consumed_line_user_id` 稽核、`created_by`/`note` optional）；`pending_binding` 加稽核欄 `approved_at`/`approved_user_id`/`rejected_at`/`rejected_reason`。RLS deny-all + 顯式 service_role grant（本表在 0004 blanket grant 之後建立）。
+- **`approve_pending_binding(p_pending_id, p_now, p_dry_run)`**：**BY pending id**，內部讀 pending 列取 `line_user_id`/`submitted_code`（**raw 值不經 API 表面**）。固定優先序 typed reason（不 throw 500）：`pending_not_found → pending_not_pending → code_not_found → code_expired → code_consumed → member_already_bound → line_id_taken → approved`。`dry_run=true` 全跑守則回 `would_approve` **不寫**；`dry_run=false` 寫 `users.line_id`（守 `line_id is null`）+ consume code + 標 pending approved。並發同 `line_user_id` 綁到他人 → `users_line_id_key` unique violation **接住轉 `line_id_taken`**，非 500。`code_user_mismatch` 於現行「一 code 一會友」設計**不可達，故省略**。
+- **`reject_pending_binding(p_pending_id, p_reason, p_now)`**：標 `rejected` + `rejected_at`/`rejected_reason`；typed `{rejected, reason}`。
+- **repo wrappers** `approvePendingBinding`/`rejectPendingBinding`（DB 測試用）。回傳 counts + typed reason only，**不含** `line_user_id`/code。
+- **仍守**：無 CLI/UI/LIFF/webhook 回覆/送出；`NOTIFICATION_TRANSPORT` 不動；不接教會正式 OA。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`/`eslint` ✅。測試：`npm test` **414 / 68 skipped**；`RUN_DB_TESTS=1` **482**（新增 `binding-approval.db.test.ts` 11 例）；`db:verify` **24/24**（新增 assertion #24）。
+- **實機 E2E**（RPC + 本機 DB）：happy apply 寫 `line_id`＋consume code＋pending approved；dry-run 不寫；`code_expired`/`code_consumed`/`code_not_found`/`pending_not_found`/`pending_not_pending`/`member_already_bound`/`line_id_taken`/reject 全數 typed；結果無 `line_user_id`/code 外洩。
+- **下一刀（Slice 2）**：CLI `binding:issue`（預設隨機 code、印一次）/`binding:approve`（dry-run→`--apply`、masked 預覽）/`binding:reject` + CLI 測試 + operator 文件。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
@@ -641,7 +658,9 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 | ~~dispatcher 健康度**監控告警** + `failed` **dead-letter 處理** + 外部排程 runbook~~ | ✅ **完成（Phase 4 Slice F，§6.18）** | `GET /outbox-alert`（200/503）+ `job:outbox-alert`；`requeue-failed`（手動、dryRun 預設、`failed→pending`）；`outbox_health.oldest_due_at`；外部排程器文件化（不 commit live artifact） |
 | dispatcher **正式排程實際掛載**（外部排程器設 secret + 部署後啟用）/ push-channel 告警（Slack/email/LINE-admin）/ LIFF / webhook 自動回覆（含「正在路上」回覆入口） | go-live / 後續 | §6.18 App 為 scheduler-ready；實際掛載需部署 + secret；移車/通知目前靠 `job:dispatch` 手動或外部 cron 排空 |
 | ~~LINE webhook + pending binding 擷取（`綁定 <code>` → pending 申領，不寫 `users.line_id`）~~ | ✅ **完成（Phase 5A，§6.19）** | 驗簽（raw body HMAC）+ capture-only 零回覆 + `0018` `pending_binding` 一帳號一 active pending（upsert）+ counts-only；可安全對正式 OA dry-run。**規劃 [go-live-readiness.md](go-live-readiness.md)** |
-| **Phase 5B — pending 綁定審核 → 寫 `users.line_id`**（admin/script approval，遵守 `users_line_id_key` partial unique；接上 dispatcher 真送達） | **下一刀** | §6.19 只擷取 pending；5B 完成後綁定會友即可真送達（需搭真 token） |
+| ~~**Phase 5B Slice 1** — binding 審核 RPC（`binding_codes` + approve/reject，schema/RPC only）~~ | ✅ **完成（§6.20）** | `0019` `binding_codes` + `pending_binding` 稽核欄 + `approve_pending_binding`（by pending id、dry-run、typed reason）/`reject_pending_binding`；DB/RPC only、無 CLI/送出 |
+| **Phase 5B Slice 2** — binding CLI（`binding:issue`/`approve`/`reject`）+ masked 預覽 + operator 文件 | **下一刀** | 騎在 Slice 1 之上；approve 預設 dry-run、`--apply` 才寫；issue 預設隨機 code 且只印一次；其餘一律遮罩 |
+| Phase 5B 之後：綁定會友即可真送達（需搭真 OA token + `NOTIFICATION_TRANSPORT=line`）；仍需一次**教會正式 OA** capture dry-run | go-live | 見 [go-live-readiness.md](go-live-readiness.md)、[oa-dry-run-tunnel-runbook.md](oa-dry-run-tunnel-runbook.md) |
 | **牧養關懷 alert 處理（resolution）UI** | Admin 切片 | `pastoral_care_alerts` 已可開立；`resolved_at/resolved_by/note` 欄位已就緒但暫不寫入 |
 | 其餘兩種 §7 牧養觸發（短期行動不便到期 / 幼兒資格到期）每日排程 | 後續 | 目前僅實作「連續未到」觸發 |
 | **P1 全職同工 `weekly_staff_allocations` no-show 處理** | 後續 | 與 reservation 結算分離；Slice 4 只結算 reservation（P2/P3） |

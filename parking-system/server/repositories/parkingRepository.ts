@@ -382,6 +382,18 @@ export interface ParkingRepository {
     eventType: string
     nowIso: string
   }): Promise<{ captured: number; superseded: boolean }>
+  // Phase 5B — approve/reject a captured pending binding. Addressed BY pending id; the raw
+  // line_user_id / submitted_code never cross this surface. Results are typed + counts-only.
+  approvePendingBinding(args: {
+    pendingId: string
+    nowIso: string
+    dryRun: boolean
+  }): Promise<{ approved: number; would_approve: boolean; reason: string }>
+  rejectPendingBinding(args: {
+    pendingId: string
+    reason: string
+    nowIso: string
+  }): Promise<{ rejected: number; reason: string }>
   // Slice 4
   getReleasedLateForSettlement(eventId: string): Promise<Reservation[]>
   getPenaltyCountersForUsers(userIds: string[]): Promise<Array<{ user_id: string } & PenaltyCounters>>
@@ -807,6 +819,26 @@ export function createParkingRepository(
       if (error) throw new Error(`capture_pending_binding failed: ${error.message}`)
       const row = data as { captured: number; superseded: boolean }
       return { captured: row.captured, superseded: row.superseded }
+    },
+
+    async approvePendingBinding({ pendingId, nowIso, dryRun }) {
+      const { data, error } = await client.rpc('approve_pending_binding', {
+        p_pending_id: pendingId,
+        p_now: nowIso,
+        p_dry_run: dryRun,
+      })
+      if (error) throw new Error(`approve_pending_binding failed: ${error.message}`)
+      return data as { approved: number; would_approve: boolean; reason: string }
+    },
+
+    async rejectPendingBinding({ pendingId, reason, nowIso }) {
+      const { data, error } = await client.rpc('reject_pending_binding', {
+        p_pending_id: pendingId,
+        p_reason: reason,
+        p_now: nowIso,
+      })
+      if (error) throw new Error(`reject_pending_binding failed: ${error.message}`)
+      return data as { rejected: number; reason: string }
     },
 
     async getMoveCarTarget(reservationId) {
