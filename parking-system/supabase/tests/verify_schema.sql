@@ -283,6 +283,39 @@ begin
   raise notice 'PASS: pending_binding table + active-uq index + capture_pending_binding grant present';
 end $$;
 
+-- ── 24. binding_codes + pending_binding audit cols + approve/reject RPC grants (Phase 5B) ─
+do $$
+begin
+  perform 1 from pg_class where relname = 'binding_codes' and relkind = 'r';
+  if not found then raise exception 'FAIL: binding_codes table missing'; end if;
+
+  perform 1 from pg_indexes where indexname = 'binding_codes_code_key';
+  if not found then raise exception 'FAIL: binding_codes_code_key unique index missing'; end if;
+
+  -- pending_binding audit columns
+  perform 1 from information_schema.columns
+   where table_name = 'pending_binding'
+     and column_name in ('approved_at', 'approved_user_id', 'rejected_at', 'rejected_reason')
+   group by table_name having count(*) = 4;
+  if not found then raise exception 'FAIL: pending_binding audit columns (approved_at/approved_user_id/rejected_at/rejected_reason) missing'; end if;
+
+  perform 1 from pg_proc where proname = 'approve_pending_binding';
+  if not found then raise exception 'FAIL: approve_pending_binding function missing'; end if;
+  perform 1 from pg_proc where proname = 'reject_pending_binding';
+  if not found then raise exception 'FAIL: reject_pending_binding function missing'; end if;
+
+  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,timestamptz,boolean)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on approve_pending_binding';
+  end if;
+  if not has_function_privilege('service_role', 'reject_pending_binding(uuid,text,timestamptz)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on reject_pending_binding';
+  end if;
+  if not has_table_privilege('service_role', 'binding_codes', 'insert') then
+    raise exception 'FAIL: service_role lacks insert on binding_codes';
+  end if;
+  raise notice 'PASS: binding_codes + pending_binding audit cols + approve/reject RPC grants present';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

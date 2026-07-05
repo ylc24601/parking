@@ -59,6 +59,9 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     requeueFailedOutbox: vi.fn(async () => ({ requeued: 0 })),
     // Phase 5A — pending LINE binding capture
     capturePendingBinding: vi.fn(async () => ({ captured: 1, superseded: false })),
+    // Phase 5B — approve / reject pending binding
+    approvePendingBinding: vi.fn(async () => ({ approved: 1, would_approve: true, reason: 'approved' })),
+    rejectPendingBinding: vi.fn(async () => ({ rejected: 1, reason: 'rejected' })),
     // Phase 4 Slice B — move-car
     getMoveCarTarget: vi.fn(async () => ({
       weekly_event_id: 'event-1',
