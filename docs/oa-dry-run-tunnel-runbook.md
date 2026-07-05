@@ -8,6 +8,29 @@
 
 ---
 
+## ✅ 執行結果（2026-07-05，PASS — 使用「開發者/測試 OA」，非教會正式 OA）
+
+> ⚠️ 本次 PASS 是用**開發者自有的測試 OA（developer/test OA）**跑的，**不是教會正式 OA**。
+> **教會正式 OA 的 dry-run 仍待進行（pending）。** 本結果**不代表**教會正式 OA 已驗證。
+
+**這次「有」確認（用測試 OA）：**
+- tunnel 連通 + LINE console **Verify → 200** + webhook 收訊。
+- **簽章驗證**（`x-line-signature` HMAC / `LINE_CHANNEL_SECRET`）正確。
+- **`pending_binding` 擷取**：`綁定 TEST01` → 同帳號 `bind test-02` 重送 → **僅一列**（`submitted_code=TEST-02`、`superseded_count=1`、`status=pending`、`last_event_type=message`）⇒ **原地 supersede 確認**（未灌爆表）。
+- `你好`（非綁定）**未建列**；測試者**未收到任何回覆**；log **無** userId / code。
+- 全程**未送出任何 LINE 訊息**、**未寫 `users.line_id`**；`LINE_CHANNEL_ACCESS_TOKEN` 未設定。
+
+**這次「未」確認（仍待教會正式 OA dry-run）：**
+- ❌ 教會正式 OA 的 **channel secret**。
+- ❌ 教會正式 OA 的 **webhook 後台設定**。
+- ❌ **正式會友的 userId 擷取**（正式環境）。
+
+> 🔒 本次測試擷取到的任何 `line_user_id` 屬**測試 OA、可丟棄**，**不得**當作教會正式綁定資料使用（userId 依 Provider 綁定，測試 OA 的值在正式 OA 無效）。
+
+**結論：程式路徑（tunnel + webhook + 驗簽 + 擷取 + supersede）在測試 OA 上運作正常 → 可據以規劃 Phase 5B（人工審核 → 寫 `users.line_id`，遵守 `users_line_id_key`）。但 go-live 送達前，仍需完成一次「教會正式 OA」的 capture dry-run。** 收尾見第 7 步（webhook 關閉 + URL 清空後才停 tunnel）。
+
+---
+
 ## 前置：拿到 channel secret
 LINE Developers → 教會 OA 的 **Messaging API channel** → **Basic settings** → 複製 **Channel secret**（等下貼進 `.env.local`）。
 > 這是 channel **secret**（驗證收訊用），不是 access token；access token 這次**不要**設。
@@ -107,13 +130,13 @@ psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -c \
 - ❌ 任何 `users.line_id` 寫入（Phase 5B 未部署）。
 
 ## 收尾完成確認清單
-- [ ] LINE webhook OFF（Use webhook = OFF）
-- [ ] Webhook URL 已清空
-- [ ] tunnel 已停止
-- [ ] Next dev 已停止
-- [ ] Supabase 已停止（`npm run db:stop`）
-- [ ] 未加入 `LINE_CHANNEL_ACCESS_TOKEN`
-- [ ] 無任何 `users.line_id` 寫入
+- [x] LINE webhook OFF（Use webhook = OFF）
+- [x] Webhook URL 已清空
+- [x] tunnel 已停止
+- [x] Next dev 已停止
+- [x] Supabase 已停止（`npm run db:stop`）
+- [x] 未加入 `LINE_CHANNEL_ACCESS_TOKEN`
+- [x] 無任何 `users.line_id` 寫入
 
 ---
 
