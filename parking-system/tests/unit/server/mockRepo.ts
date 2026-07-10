@@ -114,6 +114,7 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     getUserRole: vi.fn(async () => 'user'),
     hasFridayAllocationRun: vi.fn(async () => false),
     applyReservation: vi.fn(async () => ({ applied: 1, reason: 'applied' })),
+    claimFridayAllocation: vi.fn(async () => ({ claimed: true, reason: 'claimed' })),
     ...overrides,
   }
   return repo

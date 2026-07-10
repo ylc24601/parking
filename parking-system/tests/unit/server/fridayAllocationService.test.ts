@@ -34,6 +34,8 @@ function makeRepo(opts: {
   // Only the methods this Friday-allocation test exercises; cast since the full
   // ParkingRepository surface (cancellation/offer methods) is unused here.
   const repo = {
+    // Lock-protocol claim (0023): default = freshly claimed.
+    claimFridayAllocation: vi.fn(async () => ({ claimed: true, reason: 'claimed' })),
     getWeeklyEvent: async (): Promise<WeeklyEventRow> =>
       ({ id: EVENT_ID, sunday_date: SUNDAY, status: 'open' }),
     getCapacityInputs: async (): Promise<CapacityInputs> => ({
@@ -110,6 +112,34 @@ describe('runFridayAllocation (mocked repo)', () => {
     })
     const summary = await runFridayAllocation({ eventId: EVENT_ID }, repo)
     expect(summary.jobStatus).toBe('skipped')
+  })
+
+  it('short-circuits on a refused claim (already succeeded) without reading the snapshot', async () => {
+    const { repo, applySpy } = makeRepo({ capacity: { total_capacity: 2 }, pending: pendingMix() })
+    ;(repo.claimFridayAllocation as ReturnType<typeof vi.fn>).mockResolvedValue({
+      claimed: false, reason: 'already_succeeded',
+    })
+    const summary = await runFridayAllocation({ eventId: EVENT_ID }, repo)
+    expect(summary).toEqual({
+      jobStatus: 'skipped', plannedApproved: 0, plannedWaiting: 0, updated: null, outboxEnqueued: null,
+    })
+    expect(applySpy).not.toHaveBeenCalled()
+  })
+
+  it('claims BEFORE reading the pending snapshot (the lock-protocol ordering)', async () => {
+    const order: string[] = []
+    const { repo } = makeRepo({ capacity: { total_capacity: 2 }, pending: pendingMix() })
+    ;(repo.claimFridayAllocation as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push('claim')
+      return { claimed: true, reason: 'claimed' }
+    })
+    const origPending = repo.getPendingForAllocation.bind(repo)
+    repo.getPendingForAllocation = (async (eventId: string) => {
+      order.push('snapshot')
+      return origPending(eventId)
+    }) as ParkingRepository['getPendingForAllocation']
+    await runFridayAllocation({ eventId: EVENT_ID }, repo)
+    expect(order).toEqual(['claim', 'snapshot'])
   })
 
   it('records a failed job (upsert) and rethrows when the RPC throws', async () => {

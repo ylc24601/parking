@@ -10,6 +10,15 @@
 -- in 'running' or 'success'. Rows inserted after the allocator read its pending snapshot would
 -- otherwise sit 'pending' forever; late members go through Sunday walk-in instead
 -- (waiting-tail join is v2 backlog).
+--
+-- Concurrency protocol (PR #16 review): the job_runs check alone cannot see an allocation that
+-- is claiming CONCURRENTLY (READ COMMITTED hides its uncommitted 'running' row), so apply and
+-- claim serialize on the weekly_events row lock:
+--   * apply_reservation locks the event row FOR UPDATE before its window check;
+--   * claim_friday_allocation (below) locks the SAME row before marking 'running', and the
+--     allocator reads its pending snapshot only after that claim has committed.
+-- Ordering therefore guarantees: an apply that commits first is in the allocator's snapshot;
+-- a claim that commits first makes every later apply see 'running' → applications_closed.
 
 create or replace function apply_reservation(
   p_event_id           uuid,
@@ -26,7 +35,8 @@ declare
   v_status text;
   v_id     uuid;
 begin
-  select status into v_status from weekly_events where id = p_event_id;
+  -- Lock the event row: serializes this window check against claim_friday_allocation.
+  select status into v_status from weekly_events where id = p_event_id for update;
   if not found or v_status <> 'open' then
     return jsonb_build_object('applied', 0, 'reason', 'event_not_open');
   end if;
@@ -66,3 +76,40 @@ end $$;
 
 revoke all on function apply_reservation(uuid, uuid, uuid, boolean, smallint, timestamptz) from public;
 grant execute on function apply_reservation(uuid, uuid, uuid, boolean, smallint, timestamptz) to service_role;
+
+-- ── claim_friday_allocation — the allocator's half of the locking protocol ────────────────────────
+-- Marks the event's allocation run 'running' UNDER the weekly_events row lock and commits before
+-- the allocator reads its pending snapshot (fridayAllocationService calls this first). The
+-- existing conditional-claim semantics of apply_friday_allocation (0005) are preserved: a prior
+-- 'success' short-circuits, 'running'/'failed' rows are reclaimed (a crashed run keeps the window
+-- closed until the Friday job reruns — an ops-visible state, not a member-facing one).
+create or replace function claim_friday_allocation(
+  p_event_id uuid,
+  p_job_type text
+) returns jsonb
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare v_status job_run_status;
+begin
+  perform 1 from weekly_events where id = p_event_id for update;
+  if not found then
+    return jsonb_build_object('claimed', false, 'reason', 'event_not_found');
+  end if;
+
+  insert into job_runs (weekly_event_id, job_type, status)
+    values (p_event_id, p_job_type, 'running')
+    on conflict (weekly_event_id, job_type)
+    do update set status = 'running', started_at = now(), error_message = null
+    where job_runs.status <> 'success';
+
+  select status into v_status
+    from job_runs where weekly_event_id = p_event_id and job_type = p_job_type;
+  if v_status = 'success' then
+    return jsonb_build_object('claimed', false, 'reason', 'already_succeeded');
+  end if;
+  return jsonb_build_object('claimed', true, 'reason', 'claimed');
+end $$;
+
+revoke all on function claim_friday_allocation(uuid, text) from public;
+grant execute on function claim_friday_allocation(uuid, text) to service_role;

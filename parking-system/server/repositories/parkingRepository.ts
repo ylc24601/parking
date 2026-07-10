@@ -554,6 +554,9 @@ export interface ParkingRepository {
     effectivePriority: 2 | 3
     nowIso: string
   }): Promise<{ applied: number; reason: string }>
+  // Claim the event's allocation run UNDER the weekly_events row lock (the allocator's
+  // half of the apply-window protocol) — must COMMIT before the pending snapshot is read.
+  claimFridayAllocation(eventId: string, jobType: string): Promise<{ claimed: boolean; reason: string }>
 }
 
 export function createParkingRepository(
@@ -1367,6 +1370,16 @@ export function createParkingRepository(
         .limit(1)
       if (error) throw new Error(`hasFridayAllocationRun failed: ${error.message}`)
       return (data ?? []).length > 0
+    },
+
+    async claimFridayAllocation(eventId, jobType) {
+      const { data, error } = await client.rpc('claim_friday_allocation', {
+        p_event_id: eventId,
+        p_job_type: jobType,
+      })
+      if (error) throw new Error(`claim_friday_allocation failed: ${error.message}`)
+      const row = data as { claimed: boolean; reason: string }
+      return { claimed: row.claimed, reason: row.reason }
     },
 
     async applyReservation({ eventId, userId, vehicleId, requestedP2, effectivePriority, nowIso }) {
