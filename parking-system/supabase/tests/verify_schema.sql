@@ -316,6 +316,32 @@ begin
   raise notice 'PASS: binding_codes + pending_binding audit cols + approve/reject RPC grants present';
 end $$;
 
+-- ── 25. eligibility_dependents + users_phone_key + import_member RPC grant (Phase 6) ─
+do $$
+begin
+  perform 1 from pg_type where typname = 'dependent_kind';
+  if not found then raise exception 'FAIL: dependent_kind enum missing'; end if;
+
+  perform 1 from pg_class where relname = 'eligibility_dependents' and relkind = 'r';
+  if not found then raise exception 'FAIL: eligibility_dependents table missing'; end if;
+
+  perform 1 from pg_indexes where indexname = 'eligibility_dependents_uq';
+  if not found then raise exception 'FAIL: eligibility_dependents_uq unique index missing'; end if;
+
+  perform 1 from pg_indexes where indexname = 'users_phone_key';
+  if not found then raise exception 'FAIL: users_phone_key (phone identity) index missing'; end if;
+
+  perform 1 from pg_proc where proname = 'import_member';
+  if not found then raise exception 'FAIL: import_member function missing'; end if;
+  if not has_function_privilege('service_role', 'import_member(text,text,text[],p2_reason,date,date,jsonb,boolean)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on import_member';
+  end if;
+  if not has_table_privilege('service_role', 'eligibility_dependents', 'insert') then
+    raise exception 'FAIL: service_role lacks insert on eligibility_dependents';
+  end if;
+  raise notice 'PASS: eligibility_dependents + users_phone_key + import_member RPC grant present';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

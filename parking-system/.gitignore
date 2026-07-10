@@ -34,6 +34,10 @@ yarn-error.log*
 .env*
 !.env.example
 
+# real member PII import files — never commit (Phase 6 members:import). Synthetic
+# fixtures live under tests/fixtures/ and ARE committed.
+/members-data/
+
 # vercel
 .vercel
 

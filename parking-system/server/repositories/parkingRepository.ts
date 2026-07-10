@@ -406,6 +406,24 @@ export interface ParkingRepository {
   // Phase 5B Slice 2 — resolve a member's display name (issue validation + confirmation). Null if
   // the user id doesn't exist.
   getUserDisplayName(userId: string): Promise<string | null>
+  // Phase 6 — atomic upsert of one member (by phone) + vehicles + eligibility + dependents. Typed,
+  // dry-run aware. line_id is never touched.
+  importMember(args: {
+    name: string
+    phone: string
+    plates: string[]
+    reason: string
+    validUntil: string | null
+    reviewDate: string | null
+    dependents: Array<{ kind: string; name: string; birthdate: string | null }>
+    dryRun: boolean
+  }): Promise<{
+    status: 'imported' | 'updated' | 'phone_name_conflict'
+    existing_name?: string
+    vehicles_added?: number
+    dependents_added?: number
+    plate_conflicts?: string[]
+  }>
   // Phase 5B Slice 2 — raw fields for the approve preview (the SERVICE masks them before output;
   // they are never printed/logged raw). Returns null only when the pending id doesn't exist.
   getBindingApprovalPreview(pendingId: string): Promise<{
@@ -871,6 +889,27 @@ export function createParkingRepository(
         throw new Error(`insertBindingCode failed: ${error.message}`)
       }
       return { inserted: true }
+    },
+
+    async importMember({ name, phone, plates, reason, validUntil, reviewDate, dependents, dryRun }) {
+      const { data, error } = await client.rpc('import_member', {
+        p_name: name,
+        p_phone: phone,
+        p_plates: plates,
+        p_reason: reason,
+        p_valid_until: validUntil,
+        p_review_date: reviewDate,
+        p_dependents: dependents,
+        p_dry_run: dryRun,
+      })
+      if (error) throw new Error(`import_member failed: ${error.message}`)
+      return data as {
+        status: 'imported' | 'updated' | 'phone_name_conflict'
+        existing_name?: string
+        vehicles_added?: number
+        dependents_added?: number
+        plate_conflicts?: string[]
+      }
     },
 
     async getUserDisplayName(userId) {

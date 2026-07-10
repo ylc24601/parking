@@ -65,6 +65,8 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     // Phase 5B Slice 2 — issue + approve preview
     insertBindingCode: vi.fn(async () => ({ inserted: true })),
     getUserDisplayName: vi.fn(async () => '王小明'),
+    // Phase 6 — member import
+    importMember: vi.fn(async () => ({ status: 'imported' as const, vehicles_added: 1, dependents_added: 0, plate_conflicts: [] })),
     getBindingApprovalPreview: vi.fn(async () => ({
       pending_status: 'pending',
       line_user_id: 'Udeadbeefdeadbeefdeadbeefdeadbeef',

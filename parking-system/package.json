@@ -26,10 +26,12 @@
     "binding:issue": "tsx scripts/run-binding-issue.ts",
     "binding:approve": "tsx scripts/run-binding-approve.ts",
     "binding:reject": "tsx scripts/run-binding-reject.ts",
+    "members:import": "tsx scripts/run-members-import.ts",
     "staff:set-pin": "tsx scripts/set-staff-pin.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "csv-parse": "^7.0.1",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4"
