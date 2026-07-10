@@ -15,6 +15,12 @@ export function normalizePhone(raw: string | undefined | null): string {
   return (raw ?? '').replace(/\D/g, '')
 }
 
+// A Taiwan mobile number: 09 + 8 digits (10 total), evaluated on the normalized (digits-only) form.
+// Guards the phone identity key so junk like "1" / landline-style numbers can't reach users_phone_key.
+export function isValidTaiwanMobilePhone(phone: string): boolean {
+  return /^09\d{8}$/.test(phone)
+}
+
 // Accept YYYY-MM-DD or YYYY/MM/DD (the form mixes both) → ISO YYYY-MM-DD, else null.
 export function parseFormDate(raw: string | undefined | null): string | null {
   const s = (raw ?? '').trim()
@@ -117,7 +123,9 @@ export function collectDependents(row: RawRow, reasonType: ReasonType): Dependen
 export function validateRow(row: RawRow): { reasonType: ReasonType | null; errors: string[] } {
   const errors: string[] = []
   if (!(row.applicant_name ?? '').trim()) errors.push('missing applicant_name')
-  if (!normalizePhone(row.mobile_phone)) errors.push('missing/invalid mobile_phone')
+  const phone = normalizePhone(row.mobile_phone)
+  if (!phone) errors.push('missing mobile_phone')
+  else if (!isValidTaiwanMobilePhone(phone)) errors.push(`invalid mobile_phone "${row.mobile_phone}" (expect Taiwan mobile 09XXXXXXXX)`)
   if (!(row.license_plate ?? '').trim()) errors.push('missing license_plate')
 
   const rt = Number(row.reason_type)

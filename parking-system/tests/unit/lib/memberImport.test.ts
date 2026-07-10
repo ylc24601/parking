@@ -3,6 +3,7 @@ import {
   collectDependents,
   computeEligibility,
   isPregnancy,
+  isValidTaiwanMobilePhone,
   normalizePhone,
   parseFormDate,
   validateRow,
@@ -15,6 +16,21 @@ describe('normalizePhone', () => {
   it('strips non-digits', () => {
     expect(normalizePhone('0912-345 678')).toBe('0912345678')
     expect(normalizePhone(null)).toBe('')
+  })
+})
+
+describe('isValidTaiwanMobilePhone', () => {
+  it('accepts 09 + 8 digits (on the normalized form)', () => {
+    expect(isValidTaiwanMobilePhone(normalizePhone('0912345678'))).toBe(true)
+    expect(isValidTaiwanMobilePhone(normalizePhone('0912-345-678'))).toBe(true)
+    expect(isValidTaiwanMobilePhone('0955000001')).toBe(true) // fixture range
+  })
+  it('rejects junk, landline-style, and empty', () => {
+    expect(isValidTaiwanMobilePhone('1')).toBe(false)
+    expect(isValidTaiwanMobilePhone('123456789')).toBe(false)      // 9 digits, no leading 09
+    expect(isValidTaiwanMobilePhone('0223456789')).toBe(false)     // landline-style (02…)
+    expect(isValidTaiwanMobilePhone('09123456789')).toBe(false)    // too long
+    expect(isValidTaiwanMobilePhone('')).toBe(false)
   })
 })
 
@@ -99,8 +115,17 @@ describe('validateRow', () => {
     expect(errors).toEqual([])
   })
   it('flags missing conditional fields and bad reason_type', () => {
-    expect(validateRow({ applicant_name: 'x', mobile_phone: '1', license_plate: 'A', reason_type: '9' } as RawRow).errors).toContain('invalid reason_type "9"')
-    expect(validateRow({ applicant_name: 'x', mobile_phone: '1', license_plate: 'A', reason_type: '1' } as RawRow).errors).toContain('reason_type 1/2 requires impaired_person_name')
-    expect(validateRow({ applicant_name: 'x', mobile_phone: '1', license_plate: 'A', reason_type: '3' } as RawRow).errors).toContain('reason_type 3 requires child_1_name or a pregnancy remark')
+    expect(validateRow({ applicant_name: 'x', mobile_phone: '0912345678', license_plate: 'A', reason_type: '9' } as RawRow).errors).toContain('invalid reason_type "9"')
+    expect(validateRow({ applicant_name: 'x', mobile_phone: '0912345678', license_plate: 'A', reason_type: '1' } as RawRow).errors).toContain('reason_type 1/2 requires impaired_person_name')
+    expect(validateRow({ applicant_name: 'x', mobile_phone: '0912345678', license_plate: 'A', reason_type: '3' } as RawRow).errors).toContain('reason_type 3 requires child_1_name or a pregnancy remark')
+  })
+
+  it('flags a missing or malformed mobile_phone (the identity key)', () => {
+    const base = { applicant_name: 'x', license_plate: 'A', reason_type: '4', elder_1_name: 'e', elder_1_birthdate: '1945/01/01' }
+    expect(validateRow({ ...base, mobile_phone: '' } as RawRow).errors).toContain('missing mobile_phone')
+    expect(validateRow({ ...base, mobile_phone: '1' } as RawRow).errors.some(e => e.startsWith('invalid mobile_phone'))).toBe(true)
+    expect(validateRow({ ...base, mobile_phone: '123456789' } as RawRow).errors.some(e => e.startsWith('invalid mobile_phone'))).toBe(true)
+    // a valid mobile passes (no phone error)
+    expect(validateRow({ ...base, mobile_phone: '0912-345-678' } as RawRow).errors).toEqual([])
   })
 })
