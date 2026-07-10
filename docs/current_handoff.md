@@ -620,6 +620,26 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 
 ---
 
+## 6.23 Phase 7 Slice 1 — 會員 LIFF 登入 + 唯讀本週狀態頁（本次完成）
+
+Phase 7（會員預約 UI，LIFF-first）第一刀：**第一個會友對外前端**。`/member` 頁——LIFF 取得 ID token → server 驗證 → 依 `users.line_id` 找會友 → 建 session → 顯示**本週自己那筆預約**的唯讀狀態卡。未綁定 → typed `not_bound` 占位畫面（**不自動綁**；Slice 2 換成申請表）。申請/取消/offer 確認為 Slice 3/4。規劃 + v2 審查採納紀錄見 plan（Phase 7 切片地圖）。
+
+- **認證模式顯式化（比照 `NOTIFICATION_TRANSPORT`）**：`MEMBER_AUTH_MODE=liff|mock`——`mock` 收 `mockLineUserId`（本機開發/測試），production 用 mock → fail-fast `mock_in_production`；`liff` 缺 `LINE_LOGIN_CHANNEL_ID` → fail-fast。**env 命名區分**：`LINE_LOGIN_CHANNEL_ID`（LINE Login channel，verify API 的 `client_id`）/ `NEXT_PUBLIC_LIFF_ID`（LIFF app id，client `liff.init`）≠ 既有 Messaging API channel 的 `LINE_CHANNEL_SECRET`/`LINE_CHANNEL_ACCESS_TOKEN`。
+- **ID token 驗證（`memberAuthService.verifyLiffIdToken`，fetch 可注入）**：POST LINE verify endpoint（LINE 端驗簽章/exp/aud）→ 200 且 `iss==='https://access.line.me'` 且 `sub` 非空 → ok；4xx/壞 body → `invalid_token`（401）；網路錯/5xx/**8s 逾時（`AbortSignal.timeout`，公開登入入口不可懸掛）** → `verify_unreachable`（503，UI 可重試）。**token 與 `sub` 不落 log、不回 client**（單測含外洩斷言）。
+- **Session：hashed opaque token（migration `0021` `member_sessions`，含 `expires_at > created_at` check constraint 防「一建立就過期」的寫入）**：cookie 帶 raw 256-bit token（`base64url`），DB 只存 `token_hash=sha256`（`server/http/sessionToken.ts`）——DB 外洩不等於 session 可用（staffAuth 同型升級列 backlog）。RLS deny-all + service_role 顯式 grant。cookie：`httpOnly`、`SameSite=Lax`（LIFF 內 login fetch 為同源）、`secure`（prod）、`path=/`、TTL 30 天（`MEMBER_SESSION_TTL_DAYS`）。**多裝置並存**：login 帶有效 cookie → 冪等不增列（route 短路）；login 順手刪同會員過期列（lazy cleanup）；logout 只刪自己列。
+- **「本週 event」resolver（台北時區）**：`taipeiToday`（`lib/taipeiDate.ts` 純函式）+ `getMemberEvent`＝`sunday_date >= 台北今天`的**最小**一筆——**不用** `getActiveEvent`（那是「最新非 finalized」的 Staff-PIN 語意，未來週先建好會指錯）。主日當天整天仍解析到當天 event；週一起指向下週。
+- **Member-safe DTO**：page（server component）把 repo 列映射成 `MemberWeekStatus`（sundayDate + status/plate/deadline/offerExpires/p2OnTheWay）才交給 client——**不傳 DB row**、無 penalty、無他人資料；`getMemberWeekReservation` 只查自己 `(event,user)`，live 列優先於 cancelled 手足列。login/logout 回應 `Cache-Control: no-store`。
+- **UI**：`app/member/page.tsx`（server gate，同 staff page 模式）+ `MemberLiffGate`（liff.init→getIDToken→POST login；**錯誤狀態分開**：`not_bound`/401 過期/503 可重試/一般錯誤；mock 模式渲染 dev 登入表單）+ `MemberStatus`（狀態中文標籤、車牌、台北時間期限、登出）。手機優先（48px 觸控目標）。config 錯誤（mode/channel/LIFF id 缺）→ 頁面渲染 operator 可診斷的占位畫面，不 crash。
+- 依賴：新增 `@line/liff`。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`/`eslint`/`next build` ✅（`/member`、`/api/member/login`、`/api/member/logout` ƒ dynamic）。測試：`npm test` **479 / 81 skipped**（新增 `memberAuthService.test.ts` 14 例（含 verify 逾時→`verify_unreachable`）、`memberLoginRoute.test.ts` 8 例（冪等短路/typed 狀態碼/config 500）、`taipeiDate.test.ts` 4 例）；`RUN_DB_TESTS=1` **560**（新增 `member-auth.db.test.ts` 7 例：DB 只存 sha256、30d 過期、not_bound 零列、lazy cleanup 只刪過期、logout 只刪自己列、resolver 選最近未來主日、只回自己的列 + live 優先）；`db:verify` **26/26**（新增 assertion #26，含 expiry check constraint）。
+- **PR review 修正（merge 前採納）**：LINE verify 加 8s timeout + 單測；`member_sessions` 加 `expires_at > created_at` constraint + verify 斷言；`getMemberWeekReservation` comparator 改 `localeCompare`（相等值契約）。`expires_at` 全域 index 依審查建議**暫不加**——等未來有全域 session cleanup job 再加。
+- **實機 E2E**（dev server + mock 模式 + 本機 Supabase）：login 200 + `no-store` + `HttpOnly; SameSite=lax; Max-Age=2592000` cookie；`/member` 渲染「7月12日 主日／已核准車位／ABC-1234／10:45 前抵達」；帶 cookie 重登入冪等不增列；未綁定 id → `{ok:false,reason:'not_bound'}`；logout 刪自己列 + 清 cookie → 回登入 gate。
+- **仍 deferred**：Slice 2 LIFF 綁定申請（phone claim + server 重驗 ID token）、Slice 3 申請/取消、Slice 4 offer 確認/正在路上、**真機 LIFF 冒煙（Phase 7 結案前必跑**，需 LIFF app + tunnel，步驟見 [member-liff-setup.md](member-liff-setup.md)）、staffAuth hashed-token 升級。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
@@ -707,7 +727,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 - 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0014` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
-- `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**；`lib/supabase/server.ts` 不得被 client 端 import。
+- `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**；**`MEMBER_AUTH_MODE`（`mock`|`liff`；本機用 `mock`，`liff` 另需 `LINE_LOGIN_CHANNEL_ID` + `NEXT_PUBLIC_LIFF_ID`，見 [member-liff-setup.md](member-liff-setup.md)）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**（`NEXT_PUBLIC_LIFF_ID` 例外，非機密）；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。
 - 整合測試需先 `db:reset` 且設 `RUN_DB_TESTS=1` 才會執行；否則 gate 跳過。
 - 目前本機 Supabase stack 已停止（`npm run db:stop`）；下次開發前先 `db:start && db:reset`。

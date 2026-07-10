@@ -92,6 +92,14 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     resetStaffSessionFailures: vi.fn(async () => {}),
     applyStaffPinFailure: vi.fn(async () => ({ failed_attempts: 1, locked_at: null })),
     upsertStaffSessionPin: vi.fn(async () => {}),
+    // Phase 7 Slice 1 — member LIFF auth + week status
+    getUserByLineId: vi.fn(async () => ({ id: 'user-1', display_name: '王小明' })),
+    createMemberSession: vi.fn(async () => {}),
+    getMemberSessionByTokenHash: vi.fn(async () => null),
+    deleteMemberSessionByTokenHash: vi.fn(async () => {}),
+    deleteExpiredMemberSessions: vi.fn(async () => {}),
+    getMemberEvent: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
+    getMemberWeekReservation: vi.fn(async () => null),
     ...overrides,
   }
   return repo
