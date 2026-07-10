@@ -600,6 +600,23 @@ Phase 4 的**主打功能**：現場同工在地下室按一下，就能請**某
 ### 驗證（本回合實跑）
 - 靜態：`tsc`/`eslint` ✅。測試：`npm test` **432 / 71 skipped**（新增 `lib/binding.test.ts` + `bindingAdminService.test.ts`，含**無 raw `line_user_id`/完整 code 外洩**斷言）；`RUN_DB_TESTS=1` **503**（新增 `binding-cli.db.test.ts`：issue→preview 遮罩不寫→apply 寫入/consume/approved→idempotent→reject→自訂碼碰撞）；`db:verify` **24/24**（無 schema 變更）。
 - **仍 deferred**：Admin/Member UI、LIFF、webhook 綁定成功回覆、rebind/unbind、bulk approve、**教會正式 OA capture dry-run**、真 OA token + `NOTIFICATION_TRANSPORT=line`。
+- **5B 已在測試 OA 端到端 piloted PASS（2026-07-05）**：issue→`綁定`擷取→masked 預覽→`--apply` 寫 `line_id`→idempotent 擋重綁。
+
+---
+
+## 6.22 Phase 6 Slice 1 — 會友資料匯入（P2 申請表 CSV，本次完成）
+
+**交付模式改變（教會決定 2026-07-06，見 [delivery-model-and-roadmap.md](delivery-model-and-roadmap.md)）**：全部開發完成再一次交付、先用開發者 OA demo、交付後才 bulk-import 會友資料並漸進綁定。member+admin UI 入 scope、church staff 操作、LIFF-first、Vercel+Supabase Cloud。本刀補 roadmap 第一項：**會友資料匯入的 CLI 資料基礎**（Admin UI 之後包裝）。**只匯入紀錄、`line_id` 不動。**
+
+- **migration `0020`**：`dependent_kind` enum + `eligibility_dependents`（一 user 多 dependent，`(user,kind,name,coalesce(birthdate))` 去重）；`users_phone_key`（phone 為會友識別鍵，partial unique where not null）；`import_member(..., p_dry_run)` RPC——依 phone atomic upsert 會友 + 車輛 + `user_eligibility` summary + dependents，typed 非 throw（`imported`/`updated`/`phone_name_conflict`；車牌屬他人 → `plate_conflicts` 略過）。`user_eligibility` 維持 summary，dependents 表存證據。
+- **`lib/memberImport.ts`（純函式，單測）**：`normalizePhone`、`parseFormDate`（`YYYY-MM-DD`/`YYYY/MM/DD`）、`computeEligibility`（reason→p2_reason；長期/長者=永久、短期/懷孕=申請日+6mo、孩童=最晚生日+5y、缺日期=review_required）、`collectDependents`、`validateRow`。
+- **`memberImportService.ts`**：`csv-parse` 讀檔 → 逐列驗證（錯誤列報表排除）→ **依 phone 分組**（多列同手機=一人多車）→ 名字不一致=`phoneNameConflict` → 每人一次 `import_member` → 彙總報表（counts + `phoneNameConflicts`/`plateConflicts`/`reviewRequired`/`validationErrors`）。
+- **CLI `members:import`**（`--file`，**預設 dry-run**、`--apply` 才寫、有衝突 exit 2）+ operator 文件 [member-import-ops.md](member-import-ops.md)。**PII：真檔放 `members-data/`（`.gitignore`）不 commit；合成 fixture 在 `tests/fixtures/`。**
+- 依賴：新增 `csv-parse`。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`/`eslint` ✅。測試：`npm test` **448 / 74 skipped**（新增 `lib/memberImport.test.ts`）；`RUN_DB_TESTS=1` **522**（新增 `member-import.db.test.ts`：合成 CSV 9 情境——mobility_long/short、elderly、多孩 child、pregnancy 拆分、多車同人、同手機同名冪等、同手機不同名衝突、車牌撞他人；dry-run 不寫、apply 寫入、idempotent）；`db:verify` **25/25**（新增 assertion #25）。fixture 手機避開 seed 佔用的 `0900…/0911…`（用 `0955…`）。
+- **仍 deferred**：Admin UI 包裝匯入、P3/一般會友 CSV 路徑、Member UI（LIFF）、Big5 編碼處理。
 
 ---
 
