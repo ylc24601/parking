@@ -67,6 +67,7 @@ describe('previewApproveBinding', () => {
         submitted_code: 'ABCD-2345',
         claimed_phone: null,
         claimed_name: null,
+        superseded_count: 0,
         last_submitted_at: '2026-07-05T00:00:00.000Z',
         matched_user_id: 'u1',
         matched_display_name: '王小明',
@@ -76,7 +77,7 @@ describe('previewApproveBinding', () => {
     const preview = await previewApproveBinding({ pendingId: 'p1', now: NOW }, r)
     expect(preview).toMatchObject({
       found: true, pendingStatus: 'pending', claimSource: 'keyword',
-      claimVersion: '2026-07-05T00:00:00.000Z', lineUserIdMasked: 'Udeadb…beef',
+      claimVersion: 0, lineUserIdMasked: 'Udeadb…beef',
       submittedCodeMasked: 'ABCD-****', claimedPhoneMasked: null,
       matchedDisplayName: '王小明', wouldApprove: true, reason: 'approved',
     })
@@ -94,6 +95,7 @@ describe('previewApproveBinding', () => {
         submitted_code: null,
         claimed_phone: '0912345678',
         claimed_name: '王小明',
+        superseded_count: 3,
         last_submitted_at: '2026-07-10T01:00:00.000Z',
         matched_user_id: 'u1',
         matched_display_name: '王小明',
@@ -104,7 +106,7 @@ describe('previewApproveBinding', () => {
     expect(preview).toMatchObject({
       claimSource: 'liff', submittedCodeMasked: null,
       claimedPhoneMasked: '0912***678', claimedName: '王小明',
-      claimVersion: '2026-07-10T01:00:00.000Z', matchedDisplayName: '王小明',
+      claimVersion: 3, matchedDisplayName: '王小明',
     })
     expect(JSON.stringify(preview)).not.toContain('0912345678')
   })
@@ -128,25 +130,26 @@ describe('previewApproveBinding', () => {
 })
 
 describe('applyApproveBinding', () => {
-  it('calls the RPC with dryRun=false and the previewed claim version', async () => {
+  it('calls the RPC with dryRun=false and the previewed revision (0 is valid)', async () => {
     const approve = vi.fn(async () => ({ approved: 1, would_approve: true, reason: 'approved' }))
     const { r } = run({ approvePendingBinding: approve })
-    const version = '2026-07-10T00:00:00.000Z'
-    expect(await applyApproveBinding({ pendingId: 'p1', expectedLastSubmittedAt: version, now: NOW }, r))
+    expect(await applyApproveBinding({ pendingId: 'p1', expectedSupersededCount: 0, now: NOW }, r))
       .toEqual({ approved: 1, reason: 'approved' })
     expect(approve).toHaveBeenCalledWith({
       pendingId: 'p1',
       nowIso: NOW.toISOString(),
       dryRun: false,
-      expectedLastSubmittedAtIso: version,
+      expectedSupersededCount: 0,
     })
   })
 
-  it('refuses an apply without a claim version (optimistic concurrency is not optional)', async () => {
+  it('refuses an apply without a valid revision (optimistic concurrency is not optional)', async () => {
     const { r } = run()
-    await expect(
-      applyApproveBinding({ pendingId: 'p1', expectedLastSubmittedAt: '', now: NOW }, r),
-    ).rejects.toThrow(/claimVersion/)
+    for (const bad of [-1, 1.5, Number.NaN]) {
+      await expect(
+        applyApproveBinding({ pendingId: 'p1', expectedSupersededCount: bad, now: NOW }, r),
+      ).rejects.toThrow(/claimVersion/)
+    }
   })
 })
 

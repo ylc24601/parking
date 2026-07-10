@@ -304,9 +304,9 @@ begin
   perform 1 from pg_proc where proname = 'reject_pending_binding';
   if not found then raise exception 'FAIL: reject_pending_binding function missing'; end if;
 
-  -- 0022 re-signed approve_pending_binding to 4 args (expected-version optimistic concurrency);
+  -- 0022 re-signed approve_pending_binding to 4 args (expected-revision optimistic concurrency);
   -- assertion #27 checks the new signature + that the old 3-arg one is gone.
-  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,timestamptz,timestamptz,boolean)', 'execute') then
+  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,bigint,timestamptz,boolean)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on approve_pending_binding';
   end if;
   if not has_function_privilege('service_role', 'reject_pending_binding(uuid,text,timestamptz)', 'execute') then
@@ -402,8 +402,8 @@ begin
   if not has_function_privilege('service_role', 'capture_pending_binding(text,text,text,timestamptz)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on capture_pending_binding';
   end if;
-  -- 4-arg approve (with expected version); the old 3-arg signature must be gone.
-  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,timestamptz,timestamptz,boolean)', 'execute') then
+  -- 4-arg approve (expected superseded_count revision); the old 3-arg signature must be gone.
+  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,bigint,timestamptz,boolean)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on approve_pending_binding(4-arg)';
   end if;
   perform 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace

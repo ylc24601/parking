@@ -76,16 +76,17 @@ describe.skipIf(!RUN)('binding CLI service (5B-2) — local DB integration', () 
     expect(previewStr).not.toContain(issued.code)   // full code never surfaces
     expect(await userLineId(user)).toBeNull()        // dry-run wrote nothing
 
-    // Apply (with the previewed claimVersion): writes line_id, consumes code, marks approved.
+    // Apply (with the previewed claimVersion revision): writes line_id, consumes code, marks approved.
     const version = preview.claimVersion!
-    expect(await svc.applyApproveBinding({ pendingId: pid, expectedLastSubmittedAt: version, now: NOW }, repo))
+    expect(version).toBe(0)   // fresh claim, never superseded
+    expect(await svc.applyApproveBinding({ pendingId: pid, expectedSupersededCount: version, now: NOW }, repo))
       .toEqual({ approved: 1, reason: 'approved' })
     expect(await userLineId(user)).toBe(line)
     expect((await sb.from('binding_codes').select('consumed_at').eq('code', issued.code).single()).data!.consumed_at).not.toBeNull()
     expect((await sb.from('pending_binding').select('status').eq('id', pid).single()).data!.status).toBe('approved')
 
     // Idempotent: re-apply is pending_not_pending.
-    expect(await svc.applyApproveBinding({ pendingId: pid, expectedLastSubmittedAt: version, now: NOW }, repo))
+    expect(await svc.applyApproveBinding({ pendingId: pid, expectedSupersededCount: version, now: NOW }, repo))
       .toMatchObject({ approved: 0, reason: 'pending_not_pending' })
   })
 

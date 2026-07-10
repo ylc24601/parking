@@ -147,7 +147,7 @@ describe.skipIf(!RUN)('LIFF binding claim (Phase 7 Slice 2) — local DB integra
     expect(await userLineId(member)).toBeNull()   // preview wrote nothing
 
     const codesBefore = (await sb.from('binding_codes').select('id')).data!.length
-    expect(await svc.applyApproveBinding({ pendingId: pid, expectedLastSubmittedAt: preview.claimVersion!, now: NOW }, repo))
+    expect(await svc.applyApproveBinding({ pendingId: pid, expectedSupersededCount: preview.claimVersion!, now: NOW }, repo))
       .toEqual({ approved: 1, reason: 'approved' })
     expect(await userLineId(member)).toBe(line)
     const p = (await sb.from('pending_binding').select('status, approved_user_id').eq('id', pid).single()).data!
@@ -183,36 +183,44 @@ describe.skipIf(!RUN)('LIFF binding claim (Phase 7 Slice 2) — local DB integra
     expect((await svc.previewApproveBinding({ pendingId: pidC, now: NOW }, repo)).reason).toBe('line_id_taken')
   })
 
-  it('TOCTOU guard: a claim re-submitted after preview yields pending_changed, nothing written', async () => {
+  it('TOCTOU guard: a claim re-submitted after preview yields pending_changed — even at the SAME p_now', async () => {
     const phoneA = phoneFor()
     const phoneB = phoneFor()
     const memberA = await mkUser({ phone: phoneA })
     const memberB = await mkUser({ phone: phoneB })
     const line = lineId('RACE')
 
-    await claim({ mockLineUserId: line, name: '版本甲', phone: phoneA })
+    // Both captures deliberately use the IDENTICAL timestamp: superseded_count (not the
+    // caller-supplied last_submitted_at, which collides here) is the revision that must trip.
+    const sameNow = iso(0)
+    await repo.captureLiffBindingClaim({ lineUserId: line, phone: phoneA, name: '版本甲', nowIso: sameNow })
     const pid = (await pendingFor(line))!.id as string
     const preview = await svc.previewApproveBinding({ pendingId: pid, now: NOW }, repo)
-    expect(preview).toMatchObject({ reason: 'approved', matchedUserId: memberA })
+    expect(preview).toMatchObject({ reason: 'approved', matchedUserId: memberA, claimVersion: 0 })
 
-    // Member re-submits phone B between the admin's preview and apply.
-    await repo.captureLiffBindingClaim({ lineUserId: line, phone: phoneB, name: '版本乙', nowIso: iso(300) })
+    // Member re-submits phone B between the admin's preview and apply — same p_now.
+    await repo.captureLiffBindingClaim({ lineUserId: line, phone: phoneB, name: '版本乙', nowIso: sameNow })
+    const swapped = (await pendingFor(line))!
+    // The timestamp is identical (collision) — only the revision moved. A timestamp-based
+    // version check would have let the stale preview through here.
+    expect(new Date(swapped.last_submitted_at as string).toISOString()).toBe(new Date(sameNow).toISOString())
+    expect(swapped.superseded_count).toBe(1)
 
-    expect(await svc.applyApproveBinding({ pendingId: pid, expectedLastSubmittedAt: preview.claimVersion!, now: NOW }, repo))
+    expect(await svc.applyApproveBinding({ pendingId: pid, expectedSupersededCount: preview.claimVersion!, now: NOW }, repo))
       .toEqual({ approved: 0, reason: 'pending_changed' })
     expect(await userLineId(memberA)).toBeNull()
     expect(await userLineId(memberB)).toBeNull()
     expect((await pendingFor(line))!.status).toBe('pending')
 
-    // Fresh preview picks up version B and approves the right member.
+    // Fresh preview picks up revision 1 (phone B) and approves the right member.
     const fresh = await svc.previewApproveBinding({ pendingId: pid, now: NOW }, repo)
-    expect(fresh.matchedUserId).toBe(memberB)
-    expect(await svc.applyApproveBinding({ pendingId: pid, expectedLastSubmittedAt: fresh.claimVersion!, now: NOW }, repo))
+    expect(fresh).toMatchObject({ matchedUserId: memberB, claimVersion: 1 })
+    expect(await svc.applyApproveBinding({ pendingId: pid, expectedSupersededCount: fresh.claimVersion!, now: NOW }, repo))
       .toEqual({ approved: 1, reason: 'approved' })
     expect(await userLineId(memberB)).toBe(line)
   })
 
-  it('same guard protects the keyword flow (code swapped after preview)', async () => {
+  it('same guard protects the keyword flow (code swapped after preview, same p_now)', async () => {
     const memberA = await mkUser()
     const memberB = await mkUser()
     const codeA = `${T.slice(0, 4)}-RCA1`
@@ -223,13 +231,14 @@ describe.skipIf(!RUN)('LIFF binding claim (Phase 7 Slice 2) — local DB integra
     ]).throwOnError()
 
     const line = lineId('KWRACE')
-    await repo.capturePendingBinding({ lineUserId: line, code: codeA, eventType: 'message', nowIso: iso(0) })
+    const sameNow = iso(0)
+    await repo.capturePendingBinding({ lineUserId: line, code: codeA, eventType: 'message', nowIso: sameNow })
     const pid = (await pendingFor(line))!.id as string
     const preview = await svc.previewApproveBinding({ pendingId: pid, now: NOW }, repo)
-    expect(preview.matchedUserId).toBe(memberA)
+    expect(preview).toMatchObject({ matchedUserId: memberA, claimVersion: 0 })
 
-    await repo.capturePendingBinding({ lineUserId: line, code: codeB, eventType: 'message', nowIso: iso(60) })
-    expect(await svc.applyApproveBinding({ pendingId: pid, expectedLastSubmittedAt: preview.claimVersion!, now: NOW }, repo))
+    await repo.capturePendingBinding({ lineUserId: line, code: codeB, eventType: 'message', nowIso: sameNow })
+    expect(await svc.applyApproveBinding({ pendingId: pid, expectedSupersededCount: preview.claimVersion!, now: NOW }, repo))
       .toEqual({ approved: 0, reason: 'pending_changed' })
     expect(await userLineId(memberA)).toBeNull()
     expect(await userLineId(memberB)).toBeNull()

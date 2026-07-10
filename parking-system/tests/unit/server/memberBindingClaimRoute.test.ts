@@ -34,6 +34,16 @@ describe('POST /api/member/binding-claim', () => {
     expect(submitBindingClaim).not.toHaveBeenCalled()
   })
 
+  it('413 measures UTF-8 BYTES: CJK payload under 4096 chars but over 4096 bytes is rejected', async () => {
+    // 1500 CJK chars ≈ 1500 UTF-16 units (< 4096) but ≈ 4500 UTF-8 bytes (> 4096).
+    const cjk = JSON.stringify({ name: '停'.repeat(1500) })
+    expect(cjk.length).toBeLessThan(4096)
+    expect(Buffer.byteLength(cjk, 'utf8')).toBeGreaterThan(4096)
+    const res = await post(cjk)
+    expect(res.status).toBe(413)
+    expect(submitBindingClaim).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['invalid_request', 400],
     ['invalid_token', 401],

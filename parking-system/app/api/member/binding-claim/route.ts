@@ -21,7 +21,9 @@ export async function POST(request: Request): Promise<Response> {
   let body: unknown = null
   try {
     const raw = await request.text()
-    if (raw.length > MAX_BODY_BYTES) {
+    // Measure UTF-8 BYTES, not UTF-16 code units — CJK text is ~3 bytes per .length unit,
+    // so a char-count check would let ~12KB of Chinese through a "4KB" limit.
+    if (Buffer.byteLength(raw, 'utf8') > MAX_BODY_BYTES) {
       return Response.json({ ok: false, reason: 'payload_too_large' }, { status: 413, headers: NO_STORE })
     }
     body = JSON.parse(raw)

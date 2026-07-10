@@ -68,9 +68,10 @@ export interface ApprovePreview {
   found: boolean
   pendingStatus?: string
   claimSource?: string
-  // Optimistic-concurrency version (= last_submitted_at ISO): applyApproveBinding must receive
-  // exactly this value; a re-submission between preview and apply then yields 'pending_changed'.
-  claimVersion?: string
+  // Optimistic-concurrency revision (= superseded_count, bumped on every capture upsert — a
+  // caller-supplied timestamp could collide): applyApproveBinding must receive exactly this
+  // value; a re-submission between preview and apply then yields 'pending_changed'.
+  claimVersion?: number
   lineUserIdMasked?: string
   submittedCodeMasked?: string | null       // keyword claims
   claimedPhoneMasked?: string | null        // liff claims
@@ -98,7 +99,7 @@ export async function previewApproveBinding(
     found: true,
     pendingStatus: preview.pending_status,
     claimSource: preview.claim_source,
-    claimVersion: preview.last_submitted_at,
+    claimVersion: preview.superseded_count,
     lineUserIdMasked: maskLineUserId(preview.line_user_id),
     submittedCodeMasked: preview.submitted_code === null ? null : maskCode(preview.submitted_code),
     claimedPhoneMasked: preview.claimed_phone === null ? null : maskPhone(preview.claimed_phone),
@@ -111,16 +112,19 @@ export async function previewApproveBinding(
 }
 
 export async function applyApproveBinding(
-  params: { pendingId: string; expectedLastSubmittedAt: string; now?: Date },
+  params: { pendingId: string; expectedSupersededCount: number; now?: Date },
   repo: ParkingRepository = createParkingRepository(),
 ): Promise<{ approved: number; reason: string }> {
-  const { pendingId, expectedLastSubmittedAt, now = new Date() } = params
-  if (!expectedLastSubmittedAt) throw new Error('expectedLastSubmittedAt (claimVersion) is required for an apply')
+  const { pendingId, expectedSupersededCount, now = new Date() } = params
+  // 0 is a valid revision (a never-superseded claim) — validate shape, not truthiness.
+  if (!Number.isInteger(expectedSupersededCount) || expectedSupersededCount < 0) {
+    throw new Error('expectedSupersededCount (claimVersion) is required for an apply')
+  }
   const res = await repo.approvePendingBinding({
     pendingId,
     nowIso: now.toISOString(),
     dryRun: false,
-    expectedLastSubmittedAtIso: expectedLastSubmittedAt,
+    expectedSupersededCount,
   })
   return { approved: res.approved, reason: res.reason }
 }

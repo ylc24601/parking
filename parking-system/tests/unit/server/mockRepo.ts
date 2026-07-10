@@ -77,6 +77,7 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
       submitted_code: 'ABCD-2345',
       claimed_phone: null,
       claimed_name: null,
+      superseded_count: 0,
       last_submitted_at: '2026-07-05T00:00:00.000Z',
       matched_user_id: 'user-1',
       matched_display_name: '王小明',

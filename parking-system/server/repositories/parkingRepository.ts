@@ -416,13 +416,14 @@ export interface ParkingRepository {
   }): Promise<{ captured: number; superseded: boolean }>
   // Phase 5B — approve/reject a captured pending binding. Addressed BY pending id; the raw
   // line_user_id / submitted_code never cross this surface. Results are typed + counts-only.
-  // Phase 7 Slice 2: expectedLastSubmittedAtIso is the version the admin previewed — REQUIRED for
-  // an apply (mismatch → 'pending_changed'); pass null/omit for a dry-run.
+  // Phase 7 Slice 2: expectedSupersededCount is the revision the admin previewed (bumped on every
+  // capture upsert — a caller-supplied timestamp could collide) — REQUIRED for an apply
+  // (mismatch → 'pending_changed'); pass null/omit for a dry-run.
   approvePendingBinding(args: {
     pendingId: string
     nowIso: string
     dryRun: boolean
-    expectedLastSubmittedAtIso?: string | null
+    expectedSupersededCount?: number | null
   }): Promise<{ approved: number; would_approve: boolean; reason: string }>
   // Phase 7 Slice 2 — verified-identity LIFF claim capture (upsert of the account's active
   // pending row). Counts-only; the claim payload never comes back.
@@ -472,8 +473,9 @@ export interface ParkingRepository {
   }>
   // Phase 5B Slice 2 — raw fields for the approve preview (the SERVICE masks them before output;
   // they are never printed/logged raw). Returns null only when the pending id doesn't exist.
-  // Phase 7 Slice 2: also carries the claim source/fields + last_submitted_at (the optimistic-
-  // concurrency version); liff claims resolve the matched member by canonical phone.
+  // Phase 7 Slice 2: also carries the claim source/fields + superseded_count (the optimistic-
+  // concurrency revision; last_submitted_at is display/audit only); liff claims resolve the
+  // matched member by canonical phone.
   getBindingApprovalPreview(pendingId: string): Promise<{
     pending_status: string
     claim_source: string
@@ -481,6 +483,7 @@ export interface ParkingRepository {
     submitted_code: string | null
     claimed_phone: string | null
     claimed_name: string | null
+    superseded_count: number
     last_submitted_at: string
     matched_user_id: string | null
     matched_display_name: string | null
@@ -927,10 +930,10 @@ export function createParkingRepository(
       return { captured: row.captured, superseded: row.superseded }
     },
 
-    async approvePendingBinding({ pendingId, nowIso, dryRun, expectedLastSubmittedAtIso }) {
+    async approvePendingBinding({ pendingId, nowIso, dryRun, expectedSupersededCount }) {
       const { data, error } = await client.rpc('approve_pending_binding', {
         p_pending_id: pendingId,
-        p_expected_last_submitted_at: expectedLastSubmittedAtIso ?? null,
+        p_expected_superseded_count: expectedSupersededCount ?? null,
         p_now: nowIso,
         p_dry_run: dryRun,
       })
@@ -1018,7 +1021,7 @@ export function createParkingRepository(
     async getBindingApprovalPreview(pendingId) {
       const { data: p, error: pe } = await client
         .from('pending_binding')
-        .select('status, claim_source, line_user_id, submitted_code, claimed_phone, claimed_name, last_submitted_at')
+        .select('status, claim_source, line_user_id, submitted_code, claimed_phone, claimed_name, superseded_count, last_submitted_at')
         .eq('id', pendingId)
         .maybeSingle()
       if (pe) throw new Error(`getBindingApprovalPreview failed: ${pe.message}`)
@@ -1030,6 +1033,7 @@ export function createParkingRepository(
         submitted_code: string | null
         claimed_phone: string | null
         claimed_name: string | null
+        superseded_count: number
         last_submitted_at: string
       }
 
@@ -1073,6 +1077,7 @@ export function createParkingRepository(
         submitted_code: pending.submitted_code,
         claimed_phone: pending.claimed_phone,
         claimed_name: pending.claimed_name,
+        superseded_count: pending.superseded_count,
         last_submitted_at: pending.last_submitted_at,
         matched_user_id: matchedUserId,
         matched_display_name: matchedDisplayName,

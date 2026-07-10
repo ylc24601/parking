@@ -6,8 +6,10 @@
 --
 -- Also fixes a preview/apply TOCTOU race that the keyword flow shares: a member re-submitting
 -- between an admin's preview and --apply used to silently swap the claim under the approval.
--- approve_pending_binding now takes the expected last_submitted_at (the version the admin
--- previewed), locks the row FOR UPDATE, and returns typed 'pending_changed' on mismatch.
+-- approve_pending_binding now takes the expected superseded_count — a true monotonic revision
+-- (bumped on EVERY upsert; last_submitted_at can collide since capture callers supply p_now) —
+-- locks the row FOR UPDATE, and returns typed 'pending_changed' on mismatch. last_submitted_at
+-- stays for display/sorting/audit only.
 
 -- ── pending_binding: two claim shapes, strictly mutually exclusive ────────────────────────────────
 alter table pending_binding alter column submitted_code drop not null;
@@ -113,13 +115,14 @@ end $$;
 --   pending_not_found → pending_not_pending → pending_changed
 --   → [keyword: code_not_found → code_expired → code_consumed | liff: phone_not_found]
 --   → member_already_bound → line_id_taken → approved
--- p_expected_last_submitted_at is the version the admin previewed. Required when p_dry_run=false
--- (mismatch → 'pending_changed'); pass null for a dry-run preview (no write, no version needed).
+-- p_expected_superseded_count is the revision the admin previewed (superseded_count is bumped on
+-- every capture upsert, so it cannot collide the way a caller-supplied timestamp can). Required
+-- when p_dry_run=false (mismatch → 'pending_changed'); pass null for a dry-run preview.
 -- FOR UPDATE serializes concurrent approvals of the same pending row.
 drop function if exists approve_pending_binding(uuid, timestamptz, boolean);
 create or replace function approve_pending_binding(
   p_pending_id                uuid,
-  p_expected_last_submitted_at timestamptz,
+  p_expected_superseded_count bigint,
   p_now                       timestamptz,
   p_dry_run                   boolean
 ) returns jsonb
@@ -142,10 +145,10 @@ begin
     return jsonb_build_object('approved', 0, 'would_approve', false, 'reason', 'pending_not_pending');
   end if;
 
-  -- Optimistic concurrency: an apply must approve exactly the submission the admin previewed.
+  -- Optimistic concurrency: an apply must approve exactly the revision the admin previewed.
   if not p_dry_run then
-    if p_expected_last_submitted_at is null
-       or v_pending.last_submitted_at <> p_expected_last_submitted_at then
+    if p_expected_superseded_count is null
+       or v_pending.superseded_count <> p_expected_superseded_count then
       return jsonb_build_object('approved', 0, 'would_approve', false, 'reason', 'pending_changed');
     end if;
   end if;
@@ -216,5 +219,5 @@ begin
   return jsonb_build_object('approved', 1, 'would_approve', true, 'reason', 'approved');
 end $$;
 
-revoke all on function approve_pending_binding(uuid, timestamptz, timestamptz, boolean) from public;
-grant execute on function approve_pending_binding(uuid, timestamptz, timestamptz, boolean) to service_role;
+revoke all on function approve_pending_binding(uuid, bigint, timestamptz, boolean) from public;
+grant execute on function approve_pending_binding(uuid, bigint, timestamptz, boolean) to service_role;
