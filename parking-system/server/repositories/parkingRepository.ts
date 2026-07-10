@@ -49,13 +49,16 @@ export interface MemberSessionRow {
 }
 
 // Phase 7 Slice 1 — the member's own reservation for one week, plate joined.
-// Member-safe projection: own data only, no penalty/eligibility fields. `id` is for
-// server-side actions (cancel) and must never be copied into a client DTO.
+// Member-safe projection: own data only, no penalty/eligibility fields. `id`,
+// `effective_priority` and `attended_at` are for server-side actions/affordance
+// flags (cancel, offer, on-the-way) and must never be copied into a client DTO.
 export interface MemberWeekReservationRow {
   id: string
   status: ReservationStatus
+  effective_priority: number
   license_plate: string | null
   applied_at: Date
+  attended_at: Date | null
   release_deadline_at: Date | null
   offer_expires_at: Date | null
   p2_on_the_way: boolean
@@ -1300,7 +1303,7 @@ export function createParkingRepository(
       const { data, error } = await client
         .from('reservations')
         .select(
-          'id, status, applied_at, release_deadline_at, offer_expires_at, p2_on_the_way, vehicles(license_plate)',
+          'id, status, effective_priority, applied_at, attended_at, release_deadline_at, offer_expires_at, p2_on_the_way, vehicles(license_plate)',
         )
         .eq('weekly_event_id', eventId)
         .eq('user_id', userId)
@@ -1321,8 +1324,10 @@ export function createParkingRepository(
       return {
         id: row.id as string,
         status: row.status as ReservationStatus,
+        effective_priority: row.effective_priority as number,
         license_plate: vehicle?.license_plate ?? null,
         applied_at: new Date(row.applied_at as string),
+        attended_at: parseDate(row.attended_at as string | null),
         release_deadline_at: parseDate(row.release_deadline_at as string | null),
         offer_expires_at: parseDate(row.offer_expires_at as string | null),
         p2_on_the_way: (row.p2_on_the_way as boolean | null) ?? false,
