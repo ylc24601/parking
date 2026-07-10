@@ -65,12 +65,20 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     // Phase 5B Slice 2 — issue + approve preview
     insertBindingCode: vi.fn(async () => ({ inserted: true })),
     getUserDisplayName: vi.fn(async () => '王小明'),
+    // Phase 7 Slice 2 — LIFF binding claim
+    captureLiffBindingClaim: vi.fn(async () => ({ captured: 1, superseded: false })),
+    listPendingBindings: vi.fn(async () => []),
     // Phase 6 — member import
     importMember: vi.fn(async () => ({ status: 'imported' as const, vehicles_added: 1, dependents_added: 0, plate_conflicts: [] })),
     getBindingApprovalPreview: vi.fn(async () => ({
       pending_status: 'pending',
+      claim_source: 'keyword',
       line_user_id: 'Udeadbeefdeadbeefdeadbeefdeadbeef',
       submitted_code: 'ABCD-2345',
+      claimed_phone: null,
+      claimed_name: null,
+      superseded_count: 0,
+      last_submitted_at: '2026-07-05T00:00:00.000Z',
       matched_user_id: 'user-1',
       matched_display_name: '王小明',
     })),

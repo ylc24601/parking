@@ -36,8 +36,19 @@ async function main() {
     return
   }
 
-  const result = await applyApproveBinding({ pendingId })
+  // Optimistic concurrency: the apply carries the claimVersion (superseded_count revision) this
+  // run just previewed, so a claim re-submitted after the preview above cannot be silently
+  // approved (→ pending_changed). 0 is a valid revision — check presence, not truthiness.
+  if (!preview.found || preview.claimVersion === undefined) {
+    console.error(`not approved: ${preview.reason}`)
+    process.exit(1)
+  }
+  const result = await applyApproveBinding({ pendingId, expectedSupersededCount: preview.claimVersion })
   console.log(JSON.stringify(result, null, 2))
+  if (result.reason === 'pending_changed') {
+    console.error('申請內容已在預覽後更新，請重新執行預覽確認')
+    process.exit(2)
+  }
   if (result.approved !== 1) {
     console.error(`not approved: ${result.reason}`)
     process.exit(1)

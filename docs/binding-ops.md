@@ -1,26 +1,45 @@
 # Binding operator runbook（LINE 綁定審核）
 
 > 用途：把「已知會友」的 LINE 帳號綁定到 `users.line_id`，讓移車/通知送得到本人。
-> Phase 5B CLI（issue / approve / reject）。schema/RPC 見 handoff §6.20；擷取端見 §6.19。
-> 規劃背景 [go-live-readiness.md](go-live-readiness.md)。
+> 兩條進件路徑：**LIFF 申請**（Phase 7 Slice 2，會友自助）與 **`綁定 <code>` 發碼**（Phase 5B，fallback／同工協助）。
+> schema/RPC 見 handoff §6.20 / §6.24；擷取端見 §6.19；規劃背景 [go-live-readiness.md](go-live-readiness.md)。
 >
-> 🔒 **隱私規則（全程）**：輸出/日誌**不得**出現完整 `line_user_id` 或完整 code；唯一例外是
+> 🔒 **隱私規則（全程）**：輸出/日誌**不得**出現完整 `line_user_id`、完整 code 或完整手機號碼；唯一例外是
 > `binding:issue` **一次性**印出 code（操作者需轉交會友）。`binding:approve` 一律先 dry-run，
 > 加 `--apply` 才寫入。
 
 ---
 
-## 綁定流程（端到端）
+## 路徑 A（主要）：LIFF 自助申請
 
-1. **發碼**：操作者為某位**已知會友**產生一次性 code（預設隨機），把 code 透過可信管道（小組長/櫃檯/幹事）交給本人。
-2. **會友送出**：會友在教會 OA 傳 `綁定 <code>`（大小寫皆可）→ 5A webhook 擷取成一筆 `pending_binding`。
-3. **預覽**：操作者用該 pending 的 id 跑 `binding:approve`（dry-run），確認**遮罩後**的資訊與**對應到的會友姓名**無誤。
-4. **核准**：加 `--apply` 寫入 `users.line_id`、consume code、標 pending `approved`。
-5. **例外**：不該綁的申請用 `binding:reject` 標記。
+1. **會友申請**：會友開啟 LIFF 會友專區 → 未綁定畫面填「姓名＋手機」送出。系統以已驗證的 LINE 身分建立
+   `pending_binding`（`claim_source='liff'`）。重送＝原地更新（不會灌表）。
+   **申請端永遠不透露手機是否對得到會友**（防列舉）；比對只在你核准時發生。
+2. **發現申請**：`npm run binding:pending`（見下）——LIFF 申請是會友主動進來的，**不跑這支你不會知道有申請**。
+3. **預覽 → 核准**：同「核准」節；LIFF 申請的預覽會多顯示 `claimedName`（會友自填姓名，完整）與
+   `claimedPhoneMasked`（如 `0912***678`），以及**依手機對到的會友** `matchedDisplayName`——姓名不一致**不會自動擋**，
+   由你人工判斷（會友自填名與教會登記名可能略異）。
 
-> 身分＝雙因子：持有 code 證明「是這位會友」；OA 擷取證明「是這個 LINE 帳號」。核准仍為**人工把關**。
+## 路徑 B（fallback）：發碼 `binding:issue`
+
+1. **發碼**：操作者為某位**已知會友**產生一次性 code（預設隨機），透過可信管道（小組長/櫃檯/幹事）交給本人。
+2. **會友送出**：會友在教會 OA 傳 `綁定 <code>`（大小寫皆可）→ 5A webhook 擷取成 `pending_binding`（`claim_source='keyword'`）。
+3. 之後同「預覽 → 核准」。
+
+> 身分＝雙因子：LIFF 申請由 **server 驗證的 LINE ID token** 證明「是這個 LINE 帳號」＋手機比對證明「是這位會友」；
+> 發碼流由持有 code 證明會友。核准一律**人工把關**。
 
 ---
+
+## 0. 待審清單 `binding:pending`
+
+```bash
+npm run binding:pending                # 最舊的 20 筆（FIFO）
+npm run binding:pending -- --limit 50  # 1..100
+```
+- 顯示：短 ID、來源（liff/keyword）、首次送出、最後更新、重送次數、遮罩後的 claim
+  （liff → `姓名 / 0912***678`；keyword → `ABCD-****`）。
+- 完整 pending id 列在表尾，供 `binding:approve` 使用。時間為 UTC。
 
 ## 1. 發碼 `binding:issue`
 
@@ -41,13 +60,16 @@ npm run binding:approve -- --pending-id <pending uuid>
 npm run binding:approve -- --pending-id <pending uuid> --apply
 ```
 預覽會顯示（皆遮罩/對應）：
-- `pendingStatus`
+- `pendingStatus`、`claimSource`（liff / keyword）
 - `lineUserIdMasked`（如 `Udeadb…beef`）
-- `submittedCodeMasked`（如 `ABCD-****`）
-- `matchedUserId` / `matchedDisplayName`（用 code 對應到的會友，供你確認**綁對人**）
+- keyword：`submittedCodeMasked`（如 `ABCD-****`）；liff：`claimedName`（完整）＋ `claimedPhoneMasked`
+- `matchedUserId` / `matchedDisplayName`（對應到的會友，供你確認**綁對人**）
+- `claimVersion`（樂觀並發版本，`--apply` 自動帶入）
 - `wouldApprove` + `reason`（預測結果）
 
 `--apply` 成功回 `{"approved":1,"reason":"approved"}`。
+**防偷換保護**：`--apply` 會核准「這次執行預覽到的那個版本」；若會友在你預覽後又重送（改了手機或 code），
+apply 回 `pending_changed` 並 exit 2 → **重新執行預覽確認新內容**，不會核准到你沒看過的資料。
 
 ## 3. 退回 `binding:reject`
 
@@ -55,26 +77,42 @@ npm run binding:approve -- --pending-id <pending uuid> --apply
 npm run binding:reject -- --pending-id <pending uuid> --reason duplicate
 ```
 - `--reason` 為操作者分類（如 `duplicate`、`unrecognized`）。
-- ⚠️ **不要**把 `line_user_id` 或 code 放進 `--reason`（會原樣存為稽核）。
+- ⚠️ **不要**把 `line_user_id`、code 或手機放進 `--reason`（會原樣存為稽核）。
+- 退回後該 LINE 帳號可重新申請（會建新的一筆 pending）。
 
 ---
 
 ## Typed reasons（approve）
 
-| reason | 意義 / 處置 |
-|---|---|
-| `approved` | 可核准 / 已核准 |
-| `pending_not_found` | pending id 不存在 → 檢查 id |
-| `pending_not_pending` | 已 approved/rejected → 無需重做 |
-| `code_not_found` | 送出的 code 沒對應已發碼 → 會友打錯，或未發碼 → 重新發碼 |
-| `code_expired` | code 過期 → 重新發碼 |
-| `code_consumed` | code 已被用過 → 重新發碼 |
-| `member_already_bound` | 該會友已綁定 → 如需換綁另議（本刀不支援 rebind） |
-| `line_id_taken` | 此 LINE 帳號已綁到**別的**會友 → 查是否重複/錯綁 |
+| reason | 適用 | 意義 / 處置 |
+|---|---|---|
+| `approved` | 皆 | 可核准 / 已核准 |
+| `pending_not_found` | 皆 | pending id 不存在 → 檢查 id |
+| `pending_not_pending` | 皆 | 已 approved/rejected → 無需重做 |
+| `pending_changed` | 皆 | 預覽後申請被重送 → 重新預覽確認新內容（防偷換） |
+| `code_not_found` | keyword | 送出的 code 沒對應已發碼 → 會友打錯，或未發碼 → 重新發碼 |
+| `code_expired` | keyword | code 過期 → 重新發碼 |
+| `code_consumed` | keyword | code 已被用過 → 重新發碼 |
+| `phone_not_found` | liff | 申請手機對不到任何會友 → 確認會友資料已匯入/手機正確；必要時 reject 並聯繫本人 |
+| `member_already_bound` | 皆 | **對到的會友**已綁定其他 LINE → 如需換綁另議（不支援 rebind） |
+| `line_id_taken` | 皆 | 此 LINE 帳號已綁到**別的**會友 → 查是否重複/錯綁 |
+
+> 另有 route 端 `line_account_already_bound`（會友端申請時自己的 LINE 已綁定 → UI 直接引導重新登入），
+> 與上表 approval 端的 `member_already_bound` 語意不同：前者是「申請者自己已綁」，後者是「被對到的會友已綁」。
 
 ---
+
+## PII 保留（backlog → Phase 8 必要項）
+
+- `claimed_phone` / `claimed_name` / `submitted_code` 存於 `pending_binding`（僅此處）；**不進** log、error、
+  會員端回應；CLI 全程遮罩。
+- approved / rejected 列暫留原值供稽核。**Phase 8 acceptance item**：retention window——提案為
+  決行（approve/reject）**90 天後**清除 `claimed_phone`/`claimed_name`/`submitted_code`，
+  保留 `claim_source`、時間戳、decision、`approved_user_id`。
+- 若 pilot 出現大量重送（`binding:pending` 的 RETRIES 異常），再評估 per-LINE-identity cooldown / 平台 rate limit。
 
 ## 對照
 
 - 綁定成功後，該會友的 `owner_notifiable` 轉為可通知，dispatcher 才送得到（仍需真 OA token + `NOTIFICATION_TRANSPORT=line`；另需一次教會正式 OA capture dry-run，見 [oa-dry-run-tunnel-runbook.md](oa-dry-run-tunnel-runbook.md)）。
-- 擷取端（`綁定 <code>` → pending）：handoff §6.19。審核 RPC：§6.20。
+- 擷取端：keyword `綁定 <code>` → handoff §6.19；LIFF 申請 → §6.24。審核 RPC：§6.20（0022 改版）。
+- 會友端 LIFF 建置與真機冒煙：[member-liff-setup.md](member-liff-setup.md)。

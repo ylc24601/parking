@@ -4,6 +4,7 @@ import {
   generateBindingCode,
   maskCode,
   maskLineUserId,
+  maskPhone,
   normalizeBindingCode,
 } from '@/lib/binding'
 
@@ -49,5 +50,18 @@ describe('maskCode', () => {
   })
   it('fully masks very short codes', () => {
     expect(maskCode('AB')).toBe('****')
+  })
+})
+
+describe('maskPhone', () => {
+  it('shows prefix 4 + last 3 of a canonical TW mobile', () => {
+    const masked = maskPhone('0912345678')
+    expect(masked).toBe('0912***678')
+    expect(masked).not.toContain('45')
+  })
+  it('fully masks non-canonical input instead of partially revealing it', () => {
+    expect(maskPhone('0912-345-678')).toBe('**********')
+    expect(maskPhone('12345')).toBe('**********')
+    expect(maskPhone('')).toBe('**********')
   })
 })

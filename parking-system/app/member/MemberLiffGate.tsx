@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import BindingClaimForm from './BindingClaimForm'
 
 // Member login gate. liff mode: init the LIFF SDK, obtain the ID token, and hand it
 // to the server for verification (the client never learns or sends a LINE userId —
@@ -95,7 +96,11 @@ export default function MemberLiffGate({
         <h1 className="text-2xl font-semibold tracking-tight">教會停車 · 會友專區</h1>
       </div>
 
-      {mode === 'mock' ? (
+      {state === 'not_bound' ? (
+        // Verified LINE identity, but no member bound yet → self-serve claim form
+        // (Slice 2). The keyword `綁定 <code>` flow remains the operator-assisted fallback.
+        <BindingClaimForm mode={mode} mockLineUserId={mockId.trim() || undefined} />
+      ) : mode === 'mock' ? (
         <form onSubmit={submitMock} className="w-full space-y-3">
           <p className="text-center text-sm text-amber-400">開發模式（mock）</p>
           <input
@@ -123,17 +128,6 @@ export default function MemberLiffGate({
 function GateMessage({ state }: { state: GateState }) {
   if (state === 'connecting') {
     return <p className="text-base text-slate-400">連線中，請稍候…</p>
-  }
-  if (state === 'not_bound') {
-    return (
-      <div className="w-full rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
-        <p className="text-lg">此 LINE 帳號尚未完成綁定</p>
-        <p className="mt-3 text-sm leading-relaxed text-slate-400">
-          請聯繫教會停車同工完成綁定；若已取得綁定碼，請回到官方帳號對話輸入
-          「綁定 您的綁定碼」，由同工核准後即可使用。
-        </p>
-      </div>
-    )
   }
   if (state === 'invalid_token') {
     return (

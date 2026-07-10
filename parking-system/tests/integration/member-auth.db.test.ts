@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomInt, randomUUID } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { hashSessionToken } from '@/server/http/sessionToken'
 
@@ -44,7 +44,8 @@ describe.skipIf(!RUN)('member auth + week status (Phase 7 Slice 1) — local DB 
     loginMember = (await import('@/server/services/memberAuthService')).loginMember
 
     await sb.from('users').insert([
-      { id: boundUserId, display_name: '測試會友七', line_id: lineId('bound'), phone_number: `097700${T.slice(0, 4)}` },
+      // users_phone_format_ck (0022): fixture phones must be canonical 09xxxxxxxx (digits only).
+      { id: boundUserId, display_name: '測試會友七', line_id: lineId('bound'), phone_number: `0977${100000 + randomInt(900000)}` },
       { id: otherUserId, display_name: '測試會友七乙', line_id: lineId('other') },
     ]).throwOnError()
     await sb.from('vehicles').insert([
