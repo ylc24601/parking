@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import { canDeclareCompanion } from '@/lib/allocation/priority'
 import { taipeiToday } from '@/lib/taipeiDate'
 import { getMemberSession } from '@/server/http/memberAuth'
 import { MemberAuthConfigError, resolveMemberAuthMode } from '@/server/services/memberAuthService'
@@ -43,6 +44,31 @@ export default async function MemberPage() {
   ])
   const reservation = event ? await repo.getMemberWeekReservation(session.userId, event.id) : null
 
+  // A cancelled row is not "live": the member may re-apply (the one-active index
+  // excludes cancelled rows), so the apply block shows alongside the cancelled card.
+  const live =
+    reservation !== null &&
+    reservation.status !== 'cancelled_by_user' &&
+    reservation.status !== 'cancelled_late'
+
+  // Apply affordance (Slice 3): only assembled when there is an open week and no live
+  // reservation. Eligibility stays server-side — the DTO carries derived bits only.
+  let apply: MemberWeekStatus['apply'] = null
+  if (event && event.status === 'open' && !live) {
+    const [role, vehicles, eligibility, allocationRan] = await Promise.all([
+      repo.getUserRole(session.userId),
+      repo.getMemberVehicles(session.userId),
+      repo.getMemberEligibility(session.userId),
+      repo.hasFridayAllocationRun(event.id),
+    ])
+    apply = {
+      closed: allocationRan,
+      staffP1: role === 'full_time_staff',
+      vehicles: vehicles.map(v => ({ id: v.id, plate: v.license_plate, nickname: v.nickname })),
+      companionKind: canDeclareCompanion(eligibility, event.sunday_date),
+    }
+  }
+
   const status: MemberWeekStatus = {
     displayName: displayName ?? '會友',
     sundayDate: event?.sunday_date ?? null,
@@ -55,6 +81,9 @@ export default async function MemberPage() {
           p2OnTheWay: reservation.p2_on_the_way,
         }
       : null,
+    apply,
+    canCancel:
+      live && (reservation!.status === 'pending' || reservation!.status === 'waiting' || reservation!.status === 'approved'),
   }
   return <MemberStatus status={status} />
 }

@@ -49,14 +49,23 @@ export interface MemberSessionRow {
 }
 
 // Phase 7 Slice 1 — the member's own reservation for one week, plate joined.
-// Member-safe projection: own data only, no penalty/eligibility fields.
+// Member-safe projection: own data only, no penalty/eligibility fields. `id` is for
+// server-side actions (cancel) and must never be copied into a client DTO.
 export interface MemberWeekReservationRow {
+  id: string
   status: ReservationStatus
   license_plate: string | null
   applied_at: Date
   release_deadline_at: Date | null
   offer_expires_at: Date | null
   p2_on_the_way: boolean
+}
+
+// Phase 7 Slice 3 — a member's active vehicle for the apply form.
+export interface MemberVehicleRow {
+  id: string
+  license_plate: string
+  nickname: string | null
 }
 
 export interface CapacityInputs {
@@ -523,6 +532,31 @@ export interface ParkingRepository {
   // The member's own reservation for one event; the live row wins over cancelled
   // ones (the one-active-per-member index allows cancelled siblings).
   getMemberWeekReservation(userId: string, eventId: string): Promise<MemberWeekReservationRow | null>
+  // Phase 7 Slice 3 — member apply/cancel.
+  getMemberVehicles(userId: string): Promise<MemberVehicleRow[]>
+  // Sensitive: eligibility stays server-side; only derived bits (priority, companion
+  // hint) may reach the client.
+  getMemberEligibility(userId: string): Promise<{
+    p2_eligible: boolean
+    p2_reason: string | null
+    p2_valid_until: string | null
+  } | null>
+  getUserRole(userId: string): Promise<string | null>
+  // Apply window: closed once the Friday allocation job has claimed the event
+  // ('running' or 'success' — rows inserted mid-run would miss the batch).
+  hasFridayAllocationRun(eventId: string): Promise<boolean>
+  // Atomic member apply (RPC): typed, never throws for business states.
+  applyReservation(args: {
+    eventId: string
+    userId: string
+    vehicleId: string
+    requestedP2: boolean
+    effectivePriority: 2 | 3
+    nowIso: string
+  }): Promise<{ applied: number; reason: string }>
+  // Claim the event's allocation run UNDER the weekly_events row lock (the allocator's
+  // half of the apply-window protocol) — must COMMIT before the pending snapshot is read.
+  claimFridayAllocation(eventId: string, jobType: string): Promise<{ claimed: boolean; reason: string }>
 }
 
 export function createParkingRepository(
@@ -1266,7 +1300,7 @@ export function createParkingRepository(
       const { data, error } = await client
         .from('reservations')
         .select(
-          'status, applied_at, release_deadline_at, offer_expires_at, p2_on_the_way, vehicles(license_plate)',
+          'id, status, applied_at, release_deadline_at, offer_expires_at, p2_on_the_way, vehicles(license_plate)',
         )
         .eq('weekly_event_id', eventId)
         .eq('user_id', userId)
@@ -1285,6 +1319,7 @@ export function createParkingRepository(
       const row = rows[0]
       const vehicle = row.vehicles as { license_plate?: string } | null
       return {
+        id: row.id as string,
         status: row.status as ReservationStatus,
         license_plate: vehicle?.license_plate ?? null,
         applied_at: new Date(row.applied_at as string),
@@ -1292,6 +1327,73 @@ export function createParkingRepository(
         offer_expires_at: parseDate(row.offer_expires_at as string | null),
         p2_on_the_way: (row.p2_on_the_way as boolean | null) ?? false,
       }
+    },
+
+    async getMemberVehicles(userId) {
+      const { data, error } = await client
+        .from('vehicles')
+        .select('id, license_plate, nickname')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+      if (error) throw new Error(`getMemberVehicles failed: ${error.message}`)
+      return (data ?? []) as MemberVehicleRow[]
+    },
+
+    async getMemberEligibility(userId) {
+      const { data, error } = await client
+        .from('user_eligibility')
+        .select('p2_eligible, p2_reason, p2_valid_until')
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (error) throw new Error(`getMemberEligibility failed: ${error.message}`)
+      return (data as { p2_eligible: boolean; p2_reason: string | null; p2_valid_until: string | null } | null) ?? null
+    },
+
+    async getUserRole(userId) {
+      const { data, error } = await client
+        .from('users')
+        .select('role')
+        .eq('id', userId)
+        .maybeSingle()
+      if (error) throw new Error(`getUserRole failed: ${error.message}`)
+      return ((data as { role: string } | null)?.role ?? null)
+    },
+
+    async hasFridayAllocationRun(eventId) {
+      const { data, error } = await client
+        .from('job_runs')
+        .select('status')
+        .eq('weekly_event_id', eventId)
+        .eq('job_type', 'friday_allocation')
+        .in('status', ['running', 'success'])
+        .limit(1)
+      if (error) throw new Error(`hasFridayAllocationRun failed: ${error.message}`)
+      return (data ?? []).length > 0
+    },
+
+    async claimFridayAllocation(eventId, jobType) {
+      const { data, error } = await client.rpc('claim_friday_allocation', {
+        p_event_id: eventId,
+        p_job_type: jobType,
+      })
+      if (error) throw new Error(`claim_friday_allocation failed: ${error.message}`)
+      const row = data as { claimed: boolean; reason: string }
+      return { claimed: row.claimed, reason: row.reason }
+    },
+
+    async applyReservation({ eventId, userId, vehicleId, requestedP2, effectivePriority, nowIso }) {
+      const { data, error } = await client.rpc('apply_reservation', {
+        p_event_id: eventId,
+        p_user_id: userId,
+        p_vehicle_id: vehicleId,
+        p_requested_p2: requestedP2,
+        p_effective_priority: effectivePriority,
+        p_now: nowIso,
+      })
+      if (error) throw new Error(`apply_reservation failed: ${error.message}`)
+      const row = data as { applied: number; reason: string }
+      return { applied: row.applied, reason: row.reason }
     },
   }
 }
