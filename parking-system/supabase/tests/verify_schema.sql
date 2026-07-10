@@ -413,6 +413,17 @@ begin
   raise notice 'PASS: liff binding claim columns/constraints + capture/approve RPC grants present';
 end $$;
 
+-- ── 28. member apply RPC (Phase 7 Slice 3) ─
+do $$
+begin
+  perform 1 from pg_proc where proname = 'apply_reservation';
+  if not found then raise exception 'FAIL: apply_reservation function missing'; end if;
+  if not has_function_privilege('service_role', 'apply_reservation(uuid,uuid,uuid,boolean,smallint,timestamptz)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on apply_reservation';
+  end if;
+  raise notice 'PASS: apply_reservation RPC + grant present';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

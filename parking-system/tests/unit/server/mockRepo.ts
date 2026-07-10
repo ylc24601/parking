@@ -108,6 +108,12 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     deleteExpiredMemberSessions: vi.fn(async () => {}),
     getMemberEvent: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
     getMemberWeekReservation: vi.fn(async () => null),
+    // Phase 7 Slice 3 — member apply/cancel
+    getMemberVehicles: vi.fn(async () => [{ id: '00000000-0000-4000-8000-000000000001', license_plate: 'ABC-1234', nickname: null }]),
+    getMemberEligibility: vi.fn(async () => null),
+    getUserRole: vi.fn(async () => 'user'),
+    hasFridayAllocationRun: vi.fn(async () => false),
+    applyReservation: vi.fn(async () => ({ applied: 1, reason: 'applied' })),
     ...overrides,
   }
   return repo
