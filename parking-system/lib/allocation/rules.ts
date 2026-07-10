@@ -51,3 +51,9 @@ export const NOTIFICATION_LEASE_SECONDS = 120
 export const STAFF_PIN_MAX_ATTEMPTS = 5
 export const STAFF_PIN_LOCK_MINUTES = 15
 export const STAFF_SESSION_TTL_HOURS = 12
+
+// ── Member LIFF session (Phase 7 Slice 1) ─────────────────────────────────────
+// Long-lived: members visit weekly and LIFF re-login is cheap. One member_sessions
+// row per login (multi-device allowed); expired rows are lazily deleted at the
+// owner's next login.
+export const MEMBER_SESSION_TTL_DAYS = 30

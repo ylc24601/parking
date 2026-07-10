@@ -342,6 +342,28 @@ begin
   raise notice 'PASS: eligibility_dependents + users_phone_key + import_member RPC grant present';
 end $$;
 
+-- ── 26. member_sessions table + hashed-token unique + RLS + grant (Phase 7 Slice 1) ─
+do $$
+begin
+  perform 1 from pg_class where relname = 'member_sessions' and relkind = 'r';
+  if not found then raise exception 'FAIL: member_sessions table missing'; end if;
+
+  -- Cookie token is stored hashed; uniqueness on the hash is the lookup key.
+  perform 1 from pg_indexes where indexname = 'member_sessions_token_hash_key';
+  if not found then raise exception 'FAIL: member_sessions_token_hash_key unique index missing'; end if;
+
+  perform 1 from pg_class where relname = 'member_sessions' and relrowsecurity;
+  if not found then raise exception 'FAIL: member_sessions RLS not enabled'; end if;
+
+  if not has_table_privilege('service_role', 'member_sessions', 'insert') then
+    raise exception 'FAIL: service_role lacks insert on member_sessions';
+  end if;
+  if has_table_privilege('anon', 'member_sessions', 'select') then
+    raise exception 'FAIL: anon must not read member_sessions';
+  end if;
+  raise notice 'PASS: member_sessions table + token_hash unique + RLS deny-all + service_role grant present';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

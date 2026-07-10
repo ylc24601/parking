@@ -27,6 +27,25 @@ export interface StaffSessionRow {
   locked_at: Date | null
 }
 
+// Phase 7 Slice 1 — member LIFF session. The cookie token itself is never stored;
+// token_hash is its sha256 (see server/http/sessionToken.ts).
+export interface MemberSessionRow {
+  id: string
+  user_id: string
+  expires_at: Date
+}
+
+// Phase 7 Slice 1 — the member's own reservation for one week, plate joined.
+// Member-safe projection: own data only, no penalty/eligibility fields.
+export interface MemberWeekReservationRow {
+  status: ReservationStatus
+  license_plate: string | null
+  applied_at: Date
+  release_deadline_at: Date | null
+  offer_expires_at: Date | null
+  p2_on_the_way: boolean
+}
+
 export interface CapacityInputs {
   weekly_event_id: string
   total_capacity: number
@@ -453,6 +472,21 @@ export interface ParkingRepository {
     expiresAt: string          // ISO
     createdBy?: string | null
   }): Promise<void>
+  // Phase 7 Slice 1 — member LIFF auth + read-only week status. Raw line_id never
+  // leaves the repo surface beyond this lookup's input.
+  getUserByLineId(lineUserId: string): Promise<{ id: string; display_name: string } | null>
+  createMemberSession(args: { userId: string; tokenHash: string; expiresAt: string }): Promise<void>
+  getMemberSessionByTokenHash(tokenHash: string): Promise<MemberSessionRow | null>
+  deleteMemberSessionByTokenHash(tokenHash: string): Promise<void>
+  // Lazy cleanup at login: drop the member's already-expired session rows.
+  deleteExpiredMemberSessions(userId: string, nowIso: string): Promise<void>
+  // The member-facing "this week": smallest sunday_date >= todayTaipei (any status),
+  // NOT getActiveEvent's "latest non-finalized" (that is Staff-PIN semantics and
+  // points wrong once future weeks are pre-created).
+  getMemberEvent(todayTaipei: string): Promise<WeeklyEventRow | null>
+  // The member's own reservation for one event; the live row wins over cancelled
+  // ones (the one-active-per-member index allows cancelled siblings).
+  getMemberWeekReservation(userId: string, eventId: string): Promise<MemberWeekReservationRow | null>
 }
 
 export function createParkingRepository(
@@ -1078,6 +1112,98 @@ export function createParkingRepository(
         { onConflict: 'weekly_event_id' },
       )
       if (error) throw new Error(`upsertStaffSessionPin failed: ${error.message}`)
+    },
+
+    async getUserByLineId(lineUserId) {
+      const { data, error } = await client
+        .from('users')
+        .select('id, display_name')
+        .eq('line_id', lineUserId)
+        .maybeSingle()
+      if (error) throw new Error(`getUserByLineId failed: ${error.message}`)
+      return (data as { id: string; display_name: string } | null) ?? null
+    },
+
+    async createMemberSession(args) {
+      const { error } = await client.from('member_sessions').insert({
+        user_id: args.userId,
+        token_hash: args.tokenHash,
+        expires_at: args.expiresAt,
+      })
+      if (error) throw new Error(`createMemberSession failed: ${error.message}`)
+    },
+
+    async getMemberSessionByTokenHash(tokenHash) {
+      const { data, error } = await client
+        .from('member_sessions')
+        .select('id, user_id, expires_at')
+        .eq('token_hash', tokenHash)
+        .maybeSingle()
+      if (error) throw new Error(`getMemberSessionByTokenHash failed: ${error.message}`)
+      if (!data) return null
+      return {
+        id: data.id as string,
+        user_id: data.user_id as string,
+        expires_at: new Date(data.expires_at as string),
+      }
+    },
+
+    async deleteMemberSessionByTokenHash(tokenHash) {
+      const { error } = await client.from('member_sessions').delete().eq('token_hash', tokenHash)
+      if (error) throw new Error(`deleteMemberSessionByTokenHash failed: ${error.message}`)
+    },
+
+    async deleteExpiredMemberSessions(userId, nowIso) {
+      const { error } = await client
+        .from('member_sessions')
+        .delete()
+        .eq('user_id', userId)
+        .lt('expires_at', nowIso)
+      if (error) throw new Error(`deleteExpiredMemberSessions failed: ${error.message}`)
+    },
+
+    async getMemberEvent(todayTaipei) {
+      const { data, error } = await client
+        .from('weekly_events')
+        .select('id, sunday_date, status')
+        .gte('sunday_date', todayTaipei)
+        .order('sunday_date', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      if (error) throw new Error(`getMemberEvent failed: ${error.message}`)
+      return (data as WeeklyEventRow | null) ?? null
+    },
+
+    async getMemberWeekReservation(userId, eventId) {
+      const { data, error } = await client
+        .from('reservations')
+        .select(
+          'status, applied_at, release_deadline_at, offer_expires_at, p2_on_the_way, vehicles(license_plate)',
+        )
+        .eq('weekly_event_id', eventId)
+        .eq('user_id', userId)
+      if (error) throw new Error(`getMemberWeekReservation failed: ${error.message}`)
+      const rows = (data ?? []) as Array<Record<string, unknown>>
+      if (rows.length === 0) return null
+
+      // The one-active-per-member index allows cancelled siblings next to one live
+      // row: show the live row if present, else the most recent cancellation.
+      const isCancelled = (r: Record<string, unknown>) =>
+        r.status === 'cancelled_by_user' || r.status === 'cancelled_late'
+      rows.sort((a, b) => {
+        if (isCancelled(a) !== isCancelled(b)) return isCancelled(a) ? 1 : -1
+        return String(b.applied_at) < String(a.applied_at) ? -1 : 1
+      })
+      const row = rows[0]
+      const vehicle = row.vehicles as { license_plate?: string } | null
+      return {
+        status: row.status as ReservationStatus,
+        license_plate: vehicle?.license_plate ?? null,
+        applied_at: new Date(row.applied_at as string),
+        release_deadline_at: parseDate(row.release_deadline_at as string | null),
+        offer_expires_at: parseDate(row.offer_expires_at as string | null),
+        p2_on_the_way: (row.p2_on_the_way as boolean | null) ?? false,
+      }
     },
   }
 }
