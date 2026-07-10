@@ -4,6 +4,7 @@ import {
   generateBindingCode,
   maskCode,
   maskLineUserId,
+  maskPhone,
   normalizeBindingCode,
 } from '@/lib/binding'
 
@@ -66,8 +67,14 @@ export async function issueBindingCode(
 export interface ApprovePreview {
   found: boolean
   pendingStatus?: string
+  claimSource?: string
+  // Optimistic-concurrency version (= last_submitted_at ISO): applyApproveBinding must receive
+  // exactly this value; a re-submission between preview and apply then yields 'pending_changed'.
+  claimVersion?: string
   lineUserIdMasked?: string
-  submittedCodeMasked?: string
+  submittedCodeMasked?: string | null       // keyword claims
+  claimedPhoneMasked?: string | null        // liff claims
+  claimedName?: string | null               // liff claims — full, the admin compares it to the member record
   matchedUserId?: string | null
   matchedDisplayName?: string | null
   wouldApprove: boolean
@@ -90,8 +97,12 @@ export async function previewApproveBinding(
   return {
     found: true,
     pendingStatus: preview.pending_status,
+    claimSource: preview.claim_source,
+    claimVersion: preview.last_submitted_at,
     lineUserIdMasked: maskLineUserId(preview.line_user_id),
-    submittedCodeMasked: maskCode(preview.submitted_code),
+    submittedCodeMasked: preview.submitted_code === null ? null : maskCode(preview.submitted_code),
+    claimedPhoneMasked: preview.claimed_phone === null ? null : maskPhone(preview.claimed_phone),
+    claimedName: preview.claimed_name,
     matchedUserId: preview.matched_user_id,
     matchedDisplayName: preview.matched_display_name,
     wouldApprove: predicted.would_approve,
@@ -100,12 +111,54 @@ export async function previewApproveBinding(
 }
 
 export async function applyApproveBinding(
-  params: { pendingId: string; now?: Date },
+  params: { pendingId: string; expectedLastSubmittedAt: string; now?: Date },
   repo: ParkingRepository = createParkingRepository(),
 ): Promise<{ approved: number; reason: string }> {
-  const { pendingId, now = new Date() } = params
-  const res = await repo.approvePendingBinding({ pendingId, nowIso: now.toISOString(), dryRun: false })
+  const { pendingId, expectedLastSubmittedAt, now = new Date() } = params
+  if (!expectedLastSubmittedAt) throw new Error('expectedLastSubmittedAt (claimVersion) is required for an apply')
+  const res = await repo.approvePendingBinding({
+    pendingId,
+    nowIso: now.toISOString(),
+    dryRun: false,
+    expectedLastSubmittedAtIso: expectedLastSubmittedAt,
+  })
   return { approved: res.approved, reason: res.reason }
+}
+
+// ── Pending review queue (Phase 7 Slice 2) ───────────────────────────────────
+// FIFO by last_submitted_at so the oldest claim gets reviewed first. Raw code/phone
+// are masked HERE — the CLI prints this struct as-is.
+export interface PendingClaimListItem {
+  id: string
+  shortId: string
+  source: string
+  submittedAt: string
+  lastUpdatedAt: string
+  resubmits: number
+  claim: string   // keyword → masked code; liff → `claimed_name / masked phone`
+}
+
+const PENDING_LIST_DEFAULT = 20
+const PENDING_LIST_MAX = 100
+
+export async function listPendingBindings(
+  params: { limit?: number } = {},
+  repo: ParkingRepository = createParkingRepository(),
+): Promise<PendingClaimListItem[]> {
+  const limit = Math.min(Math.max(Math.trunc(params.limit ?? PENDING_LIST_DEFAULT), 1), PENDING_LIST_MAX)
+  const rows = await repo.listPendingBindings(limit)
+  return rows.map(r => ({
+    id: r.id,
+    shortId: r.id.slice(0, 8),
+    source: r.claim_source,
+    submittedAt: r.created_at,
+    lastUpdatedAt: r.last_submitted_at,
+    resubmits: r.superseded_count,
+    claim:
+      r.claim_source === 'liff'
+        ? `${r.claimed_name ?? '?'} / ${r.claimed_phone === null ? '?' : maskPhone(r.claimed_phone)}`
+        : r.submitted_code === null ? '?' : maskCode(r.submitted_code),
+  }))
 }
 
 export async function rejectBinding(

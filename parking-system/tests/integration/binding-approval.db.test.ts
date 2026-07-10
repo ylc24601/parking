@@ -64,8 +64,20 @@ describe.skipIf(!RUN)('binding approval (5B) — local DB integration', () => {
     for (const id of createdUsers) await sb.from('users').delete().eq('id', id)
   })
 
-  const approve = (pendingId: string, dryRun: boolean) =>
-    repo.approvePendingBinding({ pendingId, nowIso: NOW.toISOString(), dryRun })
+  // Applies carry the row's current last_submitted_at (the 0022 optimistic-concurrency
+  // version — normally threaded from the admin preview); dry-runs skip the check.
+  const approve = async (pendingId: string, dryRun: boolean) => {
+    const version = dryRun
+      ? null
+      : ((await sb.from('pending_binding').select('last_submitted_at').eq('id', pendingId).maybeSingle())
+          .data?.last_submitted_at as string | undefined) ?? null
+    return repo.approvePendingBinding({
+      pendingId,
+      nowIso: NOW.toISOString(),
+      dryRun,
+      expectedLastSubmittedAtIso: version,
+    })
+  }
   const reject = (pendingId: string, reason: string) =>
     repo.rejectPendingBinding({ pendingId, reason, nowIso: NOW.toISOString() })
 

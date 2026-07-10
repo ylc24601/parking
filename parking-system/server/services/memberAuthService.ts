@@ -93,6 +93,36 @@ export async function verifyLiffIdToken(
   return { ok: true, lineUserId: claims.sub }
 }
 
+// ── Verified LINE identity resolver (shared by login and any sensitive member op) ──
+// Owns exactly: auth-mode resolution, mock/liff branching, and ID-token verification.
+// Returns a verified LINE userId and nothing else — it knows nothing about members,
+// bindings, or sessions, so claim submission (Slice 2) and later member actions
+// (Slices 3/4) reuse it without inheriting login semantics.
+export type VerifiedLineIdentity =
+  | { ok: true; lineUserId: string }
+  | { ok: false; reason: 'invalid_request' | 'invalid_token' | 'verify_unreachable' }
+
+export async function resolveVerifiedLineIdentity(
+  input: { idToken?: unknown; mockLineUserId?: unknown },
+  verifier: IdTokenVerifier = verifyLiffIdToken,
+): Promise<VerifiedLineIdentity> {
+  const auth = resolveMemberAuthMode()
+
+  if (auth.mode === 'mock') {
+    if (typeof input.mockLineUserId !== 'string' || input.mockLineUserId.trim() === '') {
+      return { ok: false, reason: 'invalid_request' }
+    }
+    return { ok: true, lineUserId: input.mockLineUserId.trim() }
+  }
+
+  if (typeof input.idToken !== 'string' || input.idToken.trim() === '') {
+    return { ok: false, reason: 'invalid_request' }
+  }
+  const verified = await verifier(input.idToken, auth.channelId)
+  if (!verified.ok) return { ok: false, reason: verified.reason }
+  return { ok: true, lineUserId: verified.lineUserId }
+}
+
 export type LoginResult =
   | { ok: true; token: string }
   | { ok: false; reason: 'invalid_request' | 'invalid_token' | 'verify_unreachable' | 'not_bound' }
@@ -106,24 +136,10 @@ export async function loginMember(
   verifier: IdTokenVerifier = verifyLiffIdToken,
   now: Date = new Date(),
 ): Promise<LoginResult> {
-  const auth = resolveMemberAuthMode()
+  const identity = await resolveVerifiedLineIdentity(input, verifier)
+  if (!identity.ok) return identity
 
-  let lineUserId: string
-  if (auth.mode === 'mock') {
-    if (typeof input.mockLineUserId !== 'string' || input.mockLineUserId.trim() === '') {
-      return { ok: false, reason: 'invalid_request' }
-    }
-    lineUserId = input.mockLineUserId.trim()
-  } else {
-    if (typeof input.idToken !== 'string' || input.idToken.trim() === '') {
-      return { ok: false, reason: 'invalid_request' }
-    }
-    const verified = await verifier(input.idToken, auth.channelId)
-    if (!verified.ok) return { ok: false, reason: verified.reason }
-    lineUserId = verified.lineUserId
-  }
-
-  const user = await repo.getUserByLineId(lineUserId)
+  const user = await repo.getUserByLineId(identity.lineUserId)
   if (!user) return { ok: false, reason: 'not_bound' }
 
   await repo.deleteExpiredMemberSessions(user.id, now.toISOString())

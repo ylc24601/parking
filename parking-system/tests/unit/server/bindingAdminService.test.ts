@@ -3,6 +3,7 @@ import { makeMockRepo, asRepo, type MockRepo } from './mockRepo'
 import {
   applyApproveBinding,
   issueBindingCode,
+  listPendingBindings,
   previewApproveBinding,
   rejectBinding,
 } from '@/server/services/bindingAdminService'
@@ -61,8 +62,12 @@ describe('previewApproveBinding', () => {
     const { r } = run({
       getBindingApprovalPreview: vi.fn(async () => ({
         pending_status: 'pending',
+        claim_source: 'keyword',
         line_user_id: RAW_LINE_ID,
         submitted_code: 'ABCD-2345',
+        claimed_phone: null,
+        claimed_name: null,
+        last_submitted_at: '2026-07-05T00:00:00.000Z',
         matched_user_id: 'u1',
         matched_display_name: '王小明',
       })),
@@ -70,12 +75,38 @@ describe('previewApproveBinding', () => {
     })
     const preview = await previewApproveBinding({ pendingId: 'p1', now: NOW }, r)
     expect(preview).toMatchObject({
-      found: true, pendingStatus: 'pending', lineUserIdMasked: 'Udeadb…beef',
-      submittedCodeMasked: 'ABCD-****', matchedDisplayName: '王小明', wouldApprove: true, reason: 'approved',
+      found: true, pendingStatus: 'pending', claimSource: 'keyword',
+      claimVersion: '2026-07-05T00:00:00.000Z', lineUserIdMasked: 'Udeadb…beef',
+      submittedCodeMasked: 'ABCD-****', claimedPhoneMasked: null,
+      matchedDisplayName: '王小明', wouldApprove: true, reason: 'approved',
     })
     const s = JSON.stringify(preview)
     expect(s).not.toContain(RAW_LINE_ID)
     expect(s).not.toContain('ABCD-2345')
+  })
+
+  it('a liff claim previews masked phone + full claimed name (admin comparison) — raw phone never surfaces', async () => {
+    const { r } = run({
+      getBindingApprovalPreview: vi.fn(async () => ({
+        pending_status: 'pending',
+        claim_source: 'liff',
+        line_user_id: RAW_LINE_ID,
+        submitted_code: null,
+        claimed_phone: '0912345678',
+        claimed_name: '王小明',
+        last_submitted_at: '2026-07-10T01:00:00.000Z',
+        matched_user_id: 'u1',
+        matched_display_name: '王小明',
+      })),
+      approvePendingBinding: vi.fn(async () => ({ approved: 0, would_approve: true, reason: 'approved' })),
+    })
+    const preview = await previewApproveBinding({ pendingId: 'p1', now: NOW }, r)
+    expect(preview).toMatchObject({
+      claimSource: 'liff', submittedCodeMasked: null,
+      claimedPhoneMasked: '0912***678', claimedName: '王小明',
+      claimVersion: '2026-07-10T01:00:00.000Z', matchedDisplayName: '王小明',
+    })
+    expect(JSON.stringify(preview)).not.toContain('0912345678')
   })
 
   it('always calls the RPC in dry-run mode (no write)', async () => {
@@ -97,11 +128,25 @@ describe('previewApproveBinding', () => {
 })
 
 describe('applyApproveBinding', () => {
-  it('calls the RPC with dryRun=false and returns typed counts', async () => {
+  it('calls the RPC with dryRun=false and the previewed claim version', async () => {
     const approve = vi.fn(async () => ({ approved: 1, would_approve: true, reason: 'approved' }))
     const { r } = run({ approvePendingBinding: approve })
-    expect(await applyApproveBinding({ pendingId: 'p1', now: NOW }, r)).toEqual({ approved: 1, reason: 'approved' })
-    expect(approve).toHaveBeenCalledWith({ pendingId: 'p1', nowIso: NOW.toISOString(), dryRun: false })
+    const version = '2026-07-10T00:00:00.000Z'
+    expect(await applyApproveBinding({ pendingId: 'p1', expectedLastSubmittedAt: version, now: NOW }, r))
+      .toEqual({ approved: 1, reason: 'approved' })
+    expect(approve).toHaveBeenCalledWith({
+      pendingId: 'p1',
+      nowIso: NOW.toISOString(),
+      dryRun: false,
+      expectedLastSubmittedAtIso: version,
+    })
+  })
+
+  it('refuses an apply without a claim version (optimistic concurrency is not optional)', async () => {
+    const { r } = run()
+    await expect(
+      applyApproveBinding({ pendingId: 'p1', expectedLastSubmittedAt: '', now: NOW }, r),
+    ).rejects.toThrow(/claimVersion/)
   })
 })
 
@@ -115,5 +160,43 @@ describe('rejectBinding', () => {
   it('rejects an empty reason', async () => {
     const { r } = run()
     await expect(rejectBinding({ pendingId: 'p1', reason: '   ', now: NOW }, r)).rejects.toThrow(/reason must not be empty/)
+  })
+})
+
+describe('listPendingBindings', () => {
+  const rows = [
+    {
+      id: 'a1b2c3d4-0000-0000-0000-000000000001', claim_source: 'liff',
+      submitted_code: null, claimed_phone: '0912345678', claimed_name: '王小明',
+      created_at: '2026-07-10T00:00:00.000Z', last_submitted_at: '2026-07-10T01:00:00.000Z', superseded_count: 2,
+    },
+    {
+      id: 'd4e5f6a7-0000-0000-0000-000000000002', claim_source: 'keyword',
+      submitted_code: 'ABCD-2345', claimed_phone: null, claimed_name: null,
+      created_at: '2026-07-10T02:00:00.000Z', last_submitted_at: '2026-07-10T02:00:00.000Z', superseded_count: 0,
+    },
+  ]
+
+  it('masks phone/code, keeps claimed name (comparison hint), short id, retries', async () => {
+    const list = vi.fn(async () => rows)
+    const { r } = run({ listPendingBindings: list })
+    const items = await listPendingBindings({}, r)
+    expect(list).toHaveBeenCalledWith(20)   // default limit
+    expect(items[0]).toMatchObject({
+      shortId: 'a1b2c3d4', source: 'liff', resubmits: 2, claim: '王小明 / 0912***678',
+    })
+    expect(items[1]).toMatchObject({ shortId: 'd4e5f6a7', source: 'keyword', claim: 'ABCD-****' })
+    const s = JSON.stringify(items)
+    expect(s).not.toContain('0912345678')
+    expect(s).not.toContain('ABCD-2345')
+  })
+
+  it('clamps limit to 1..100', async () => {
+    const list = vi.fn(async () => [])
+    const { r } = run({ listPendingBindings: list })
+    await listPendingBindings({ limit: 0 }, r)
+    expect(list).toHaveBeenLastCalledWith(1)
+    await listPendingBindings({ limit: 9999 }, r)
+    expect(list).toHaveBeenLastCalledWith(100)
   })
 })

@@ -27,6 +27,19 @@ export interface StaffSessionRow {
   locked_at: Date | null
 }
 
+// Phase 7 Slice 2 — raw pending-claim row for the admin review queue. Contains raw
+// code/phone/name: repo consumers must be the service layer, which masks them.
+export interface PendingBindingListRow {
+  id: string
+  claim_source: string
+  submitted_code: string | null
+  claimed_phone: string | null
+  claimed_name: string | null
+  created_at: string
+  last_submitted_at: string
+  superseded_count: number
+}
+
 // Phase 7 Slice 1 — member LIFF session. The cookie token itself is never stored;
 // token_hash is its sha256 (see server/http/sessionToken.ts).
 export interface MemberSessionRow {
@@ -403,11 +416,25 @@ export interface ParkingRepository {
   }): Promise<{ captured: number; superseded: boolean }>
   // Phase 5B — approve/reject a captured pending binding. Addressed BY pending id; the raw
   // line_user_id / submitted_code never cross this surface. Results are typed + counts-only.
+  // Phase 7 Slice 2: expectedLastSubmittedAtIso is the version the admin previewed — REQUIRED for
+  // an apply (mismatch → 'pending_changed'); pass null/omit for a dry-run.
   approvePendingBinding(args: {
     pendingId: string
     nowIso: string
     dryRun: boolean
+    expectedLastSubmittedAtIso?: string | null
   }): Promise<{ approved: number; would_approve: boolean; reason: string }>
+  // Phase 7 Slice 2 — verified-identity LIFF claim capture (upsert of the account's active
+  // pending row). Counts-only; the claim payload never comes back.
+  captureLiffBindingClaim(args: {
+    lineUserId: string
+    phone: string
+    name: string
+    nowIso: string
+  }): Promise<{ captured: number; superseded: boolean }>
+  // Phase 7 Slice 2 — raw pending-claim rows for the admin list (FIFO by last_submitted_at).
+  // The SERVICE masks code/phone before output; raw values never leave the service layer.
+  listPendingBindings(limit: number): Promise<PendingBindingListRow[]>
   rejectPendingBinding(args: {
     pendingId: string
     reason: string
@@ -445,10 +472,16 @@ export interface ParkingRepository {
   }>
   // Phase 5B Slice 2 — raw fields for the approve preview (the SERVICE masks them before output;
   // they are never printed/logged raw). Returns null only when the pending id doesn't exist.
+  // Phase 7 Slice 2: also carries the claim source/fields + last_submitted_at (the optimistic-
+  // concurrency version); liff claims resolve the matched member by canonical phone.
   getBindingApprovalPreview(pendingId: string): Promise<{
     pending_status: string
+    claim_source: string
     line_user_id: string
-    submitted_code: string
+    submitted_code: string | null
+    claimed_phone: string | null
+    claimed_name: string | null
+    last_submitted_at: string
     matched_user_id: string | null
     matched_display_name: string | null
   } | null>
@@ -894,14 +927,40 @@ export function createParkingRepository(
       return { captured: row.captured, superseded: row.superseded }
     },
 
-    async approvePendingBinding({ pendingId, nowIso, dryRun }) {
+    async approvePendingBinding({ pendingId, nowIso, dryRun, expectedLastSubmittedAtIso }) {
       const { data, error } = await client.rpc('approve_pending_binding', {
         p_pending_id: pendingId,
+        p_expected_last_submitted_at: expectedLastSubmittedAtIso ?? null,
         p_now: nowIso,
         p_dry_run: dryRun,
       })
       if (error) throw new Error(`approve_pending_binding failed: ${error.message}`)
       return data as { approved: number; would_approve: boolean; reason: string }
+    },
+
+    async captureLiffBindingClaim({ lineUserId, phone, name, nowIso }) {
+      const { data, error } = await client.rpc('capture_liff_binding_claim', {
+        p_line_user_id: lineUserId,
+        p_phone: phone,
+        p_name: name,
+        p_now: nowIso,
+      })
+      // Sanitized: the message never echoes the claim payload (RPC params aren't in it).
+      if (error) throw new Error(`capture_liff_binding_claim failed: ${error.message}`)
+      const row = data as { captured: number; superseded: boolean }
+      return { captured: row.captured, superseded: row.superseded }
+    },
+
+    async listPendingBindings(limit) {
+      const { data, error } = await client
+        .from('pending_binding')
+        .select('id, claim_source, submitted_code, claimed_phone, claimed_name, created_at, last_submitted_at, superseded_count')
+        .eq('status', 'pending')
+        .order('last_submitted_at', { ascending: true })   // FIFO review queue
+        .order('id', { ascending: true })
+        .limit(limit)
+      if (error) throw new Error(`listPendingBindings failed: ${error.message}`)
+      return (data ?? []) as PendingBindingListRow[]
     },
 
     async rejectPendingBinding({ pendingId, reason, nowIso }) {
@@ -959,22 +1018,42 @@ export function createParkingRepository(
     async getBindingApprovalPreview(pendingId) {
       const { data: p, error: pe } = await client
         .from('pending_binding')
-        .select('status, line_user_id, submitted_code')
+        .select('status, claim_source, line_user_id, submitted_code, claimed_phone, claimed_name, last_submitted_at')
         .eq('id', pendingId)
         .maybeSingle()
       if (pe) throw new Error(`getBindingApprovalPreview failed: ${pe.message}`)
       if (!p) return null
-      const pending = p as { status: string; line_user_id: string; submitted_code: string }
+      const pending = p as {
+        status: string
+        claim_source: string
+        line_user_id: string
+        submitted_code: string | null
+        claimed_phone: string | null
+        claimed_name: string | null
+        last_submitted_at: string
+      }
 
-      // Resolve the code's member (if the submitted code matches an issued one) for the operator to
-      // confirm WHO is being bound. No FK between submitted_code and binding_codes, so look it up.
-      const { data: c, error: ce } = await client
-        .from('binding_codes')
-        .select('user_id')
-        .eq('code', pending.submitted_code)
-        .maybeSingle()
-      if (ce) throw new Error(`getBindingApprovalPreview code lookup failed: ${ce.message}`)
-      const matchedUserId = (c as { user_id: string } | null)?.user_id ?? null
+      // Resolve WHO would be bound, for the operator to confirm. keyword: via the issued code
+      // (no FK between submitted_code and binding_codes). liff: via the canonical phone
+      // (users_phone_key guarantees at most one member).
+      let matchedUserId: string | null = null
+      if (pending.claim_source === 'liff') {
+        const { data: u, error: ue } = await client
+          .from('users')
+          .select('id')
+          .eq('phone_number', pending.claimed_phone)
+          .maybeSingle()
+        if (ue) throw new Error(`getBindingApprovalPreview phone lookup failed: ${ue.message}`)
+        matchedUserId = (u as { id: string } | null)?.id ?? null
+      } else {
+        const { data: c, error: ce } = await client
+          .from('binding_codes')
+          .select('user_id')
+          .eq('code', pending.submitted_code)
+          .maybeSingle()
+        if (ce) throw new Error(`getBindingApprovalPreview code lookup failed: ${ce.message}`)
+        matchedUserId = (c as { user_id: string } | null)?.user_id ?? null
+      }
 
       let matchedDisplayName: string | null = null
       if (matchedUserId) {
@@ -989,8 +1068,12 @@ export function createParkingRepository(
 
       return {
         pending_status: pending.status,
+        claim_source: pending.claim_source,
         line_user_id: pending.line_user_id,
         submitted_code: pending.submitted_code,
+        claimed_phone: pending.claimed_phone,
+        claimed_name: pending.claimed_name,
+        last_submitted_at: pending.last_submitted_at,
         matched_user_id: matchedUserId,
         matched_display_name: matchedDisplayName,
       }

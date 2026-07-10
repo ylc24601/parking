@@ -34,3 +34,11 @@ export function maskCode(s: string): string {
   if (s.length <= 4) return '****'
   return `${s.slice(0, 4)}-****`
 }
+
+// `0912345678` → `0912***678` — enough for an operator to cross-check against member records
+// without exposing the full number. Never returns the full input; non-canonical values collapse
+// to a fully masked form.
+export function maskPhone(s: string): string {
+  if (!/^09\d{8}$/.test(s)) return '**********'
+  return `${s.slice(0, 4)}***${s.slice(-3)}`
+}

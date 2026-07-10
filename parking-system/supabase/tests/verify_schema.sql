@@ -304,7 +304,9 @@ begin
   perform 1 from pg_proc where proname = 'reject_pending_binding';
   if not found then raise exception 'FAIL: reject_pending_binding function missing'; end if;
 
-  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,timestamptz,boolean)', 'execute') then
+  -- 0022 re-signed approve_pending_binding to 4 args (expected-version optimistic concurrency);
+  -- assertion #27 checks the new signature + that the old 3-arg one is gone.
+  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,timestamptz,timestamptz,boolean)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on approve_pending_binding';
   end if;
   if not has_function_privilege('service_role', 'reject_pending_binding(uuid,text,timestamptz)', 'execute') then
@@ -366,6 +368,49 @@ begin
     raise exception 'FAIL: anon must not read member_sessions';
   end if;
   raise notice 'PASS: member_sessions table + token_hash unique + RLS deny-all + service_role grant present';
+end $$;
+
+-- ── 27. LIFF binding claim: XOR shape + phone canon + capture/approve RPCs (Phase 7 Slice 2) ─
+do $$
+begin
+  -- submitted_code relaxed to nullable (liff claims carry phone+name instead).
+  perform 1 from information_schema.columns
+    where table_name = 'pending_binding' and column_name = 'submitted_code' and is_nullable = 'YES';
+  if not found then raise exception 'FAIL: pending_binding.submitted_code should be nullable'; end if;
+
+  perform 1 from information_schema.columns
+    where table_name = 'pending_binding' and column_name = 'claim_source'
+      and column_default like '%keyword%';
+  if not found then raise exception 'FAIL: pending_binding.claim_source default keyword missing'; end if;
+
+  perform 1 from pg_constraint where conname = 'pending_binding_claim_source_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: pending_binding_claim_source_ck missing'; end if;
+  perform 1 from pg_constraint where conname = 'pending_binding_claim_shape_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: pending_binding_claim_shape_ck (strict XOR) missing'; end if;
+  perform 1 from pg_constraint where conname = 'pending_binding_claimed_phone_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: pending_binding_claimed_phone_ck missing'; end if;
+  perform 1 from pg_constraint where conname = 'pending_binding_claimed_name_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: pending_binding_claimed_name_ck missing'; end if;
+  perform 1 from pg_constraint where conname = 'users_phone_format_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: users_phone_format_ck (canonical phone) missing'; end if;
+
+  perform 1 from pg_proc where proname = 'capture_liff_binding_claim';
+  if not found then raise exception 'FAIL: capture_liff_binding_claim function missing'; end if;
+  if not has_function_privilege('service_role', 'capture_liff_binding_claim(text,text,text,timestamptz)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on capture_liff_binding_claim';
+  end if;
+  if not has_function_privilege('service_role', 'capture_pending_binding(text,text,text,timestamptz)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on capture_pending_binding';
+  end if;
+  -- 4-arg approve (with expected version); the old 3-arg signature must be gone.
+  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,timestamptz,timestamptz,boolean)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on approve_pending_binding(4-arg)';
+  end if;
+  perform 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'approve_pending_binding' and p.pronargs = 3;
+  if found then raise exception 'FAIL: stale 3-arg approve_pending_binding still present'; end if;
+
+  raise notice 'PASS: liff binding claim columns/constraints + capture/approve RPC grants present';
 end $$;
 
 rollback;
