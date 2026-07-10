@@ -1192,7 +1192,7 @@ export function createParkingRepository(
         r.status === 'cancelled_by_user' || r.status === 'cancelled_late'
       rows.sort((a, b) => {
         if (isCancelled(a) !== isCancelled(b)) return isCancelled(a) ? 1 : -1
-        return String(b.applied_at) < String(a.applied_at) ? -1 : 1
+        return String(b.applied_at).localeCompare(String(a.applied_at))
       })
       const row = rows[0]
       const vehicle = row.vehicles as { license_plate?: string } | null

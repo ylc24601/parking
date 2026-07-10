@@ -14,6 +14,10 @@ import { createParkingRepository, type ParkingRepository } from '@/server/reposi
 
 const LINE_VERIFY_URL = 'https://api.line.me/oauth2/v2.1/verify'
 const LINE_ISSUER = 'https://access.line.me'
+// This is a public login entry point: a connected-but-silent LINE endpoint must not
+// hold the request until the platform runtime timeout. Aborts surface through the
+// same catch as network errors → verify_unreachable (retryable).
+const LINE_VERIFY_TIMEOUT_MS = 8_000
 
 export type MemberAuthMode =
   | { mode: 'mock' }
@@ -67,6 +71,7 @@ export async function verifyLiffIdToken(
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ id_token: idToken, client_id: channelId }),
+      signal: AbortSignal.timeout(LINE_VERIFY_TIMEOUT_MS),
     })
   } catch {
     return { ok: false, reason: 'verify_unreachable' }

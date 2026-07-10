@@ -112,6 +112,25 @@ describe('verifyLiffIdToken', () => {
       reason: 'verify_unreachable',
     })
   })
+
+  it('passes an abort timeout to fetch; a timeout abort → verify_unreachable', async () => {
+    // A connected-but-silent LINE endpoint must not hang this public login entry:
+    // the request carries AbortSignal.timeout, and its TimeoutError maps retryable.
+    const timedOut = vi.fn(async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+    })
+    expect(await verifyLiffIdToken(RAW_ID_TOKEN, '123', timedOut as unknown as typeof fetch)).toEqual({
+      ok: false,
+      reason: 'verify_unreachable',
+    })
+
+    const okFetch = vi.fn(async () =>
+      jsonResponse(200, { iss: 'https://access.line.me', sub: RAW_LINE_ID }),
+    )
+    await verifyLiffIdToken(RAW_ID_TOKEN, '123', okFetch as unknown as typeof fetch)
+    const [, init] = okFetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+  })
 })
 
 // ── loginMember ───────────────────────────────────────────────────────────────

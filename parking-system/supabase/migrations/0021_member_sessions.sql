@@ -14,7 +14,10 @@ create table member_sessions (
   user_id    uuid        not null references users(id) on delete cascade,
   token_hash text        not null unique,   -- sha256 hex of the cookie token; raw token is never stored
   created_at timestamptz not null default now(),
-  expires_at timestamptz not null
+  expires_at timestamptz not null,
+  -- Guards seeds / future CLI-admin writes / clock-math regressions from minting a
+  -- session that is already expired at creation.
+  constraint member_sessions_expiry_after_creation check (expires_at > created_at)
 );
 
 -- Lazy cleanup of a member's expired sessions happens at login.

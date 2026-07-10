@@ -355,6 +355,10 @@ begin
   perform 1 from pg_class where relname = 'member_sessions' and relrowsecurity;
   if not found then raise exception 'FAIL: member_sessions RLS not enabled'; end if;
 
+  perform 1 from pg_constraint
+    where conname = 'member_sessions_expiry_after_creation' and contype = 'c';
+  if not found then raise exception 'FAIL: member_sessions_expiry_after_creation check missing'; end if;
+
   if not has_table_privilege('service_role', 'member_sessions', 'insert') then
     raise exception 'FAIL: service_role lacks insert on member_sessions';
   end if;
