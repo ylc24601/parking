@@ -69,6 +69,36 @@ export interface AdminSessionRow {
   account_disabled_at: Date | null
 }
 
+// Phase 8 Slice 2 — admin member search result (raw; the SERVICE masks phone before
+// output). plates are the member's ACTIVE license plates only.
+export interface MemberSearchRow {
+  id: string
+  display_name: string
+  phone_number: string | null
+  role: string
+  line_id: string | null
+  plates: string[]
+}
+
+// Phase 8 Slice 2 — full admin member detail. Contains complete PII (phone/plates/
+// eligibility/dependents); only the session-gated detail page renders it and the
+// service DTO drops line_id in favour of a `bound` boolean.
+export interface MemberAdminDetailRow {
+  display_name: string
+  phone_number: string | null
+  role: string
+  line_id: string | null
+  vehicles: Array<{ license_plate: string; nickname: string | null }>
+  eligibility: {
+    p2_eligible: boolean
+    p2_reason: string | null
+    p2_valid_until: string | null
+    p2_review_date: string | null
+    reviewed_at: string | null
+  } | null
+  dependents: Array<{ kind: string; name: string; birthdate: string | null }>
+}
+
 // Phase 7 Slice 1 — the member's own reservation for one week, plate joined.
 // Member-safe projection: own data only, no penalty/eligibility fields. `id`,
 // `effective_priority` and `attended_at` are for server-side actions/affordance
@@ -598,6 +628,18 @@ export interface ParkingRepository {
     p2_valid_until: string | null
   } | null>
   getUserRole(userId: string): Promise<string | null>
+  // Phase 8 Slice 2 — admin member search. The service pre-splits/cleans the raw query
+  // into three OPTIONAL cleaned branches (null = skip that branch); this method runs
+  // only the non-null ones (each capped), merges distinct users, attaches ACTIVE plates,
+  // and returns a stable-sorted list. Masking happens in the service.
+  searchMembers(args: {
+    nameQuery: string | null
+    phoneQuery: string | null
+    plateQuery: string | null
+    candidateCap: number
+  }): Promise<MemberSearchRow[]>
+  // Phase 8 Slice 2 — full admin member detail (raw PII). Null if the user doesn't exist.
+  getMemberAdminDetail(userId: string): Promise<MemberAdminDetailRow | null>
   // Apply window: closed once the Friday allocation job has claimed the event
   // ('running' or 'success' — rows inserted mid-run would miss the batch).
   hasFridayAllocationRun(eventId: string): Promise<boolean>
@@ -1515,6 +1557,130 @@ export function createParkingRepository(
         .maybeSingle()
       if (error) throw new Error(`getUserRole failed: ${error.message}`)
       return ((data as { role: string } | null)?.role ?? null)
+    },
+
+    async searchMembers({ nameQuery, phoneQuery, plateQuery, candidateCap }) {
+      // Collect candidate user ids from each non-null branch (each independently capped
+      // so no single branch can pull the whole table). `.ilike()` parameterizes the
+      // value against filter-syntax injection; the service already stripped %/_ wildcards.
+      const ids = new Set<string>()
+
+      const collectUsers = async (column: 'display_name' | 'phone_number', q: string) => {
+        const { data, error } = await client
+          .from('users')
+          .select('id')
+          .ilike(column, `%${q}%`)
+          .limit(candidateCap)
+        if (error) throw new Error(`searchMembers (${column}) failed: ${error.message}`)
+        for (const r of data ?? []) ids.add((r as { id: string }).id)
+      }
+
+      if (nameQuery !== null) await collectUsers('display_name', nameQuery)
+      if (phoneQuery !== null) await collectUsers('phone_number', phoneQuery)
+      if (plateQuery !== null) {
+        const { data, error } = await client
+          .from('vehicles')
+          .select('user_id')
+          .eq('is_active', true)
+          .ilike('license_plate_normalized', `%${plateQuery}%`)
+          .limit(candidateCap)
+        if (error) throw new Error(`searchMembers (plate) failed: ${error.message}`)
+        for (const r of data ?? []) ids.add((r as { user_id: string }).user_id)
+      }
+
+      if (ids.size === 0) return []
+      const idList = [...ids]
+
+      const { data: users, error: ue } = await client
+        .from('users')
+        .select('id, display_name, phone_number, role, line_id')
+        .in('id', idList)
+      if (ue) throw new Error(`searchMembers users fetch failed: ${ue.message}`)
+
+      const { data: plateRows, error: pe } = await client
+        .from('vehicles')
+        .select('user_id, license_plate')
+        .eq('is_active', true)
+        .in('user_id', idList)
+        .order('created_at', { ascending: true })
+      if (pe) throw new Error(`searchMembers plates fetch failed: ${pe.message}`)
+
+      const platesByUser = new Map<string, string[]>()
+      for (const r of (plateRows ?? []) as Array<{ user_id: string; license_plate: string }>) {
+        const arr = platesByUser.get(r.user_id) ?? []
+        arr.push(r.license_plate)
+        platesByUser.set(r.user_id, arr)
+      }
+
+      const rows = ((users ?? []) as Array<{
+        id: string; display_name: string; phone_number: string | null; role: string; line_id: string | null
+      }>).map(u => ({
+        id: u.id,
+        display_name: u.display_name,
+        phone_number: u.phone_number,
+        role: u.role,
+        line_id: u.line_id,
+        plates: platesByUser.get(u.id) ?? [],
+      }))
+
+      // Stable order so hasMore (service slices limit+1) and pagination hints are deterministic.
+      rows.sort((a, b) => a.display_name.localeCompare(b.display_name, 'zh-Hant') || a.id.localeCompare(b.id))
+      return rows
+    },
+
+    async getMemberAdminDetail(userId) {
+      const { data: user, error: ue } = await client
+        .from('users')
+        .select('display_name, phone_number, role, line_id')
+        .eq('id', userId)
+        .maybeSingle()
+      if (ue) throw new Error(`getMemberAdminDetail user failed: ${ue.message}`)
+      if (!user) return null
+      const u = user as { display_name: string; phone_number: string | null; role: string; line_id: string | null }
+
+      const { data: vehicles, error: ve } = await client
+        .from('vehicles')
+        .select('license_plate, nickname')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: true })
+      if (ve) throw new Error(`getMemberAdminDetail vehicles failed: ${ve.message}`)
+
+      const { data: elig, error: ee } = await client
+        .from('user_eligibility')
+        .select('p2_eligible, p2_reason, p2_valid_until, p2_review_date, reviewed_at')
+        .eq('user_id', userId)
+        .maybeSingle()
+      if (ee) throw new Error(`getMemberAdminDetail eligibility failed: ${ee.message}`)
+
+      const { data: deps, error: de } = await client
+        .from('eligibility_dependents')
+        .select('dependent_kind, dependent_name, dependent_birthdate')
+        .eq('user_id', userId)
+        .order('dependent_birthdate', { ascending: true, nullsFirst: true })
+      if (de) throw new Error(`getMemberAdminDetail dependents failed: ${de.message}`)
+
+      return {
+        display_name: u.display_name,
+        phone_number: u.phone_number,
+        role: u.role,
+        line_id: u.line_id,
+        vehicles: ((vehicles ?? []) as Array<{ license_plate: string; nickname: string | null }>).map(v => ({
+          license_plate: v.license_plate,
+          nickname: v.nickname,
+        })),
+        eligibility: elig
+          ? (elig as {
+              p2_eligible: boolean; p2_reason: string | null; p2_valid_until: string | null
+              p2_review_date: string | null; reviewed_at: string | null
+            })
+          : null,
+        dependents: ((deps ?? []) as Array<{ dependent_kind: string; dependent_name: string; dependent_birthdate: string | null }>).map(d => ({
+          kind: d.dependent_kind,
+          name: d.dependent_name,
+          birthdate: d.dependent_birthdate,
+        })),
+      }
     },
 
     async hasFridayAllocationRun(eventId) {

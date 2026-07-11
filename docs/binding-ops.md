@@ -49,8 +49,12 @@ npm run binding:pending -- --limit 50  # 1..100
   （liff → `姓名 / 0912***678`；keyword → `ABCD-****`）。
 - 完整 pending id 列在表尾，供 `binding:approve` 使用。時間為 UTC。
 
-## 1. 發碼 `binding:issue`
+## 1. 發碼
 
+**主要：Admin UI**（Phase 8 Slice 2，handoff §6.29）——`/admin/members` 查詢會友 → 開明細 → 對**未綁**會友按「產生綁定碼」（可設有效天數 1–90、可選備註）。全碼**只顯示這一次**（畫面提示「離開此畫面後 Admin UI 不會再次顯示」；DB 仍存明文、非技術上不可取），請立即複製轉交；已綁會友發碼鈕停用（回 `already_bound`）。`created_by` 記為 `admin:<登入者>`。
+> **發碼的 bound 檢查是 UX precheck、非原子保證**：發碼成功只代表 code 已建立，不保證日後必可核准——最終守門是核准端 RPC 的 `member_already_bound`。
+
+**Fallback：CLI `binding:issue`**（需先知道 user uuid）：
 ```bash
 npm run binding:issue -- --user-id <會友 uuid> --ttl-days 14
 # 可選：--code ABCD-2345（自訂，通常不需要）、--created-by <text>、--note "小組長轉交"
