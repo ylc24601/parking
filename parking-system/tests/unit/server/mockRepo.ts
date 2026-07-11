@@ -35,7 +35,7 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     getTempApproved: vi.fn(async () => []),
     applyCancellation: vi.fn(async () => ({ cancelled: 1, substitute_applied: 1, outbox_enqueued: 1, cancel_notice_enqueued: 1 })),
     applyOffer: vi.fn(async () => ({ offered: 1, outbox_enqueued: 1 })),
-    applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 1, outbox_enqueued: 1 })),
+    applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 1, outbox_enqueued: 1, expired_blocked: false })),
     // Slice 3
     getReservationsForRelease: vi.fn(async () => []),
     getPenaltyCounters: vi.fn(async () => ({ penalty_score: 0, consecutive_no_show: 0, last_successful_attended_at: null })),

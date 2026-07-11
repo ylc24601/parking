@@ -38,9 +38,10 @@ export default async function MemberPage() {
   }
 
   const repo = createParkingRepository()
+  const now = new Date()
   const [displayName, event] = await Promise.all([
     repo.getUserDisplayName(session.userId),
-    repo.getMemberEvent(taipeiToday(new Date())),
+    repo.getMemberEvent(taipeiToday(now)),
   ])
   const reservation = event ? await repo.getMemberWeekReservation(session.userId, event.id) : null
 
@@ -84,6 +85,20 @@ export default async function MemberPage() {
     apply,
     canCancel:
       live && (reservation!.status === 'pending' || reservation!.status === 'waiting' || reservation!.status === 'approved'),
+    // Slice 4 affordances, computed server-side from server-only row fields
+    // (effective_priority / attended_at never reach the DTO themselves).
+    canRespondOffer:
+      live &&
+      reservation!.status === 'temp_approved' &&
+      (reservation!.offer_expires_at === null || reservation!.offer_expires_at.getTime() > now.getTime()),
+    canReportOnTheWay:
+      live &&
+      reservation!.status === 'approved' &&
+      reservation!.effective_priority === 2 &&
+      !reservation!.p2_on_the_way &&
+      reservation!.attended_at === null &&
+      reservation!.release_deadline_at !== null &&
+      reservation!.release_deadline_at.getTime() >= now.getTime(),
   }
   return <MemberStatus status={status} />
 }

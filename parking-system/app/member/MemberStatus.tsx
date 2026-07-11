@@ -25,6 +25,8 @@ export interface MemberWeekStatus {
     companionKind: 'elderly' | 'child' | null
   } | null
   canCancel: boolean
+  canRespondOffer: boolean        // live temp_approved offer, not yet expired
+  canReportOnTheWay: boolean      // approved P2, unattended, before the 10:45 deadline
 }
 
 const TAIPEI_TIME = new Intl.DateTimeFormat('zh-TW', {
@@ -66,8 +68,8 @@ function statusView(r: NonNullable<MemberWeekStatus['reservation']>): {
         label: '候補遞補中',
         tone: 'wait',
         detail: timeLabel(r.offerExpiresAt)
-          ? `已為您保留車位，請於 ${timeLabel(r.offerExpiresAt)} 前確認（確認功能即將開放，可先聯繫同工）`
-          : null,
+          ? `已為您保留車位，請於 ${timeLabel(r.offerExpiresAt)} 前回覆`
+          : '已為您保留車位，請儘速回覆',
       }
     case 'waiting':
       return { label: '候補中', tone: 'wait', detail: '若有車位釋出將依序遞補並通知您' }
@@ -154,6 +156,8 @@ export default function MemberStatus({ status }: { status: MemberWeekStatus }) {
                 </p>
                 {r.plate && <p className="mt-4 text-2xl font-semibold tracking-wide">{r.plate}</p>}
                 {view.detail && <p className="mt-3 text-sm leading-relaxed text-slate-400">{view.detail}</p>}
+                {status.canRespondOffer && <OfferActions disabled={busy} />}
+                {status.canReportOnTheWay && <OnTheWayButton disabled={busy} />}
                 {status.canCancel && (
                   <CancelButton approved={r.status === 'approved'} disabled={busy} />
                 )}
@@ -175,6 +179,129 @@ export default function MemberStatus({ status }: { status: MemberWeekStatus }) {
         如有停車需求或異動，請聯繫教會停車同工
       </p>
     </main>
+  )
+}
+
+// Substitution-offer response (Slice 4): confirm is one tap (it secures the spot);
+// decline arms first (it gives the spot to the next candidate — irreversible).
+function OfferActions({ disabled }: { disabled: boolean }) {
+  const router = useRouter()
+  const [arming, setArming] = useState(false)
+  const [submitting, setSubmitting] = useState<'confirm' | 'decline' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function respond(action: 'confirm' | 'decline') {
+    setSubmitting(action)
+    setError(null)
+    try {
+      const res = await fetch('/api/member/reservation/offer', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const body = (await res.json()) as { ok: boolean; reason?: string }
+      if (res.ok && body.ok) {
+        router.refresh()
+        return
+      }
+      setError(
+        body.reason === 'offer_expired'
+          ? '回覆期限已過，車位已釋出給下一位候補'
+          : '目前沒有待回覆的遞補，請重新整理',
+      )
+      setArming(false)
+    } catch {
+      setError('連線失敗，請再試一次')
+    } finally {
+      setSubmitting(null)
+    }
+  }
+
+  return (
+    <div className="mt-5 space-y-2">
+      {arming ? (
+        <>
+          <p className="text-sm text-amber-400">確定放棄？車位將轉給下一位候補</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => respond('decline')}
+              disabled={submitting !== null || disabled}
+              className="h-12 flex-1 rounded-xl bg-rose-600 text-base font-medium text-white active:bg-rose-500 disabled:opacity-50"
+            >
+              {submitting === 'decline' ? '送出中…' : '確定放棄'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setArming(false)}
+              disabled={submitting !== null}
+              className="h-12 flex-1 rounded-xl bg-slate-800 text-base text-slate-100 active:bg-slate-700 disabled:opacity-50"
+            >
+              返回
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => respond('confirm')}
+            disabled={submitting !== null || disabled}
+            className="h-12 w-full rounded-xl bg-sky-600 text-base font-medium text-white active:bg-sky-500 disabled:opacity-50"
+          >
+            {submitting === 'confirm' ? '確認中…' : '確認保留車位'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setArming(true)}
+            disabled={submitting !== null || disabled}
+            className="h-12 w-full rounded-xl border border-slate-700 text-base text-slate-300 active:bg-slate-800 disabled:opacity-50"
+          >
+            放棄這個車位
+          </button>
+        </>
+      )}
+      {error && <p className="text-sm text-rose-400" role="alert">{error}</p>}
+    </div>
+  )
+}
+
+// P2 「正在路上」(Slice 4): one tap extends the 10:45 deadline to the 10:55 grace.
+function OnTheWayButton({ disabled }: { disabled: boolean }) {
+  const router = useRouter()
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function report() {
+    setSubmitting(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/member/reservation/on-the-way', { method: 'POST' })
+      const body = (await res.json()) as { ok: boolean }
+      if (res.ok && body.ok) {
+        router.refresh()
+        return
+      }
+      setError('目前無法回報（可能已過期限），請重新整理')
+    } catch {
+      setError('連線失敗，請再試一次')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="mt-5">
+      <button
+        type="button"
+        onClick={report}
+        disabled={submitting || disabled}
+        className="h-12 w-full rounded-xl bg-amber-600 text-base font-medium text-white active:bg-amber-500 disabled:opacity-50"
+      >
+        {submitting ? '回報中…' : '我正在路上（保留至 10:55）'}
+      </button>
+      {error && <p className="mt-2 text-sm text-rose-400" role="alert">{error}</p>}
+    </div>
   )
 }
 
