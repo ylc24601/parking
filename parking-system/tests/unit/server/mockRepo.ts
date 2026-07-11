@@ -121,6 +121,9 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     getMemberVehicles: vi.fn(async () => [{ id: '00000000-0000-4000-8000-000000000001', license_plate: 'ABC-1234', nickname: null }]),
     getMemberEligibility: vi.fn(async () => null),
     getUserRole: vi.fn(async () => 'user'),
+    // Phase 8 Slice 2 — admin member search + detail
+    searchMembers: vi.fn(async () => []),
+    getMemberAdminDetail: vi.fn(async () => null),
     hasFridayAllocationRun: vi.fn(async () => false),
     applyReservation: vi.fn(async () => ({ applied: 1, reason: 'applied' })),
     claimFridayAllocation: vi.fn(async () => ({ claimed: true, reason: 'claimed' })),
