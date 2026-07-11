@@ -39,6 +39,14 @@ export default function AdminHome({ username }: { username: string }) {
           <p className="mt-1.5 text-sm text-slate-400">查詢會友、檢視明細、發放綁定碼</p>
         </Link>
 
+        <Link
+          href="/admin/accounts"
+          className="rounded-2xl border border-sky-800 bg-slate-900 p-5 transition-colors hover:border-sky-500"
+        >
+          <h2 className="text-lg font-medium text-sky-300">帳號管理</h2>
+          <p className="mt-1.5 text-sm text-slate-400">管理 admin 帳號：停用、重設密碼、撤銷登入</p>
+        </Link>
+
         {PLANNED.map(card => (
           <div
             key={card.title}
