@@ -129,6 +129,8 @@ export interface OfferResolutionResult {
   resolved: number
   next_applied: number
   outbox_enqueued: number
+  // expiryGuard only: resolved=0 because the offer had expired (vs not temp_approved).
+  expired_blocked: boolean
 }
 
 // Slice 3
@@ -380,6 +382,9 @@ export interface ParkingRepository {
     approved: { approved_at: string; release_deadline_at: string } | null
     next: SubstitutePayload | null
     outbox: OutboxRow[]
+    // member path only: refuse confirm/decline once offer_expires_at <= now, inside
+    // the atomic write. Ops sweeps omit it (auto-approve confirms past the cap).
+    expiryGuard?: boolean
   }): Promise<OfferResolutionResult>
   // Slice 3
   getReservationsForRelease(eventId: string): Promise<Reservation[]>
@@ -780,6 +785,7 @@ export function createParkingRepository(
         p_approved: args.approved,
         p_next: args.next,
         p_outbox: args.outbox,
+        p_expiry_guard: args.expiryGuard ?? false,
       })
       if (error) throw new Error(`apply_offer_resolution failed: ${error.message}`)
       return data as OfferResolutionResult

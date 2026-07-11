@@ -22,7 +22,7 @@ describe('expireOffers', () => {
     const repo = makeMockRepo({
       getExpiredOffers: vi_fn([off]),
       getWaitingForSubstitution: vi_fn([w2]),
-      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 1, outbox_enqueued: 1 })),
+      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 1, outbox_enqueued: 1, expired_blocked: false })),
     })
     const summary = await expireOffers({ eventId: EVENT, now: NOW_PRE }, asRepo(repo))
 
@@ -44,7 +44,7 @@ describe('expireOffers', () => {
     const repo = makeMockRepo({
       getExpiredOffers: vi_fn([off]),
       getWaitingForSubstitution: getWaiting,
-      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 0, outbox_enqueued: 0 })),
+      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 0, outbox_enqueued: 0, expired_blocked: false })),
       applyOffer: vi.fn(async () => ({ offered: 1, outbox_enqueued: 1 })),
     })
     const summary = await expireOffers({ eventId: EVENT, now: NOW_PRE }, asRepo(repo))
@@ -70,7 +70,7 @@ describe('autoApproveTemp', () => {
     const t = tempOffer() // P3
     const repo = makeMockRepo({
       getTempApproved: vi_fn([t]),
-      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 0, outbox_enqueued: 1 })),
+      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 0, outbox_enqueued: 1, expired_blocked: false })),
     })
     const summary = await autoApproveTemp({ eventId: EVENT, now: NOW_POST }, asRepo(repo))
 

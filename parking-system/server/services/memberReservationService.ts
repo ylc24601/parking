@@ -118,7 +118,10 @@ export type MemberOfferResult =
 // Confirm or decline the member's own live offer (temp_approved). The internal
 // offer flow doesn't gate on offer_expires_at (ops semantics); the MEMBER entry
 // does — a tap after the 2h window returns typed offer_expired and writes nothing
-// (the expiry sweep owns returning the row to 'waiting').
+// (the expiry sweep owns returning the row to 'waiting'). The authoritative check
+// lives INSIDE apply_offer_resolution (enforceExpiry → p_expiry_guard: expiry and
+// state write in one guarded UPDATE); the read below is only a fast path. Boundary:
+// now >= offer_expires_at counts as expired, matching the UI's "> now is active".
 export async function resolveOfferForWeek(
   params: { userId: string; action: 'confirm' | 'decline' },
   repo: ParkingRepository = createParkingRepository(),
@@ -132,13 +135,19 @@ export async function resolveOfferForWeek(
   if (!reservation || reservation.status !== 'temp_approved') {
     return { ok: false, reason: 'no_active_offer' }
   }
-  if (reservation.offer_expires_at !== null && now > reservation.offer_expires_at) {
+  if (reservation.offer_expires_at !== null && now.getTime() >= reservation.offer_expires_at.getTime()) {
     return { ok: false, reason: 'offer_expired' }
   }
 
-  const summary = await resolveFn({ reservationId: reservation.id, action: params.action, now }, repo)
-  // resolved=false = raced (the expiry sweep / auto-approve got there first).
-  if (!summary.resolved) return { ok: false, reason: 'no_active_offer' }
+  const summary = await resolveFn(
+    { reservationId: reservation.id, action: params.action, now, enforceExpiry: true },
+    repo,
+  )
+  if (!summary.resolved) {
+    // expiredBlocked: the guarded write refused a lapsed offer; otherwise the
+    // expiry sweep / auto-approve raced us and the row is no longer an offer.
+    return { ok: false, reason: summary.expiredBlocked ? 'offer_expired' : 'no_active_offer' }
+  }
   return { ok: true, outcome: summary.outcome }
 }
 

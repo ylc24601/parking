@@ -430,6 +430,20 @@ begin
   raise notice 'PASS: apply_reservation + claim_friday_allocation RPCs + grants present';
 end $$;
 
+-- ── 29. offer expiry guard: apply_offer_resolution carries p_expiry_guard ──
+do $$
+begin
+  -- 8-arg signature (p_expiry_guard); the old 7-arg one must be gone.
+  if not has_function_privilege('service_role',
+    'apply_offer_resolution(uuid,uuid,text,timestamptz,jsonb,jsonb,jsonb,boolean)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on apply_offer_resolution(8-arg)';
+  end if;
+  perform 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'apply_offer_resolution' and p.pronargs = 7;
+  if found then raise exception 'FAIL: stale 7-arg apply_offer_resolution still present'; end if;
+  raise notice 'PASS: apply_offer_resolution expiry-guard signature present (old 7-arg gone)';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

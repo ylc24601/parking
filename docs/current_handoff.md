@@ -692,6 +692,15 @@ Phase 7 最後一刀：主日前後的即時互動。狀態卡依情境長出按
 - **實機 E2E**（dev server + mock 模式）：見驗證紀錄。
 - **Phase 7 開發面到此完整**：綁定申請 → 登記 → 分配結果 → 遞補回覆 → 正在路上 → 取消，全流程會員自助。**結案前唯一未竟：真機 LIFF 冒煙**（[member-liff-setup.md](member-liff-setup.md)）。其餘 deferred：候補尾端加入（v2）、PII retention job（Phase 8）、rebind/unbind。
 
+### PR #17 審查修正：offer 效期判定移入原子寫入（migration `0024`，推翻上文「無 schema 變更」）
+
+審查指出：`resolveOfferForWeek` 的 `offer_expires_at` 檢查只是 TS 預檢，`apply_offer_resolution` 的 confirm/decline 路徑**沒有效期條件**（0006 只在 `outcome='expired'` 驗 `<= p_now`）——跨過期限瞬間的請求仍可能把過期 offer 確認成 approved。修正：
+
+- **`0024_offer_expiry_guard.sql`**：`apply_offer_resolution` 加第 8 參數 `p_expiry_guard boolean default false`。`true` 時 `resolved` CTE 的 WHERE 追加 `offer_expires_at is null or offer_expires_at > p_now`——**效期檢查與狀態寫入同一條件式 UPDATE（同 statement、同 row lock）**；`nxt`/`ins` CTE 以 `resolved` 為前提，故被擋下時也不遞補、不入 outbox。回傳補 `expired_blocked`（僅分類用：resolved=0 時區分「已過期」vs「已非 temp_approved」；分類讀在守衛寫之後，最壞只影響 typed reason 標籤、不影響狀態）。**必須 opt-in 的原因**：凌晨 auto-approve 合法地以 `outcome='confirmed'` 處理已過午夜上限的列，無條件加檢查會弄壞它——expiry sweep（`outcome='expired'`）與 auto-approve 均不帶 guard，語意不變。
+- **邊界統一 `now >= offer_expires_at` → expired**（原 service 用 `>`，與 UI 按鈕的 `offer_expires_at > now` 在恰好等於時矛盾）；TS 預檢保留為 fast path（省 waiting list 讀取），權威判定在 RPC。
+- **`offerService.resolveOffer`** 增 `enforceExpiry?: boolean`（member 路徑傳 `true`）、summary 增 `expiredBlocked`；member service 據此映射 `offer_expired` vs `no_active_offer`。internal route／sweeps 不帶 → 行為不變。
+- **測試**：unit +5（邊界 `==` → expired 不觸服務、`expiredBlocked` → `offer_expired`、`expiryGuard` 傳遞、blocked decline 不遞補不 retry、ops 預設 false）；integration +4（邊界不寫、**繞過 TS 預檢直打 `resolveOffer(enforceExpiry)`**：過期 confirm 被原子寫入拒絕（狀態不動、無 outbox）、過期 decline 不觸發下一位、無 guard 過期照樣 confirm＝auto-approve 語意保留）；`db:verify` **29/29**（#29：8 參數簽名 + 舊 7 參數已除）。總計 **555 unit / 668 db-mode**。
+
 ---
 
 ## 7. 關鍵設計決策（跨切片）

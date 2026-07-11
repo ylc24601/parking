@@ -24,6 +24,7 @@ describe.skipIf(!RUN)('member offer + on-the-way (Phase 7 Slice 4) — local DB 
   let sb: Sb
   let repo: import('@/server/repositories/parkingRepository').ParkingRepository
   let svc: typeof import('@/server/services/memberReservationService')
+  let offerSvc: typeof import('@/server/services/offerService')
 
   const eventId = randomUUID()
   const users: string[] = []
@@ -61,6 +62,7 @@ describe.skipIf(!RUN)('member offer + on-the-way (Phase 7 Slice 4) — local DB 
     sb = (await import('@/lib/supabase/server')).getServiceClient()
     repo = (await import('@/server/repositories/parkingRepository')).createParkingRepository(sb)
     svc = await import('@/server/services/memberReservationService')
+    offerSvc = await import('@/server/services/offerService')
     await sb.from('weekly_events')
       .insert({ id: eventId, sunday_date: SUNDAY, total_capacity: 23, status: 'open' })
       .throwOnError()
@@ -128,6 +130,61 @@ describe.skipIf(!RUN)('member offer + on-the-way (Phase 7 Slice 4) — local DB 
     await mkReservation(m.id, m.vehicleId, 'pending')
     expect(await svc.resolveOfferForWeek({ userId: m.id, action: 'confirm' }, repo, THURSDAY))
       .toEqual({ ok: false, reason: 'no_active_offer' })
+  })
+
+  it('boundary: now EXACTLY at offer_expires_at → offer_expired, nothing written', async () => {
+    const m = await mkMember()
+    const rid = await mkReservation(m.id, m.vehicleId, 'temp_approved', {
+      offer_expires_at: THURSDAY.toISOString(),
+    })
+    expect(await svc.resolveOfferForWeek({ userId: m.id, action: 'confirm' }, repo, THURSDAY))
+      .toEqual({ ok: false, reason: 'offer_expired' })
+    expect((await row(rid)).status).toBe('temp_approved')
+  })
+
+  // The next two bypass the member service's TS pre-check on purpose: they prove the
+  // expiry rule holds inside apply_offer_resolution itself (p_expiry_guard), i.e. a
+  // request whose clock crossed the deadline between pre-check and write still loses.
+  it('authoritative guard: an expired confirm is refused by the atomic write itself', async () => {
+    const m = await mkMember()
+    const rid = await mkReservation(m.id, m.vehicleId, 'temp_approved', {
+      offer_expires_at: '2099-07-08T23:00:00Z',   // before THURSDAY
+    })
+    const summary = await offerSvc.resolveOffer(
+      { reservationId: rid, action: 'confirm', now: THURSDAY, enforceExpiry: true }, repo)
+    expect(summary).toMatchObject({ resolved: false, expiredBlocked: true })
+
+    const r = await row(rid)
+    expect(r.status).toBe('temp_approved')                    // untouched — the sweep owns it
+    expect(r.offer_expires_at).not.toBeNull()
+    const notices = (await sb.from('notification_outbox').select('id').eq('reservation_id', rid)).data!
+    expect(notices).toHaveLength(0)                           // no reservation_approved enqueued
+  })
+
+  it('authoritative guard: an expired decline is refused too — no substitute offered', async () => {
+    const decliner = await mkMember()
+    const nextInLine = await mkMember()
+    const rid = await mkReservation(decliner.id, decliner.vehicleId, 'temp_approved', {
+      offer_expires_at: '2099-07-08T23:00:00Z',
+    })
+    const waitingId = await mkReservation(nextInLine.id, nextInLine.vehicleId, 'waiting')
+
+    const summary = await offerSvc.resolveOffer(
+      { reservationId: rid, action: 'decline', now: THURSDAY, enforceExpiry: true }, repo)
+    expect(summary).toMatchObject({ resolved: false, expiredBlocked: true, substituteOffered: false })
+    expect((await row(rid)).status).toBe('temp_approved')
+    expect((await row(waitingId)).status).toBe('waiting')     // nobody re-offered
+  })
+
+  it('ops semantics preserved: WITHOUT the guard an expired offer still confirms (midnight auto-approve path)', async () => {
+    const m = await mkMember()
+    const rid = await mkReservation(m.id, m.vehicleId, 'temp_approved', {
+      offer_expires_at: '2099-07-08T23:00:00Z',
+    })
+    const summary = await offerSvc.resolveOffer(
+      { reservationId: rid, action: 'confirm', now: THURSDAY }, repo)
+    expect(summary.resolved).toBe(true)
+    expect((await row(rid)).status).toBe('approved')
   })
 
   it('on-the-way: approved P2 before 10:45 → p2_on_the_way + deadline extends to 10:55', async () => {

@@ -128,19 +128,20 @@ describe('cancelForWeek', () => {
 describe('resolveOfferForWeek', () => {
   const offerRow = (expiresAt: Date | null) =>
     reservationRow('temp_approved', { offer_expires_at: expiresAt })
-  const resolveFn = (outcome: 'confirmed' | 'declined', resolved = true) =>
+  const resolveFn = (outcome: 'confirmed' | 'declined', resolved = true, expiredBlocked = false) =>
     vi.fn(async () => ({
-      outcome, resolved, substituteOffered: false, substituteReservationId: null,
+      outcome, resolved, expiredBlocked, substituteOffered: false, substituteReservationId: null,
     })) as unknown as typeof resolveOffer
 
-  it('confirms the member\'s own live offer through the shared offer service', async () => {
+  it('confirms the member\'s own live offer through the shared offer service (expiry enforced)', async () => {
     const { r } = run({
       getMemberWeekReservation: vi.fn(async () => offerRow(new Date('2026-07-09T02:00:00Z'))),
     })
     const fn = resolveFn('confirmed')
     expect(await resolveOfferForWeek({ userId: USER, action: 'confirm' }, r, NOW, fn))
       .toEqual({ ok: true, outcome: 'confirmed' })
-    expect(fn).toHaveBeenCalledWith({ reservationId: 'res-1', action: 'confirm', now: NOW }, r)
+    expect(fn).toHaveBeenCalledWith(
+      { reservationId: 'res-1', action: 'confirm', now: NOW, enforceExpiry: true }, r)
   })
 
   it('an expired offer is refused typed BEFORE the service (the sweep owns the row)', async () => {
@@ -151,6 +152,24 @@ describe('resolveOfferForWeek', () => {
     expect(await resolveOfferForWeek({ userId: USER, action: 'confirm' }, r, NOW, fn))
       .toEqual({ ok: false, reason: 'offer_expired' })
     expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('boundary: now EXACTLY at offer_expires_at counts as expired (>= — matches the UI)', async () => {
+    const { r } = run({
+      getMemberWeekReservation: vi.fn(async () => offerRow(new Date(NOW.getTime()))),
+    })
+    const fn = resolveFn('confirmed')
+    expect(await resolveOfferForWeek({ userId: USER, action: 'confirm' }, r, NOW, fn))
+      .toEqual({ ok: false, reason: 'offer_expired' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('the atomic write refusing a lapsed offer (expiredBlocked) also maps to offer_expired', async () => {
+    // Pre-check passes (no expiry on the row we read) but the guarded UPDATE
+    // sees the truth — e.g. the clock crossed the deadline mid-request.
+    const { r } = run({ getMemberWeekReservation: vi.fn(async () => offerRow(null)) })
+    expect(await resolveOfferForWeek({ userId: USER, action: 'confirm' }, r, NOW, resolveFn('confirmed', false, true)))
+      .toEqual({ ok: false, reason: 'offer_expired' })
   })
 
   it.each([

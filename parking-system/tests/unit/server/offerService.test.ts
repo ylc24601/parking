@@ -18,7 +18,7 @@ describe('resolveOffer — confirm', () => {
     const r = offer(2) // P2 → 10:45
     const repo = makeMockRepo({
       getReservation: vi_fn(r),
-      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 0, outbox_enqueued: 1 })),
+      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 0, outbox_enqueued: 1, expired_blocked: false })),
     })
     const summary = await resolveOffer({ reservationId: r.id, action: 'confirm', now: NOW }, asRepo(repo))
 
@@ -46,7 +46,7 @@ describe('resolveOffer — decline', () => {
     const repo = makeMockRepo({
       getReservation: vi_fn(r),
       getWaitingForSubstitution: vi_fn([w2]),
-      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 1, outbox_enqueued: 1 })),
+      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 1, outbox_enqueued: 1, expired_blocked: false })),
     })
     const summary = await resolveOffer({ reservationId: r.id, action: 'decline', now: NOW }, asRepo(repo))
 
@@ -68,7 +68,7 @@ describe('resolveOffer — decline', () => {
     const repo = makeMockRepo({
       getReservation: vi_fn(r),
       getWaitingForSubstitution: getWaiting,
-      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 0, outbox_enqueued: 0 })), // w2 lost the race
+      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 0, outbox_enqueued: 0, expired_blocked: false })), // w2 lost the race
       applyOffer: vi.fn(async () => ({ offered: 1, outbox_enqueued: 1 })),
     })
 
@@ -79,5 +79,43 @@ describe('resolveOffer — decline', () => {
     expect(offeredId).toBe(w3.id)
     expect(offeredId).not.toBe(r.id)   // never re-offers the just-declined row
     expect(offeredId).not.toBe(w2.id)
+  })
+})
+
+describe('resolveOffer — enforceExpiry (member path)', () => {
+  it('threads expiryGuard into the RPC and surfaces a blocked confirm as expiredBlocked', async () => {
+    const r = offer()
+    const repo = makeMockRepo({
+      getReservation: vi_fn(r),
+      applyOfferResolution: vi.fn(async () => ({ resolved: 0, next_applied: 0, outbox_enqueued: 0, expired_blocked: true })),
+    })
+    const summary = await resolveOffer(
+      { reservationId: r.id, action: 'confirm', now: NOW, enforceExpiry: true }, asRepo(repo))
+
+    expect(repo.applyOfferResolution.mock.calls[0][0].expiryGuard).toBe(true)
+    expect(summary.resolved).toBe(false)
+    expect(summary.expiredBlocked).toBe(true)
+  })
+
+  it('a blocked decline offers NO substitute (the sweep owns the lapsed row)', async () => {
+    const r = offer()
+    const w2 = waiting(3)
+    const repo = makeMockRepo({
+      getReservation: vi_fn(r),
+      getWaitingForSubstitution: vi_fn([w2]),
+      applyOfferResolution: vi.fn(async () => ({ resolved: 0, next_applied: 0, outbox_enqueued: 0, expired_blocked: true })),
+    })
+    const summary = await resolveOffer(
+      { reservationId: r.id, action: 'decline', now: NOW, enforceExpiry: true }, asRepo(repo))
+
+    expect(summary).toMatchObject({ resolved: false, expiredBlocked: true, substituteOffered: false })
+    expect(repo.applyOffer).not.toHaveBeenCalled()   // no offer-only retry either
+  })
+
+  it('ops callers omit the flag → expiryGuard stays false (auto-approve past the cap keeps working)', async () => {
+    const r = offer()
+    const repo = makeMockRepo({ getReservation: vi_fn(r) })
+    await resolveOffer({ reservationId: r.id, action: 'confirm', now: NOW }, asRepo(repo))
+    expect(repo.applyOfferResolution.mock.calls[0][0].expiryGuard).toBe(false)
   })
 })

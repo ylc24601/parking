@@ -15,6 +15,8 @@ import { buildSubstitutePayloadAndOutbox, offerNextSpot } from './substitution'
 export interface ResolveOfferSummary {
   outcome: 'confirmed' | 'declined'
   resolved: boolean
+  // enforceExpiry only: the atomic write refused a lapsed offer (resolved=false).
+  expiredBlocked: boolean
   substituteOffered: boolean
   substituteReservationId: string | null
 }
@@ -23,11 +25,15 @@ export interface ResolveOfferSummary {
 // - confirm → approved (stamps release_deadline_at).
 // - decline → back to waiting (offer_status='declined'), and the freed spot is offered
 //   to the NEXT candidate — never the just-declined row (kept in the exclusion set).
+// - enforceExpiry (member path): the RPC's guarded UPDATE also requires
+//   offer_expires_at > now — expiry check and state write share one statement /
+//   one row lock. Ops callers omit it: Sunday-midnight auto-approve legitimately
+//   confirms offers whose midnight-capped window has just lapsed.
 export async function resolveOffer(
-  params: { reservationId: string; action: 'confirm' | 'decline'; now?: Date },
+  params: { reservationId: string; action: 'confirm' | 'decline'; now?: Date; enforceExpiry?: boolean },
   repo: ParkingRepository = createParkingRepository(),
 ): Promise<ResolveOfferSummary> {
-  const { reservationId, action, now = new Date() } = params
+  const { reservationId, action, now = new Date(), enforceExpiry = false } = params
   const r = await repo.getReservation(reservationId)
   if (!r) throw new Error(`reservation ${reservationId} not found`)
   if (r.status !== 'temp_approved') {
@@ -57,8 +63,15 @@ export async function resolveOffer(
       approved: { approved_at: now.toISOString(), release_deadline_at: releaseDeadline.toISOString() },
       next: null,
       outbox,
+      expiryGuard: enforceExpiry,
     })
-    return { outcome: 'confirmed', resolved: res.resolved > 0, substituteOffered: false, substituteReservationId: null }
+    return {
+      outcome: 'confirmed',
+      resolved: res.resolved > 0,
+      expiredBlocked: res.expired_blocked,
+      substituteOffered: false,
+      substituteReservationId: null,
+    }
   }
 
   // decline → exclude the just-declined row from any re-offer
@@ -83,10 +96,17 @@ export async function resolveOffer(
     approved: null,
     next,
     outbox: nextOutbox,
+    expiryGuard: enforceExpiry,
   })
 
   if (res.resolved === 0) {
-    return { outcome: 'declined', resolved: false, substituteOffered: false, substituteReservationId: null }
+    return {
+      outcome: 'declined',
+      resolved: false,
+      expiredBlocked: res.expired_blocked,
+      substituteOffered: false,
+      substituteReservationId: null,
+    }
   }
 
   let offeredId: string | null = sub && res.next_applied > 0 ? sub.reservation.id : null
@@ -94,5 +114,11 @@ export async function resolveOffer(
     // race: chosen next was taken; the decline already committed → offer-only retry
     offeredId = await offerNextSpot(repo, r.weekly_event_id, now, sundayMidnight, deadlines, excluded)
   }
-  return { outcome: 'declined', resolved: true, substituteOffered: !!offeredId, substituteReservationId: offeredId }
+  return {
+    outcome: 'declined',
+    resolved: true,
+    expiredBlocked: false,
+    substituteOffered: !!offeredId,
+    substituteReservationId: offeredId,
+  }
 }
