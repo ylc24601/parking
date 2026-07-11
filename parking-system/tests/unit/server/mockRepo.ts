@@ -115,6 +115,12 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     getAdminSessionByTokenHash: vi.fn(async () => null),
     deleteAdminSessionByTokenHash: vi.fn(async () => {}),
     deleteExpiredAdminSessions: vi.fn(async () => {}),
+    // Phase 8 Slice 3 — admin account management
+    getAdminAccountById: vi.fn(async () => null),
+    listAdminAccounts: vi.fn(async () => []),
+    setAdminDisabled: vi.fn(async () => ({ ok: true })),
+    resetAdminPassword: vi.fn(async () => ({ ok: true, username: 'alice', disabled: false })),
+    deleteAdminSessionsByAdminId: vi.fn(async () => ({ deleted: 0 })),
     getMemberEvent: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
     getMemberWeekReservation: vi.fn(async () => null),
     // Phase 7 Slice 3 — member apply/cancel

@@ -69,6 +69,17 @@ export interface AdminSessionRow {
   account_disabled_at: Date | null
 }
 
+// Phase 8 Slice 3 — admin account list row. Deliberately omits password_hash and
+// failed_attempts (the account-management UI never needs either).
+export interface AdminAccountListRow {
+  id: string
+  username: string
+  display_name: string | null
+  locked_at: Date | null
+  disabled_at: Date | null
+  created_at: Date
+}
+
 // Phase 8 Slice 2 — admin member search result (raw; the SERVICE masks phone before
 // output). plates are the member's ACTIVE license plates only.
 export interface MemberSearchRow {
@@ -611,6 +622,32 @@ export interface ParkingRepository {
   getAdminSessionByTokenHash(tokenHash: string): Promise<AdminSessionRow | null>
   deleteAdminSessionByTokenHash(tokenHash: string): Promise<void>
   deleteExpiredAdminSessions(adminId: string, nowIso: string): Promise<void>
+  // Phase 8 Slice 3 — admin account management. The two state-changing operations
+  // below wrap single atomic RPCs (0026): see that migration for why a sequence of
+  // separate repo calls is not safe here (partial-failure session/credential
+  // inconsistency on an offboarding security surface).
+  getAdminAccountById(id: string): Promise<AdminAccountRow | null>
+  listAdminAccounts(): Promise<AdminAccountListRow[]>
+  // Wraps set_admin_disabled (0026): atomic self-guard + last-active invariant
+  // (when disabling) + session revoke (on BOTH disable and enable — re-enabling
+  // also forces re-login so a missed session-delete during a prior disable can't
+  // let a stale cookie come back to life).
+  setAdminDisabled(args: {
+    targetId: string
+    actingAdminId: string
+    disabled: boolean
+    nowIso: string
+  }): Promise<{ ok: boolean; reason?: string }>
+  // Wraps reset_admin_password (0026): atomic hash update + failed_attempts/locked_at
+  // clear + session revoke. Receives only the already-hashed password; never sees
+  // or returns plaintext. Leaves disabled_at untouched.
+  resetAdminPassword(args: {
+    targetId: string
+    actingAdminId: string
+    passwordHash: string
+  }): Promise<{ ok: boolean; reason?: string; username?: string; disabled?: boolean }>
+  // Single-table, single-statement — already atomic without an RPC.
+  deleteAdminSessionsByAdminId(id: string): Promise<{ deleted: number }>
   // The member-facing "this week": smallest sunday_date >= todayTaipei (any status),
   // NOT getActiveEvent's "latest non-finalized" (that is Staff-PIN semantics and
   // points wrong once future weeks are pre-created).
@@ -1479,6 +1516,70 @@ export function createParkingRepository(
         .eq('admin_id', adminId)
         .lt('expires_at', nowIso)
       if (error) throw new Error(`deleteExpiredAdminSessions failed: ${error.message}`)
+    },
+
+    async getAdminAccountById(id) {
+      const { data, error } = await client
+        .from('admin_accounts')
+        .select('id, username, password_hash, failed_attempts, locked_at, disabled_at')
+        .eq('id', id)
+        .maybeSingle()
+      if (error) throw new Error(`getAdminAccountById failed: ${error.message}`)
+      if (!data) return null
+      return {
+        id: data.id as string,
+        username: data.username as string,
+        password_hash: data.password_hash as string,
+        failed_attempts: data.failed_attempts as number,
+        locked_at: parseDate(data.locked_at as string | null),
+        disabled_at: parseDate(data.disabled_at as string | null),
+      }
+    },
+
+    async listAdminAccounts() {
+      const { data, error } = await client
+        .from('admin_accounts')
+        .select('id, username, display_name, locked_at, disabled_at, created_at')
+        .order('username', { ascending: true })
+      if (error) throw new Error(`listAdminAccounts failed: ${error.message}`)
+      return (data ?? []).map(row => ({
+        id: row.id as string,
+        username: row.username as string,
+        display_name: row.display_name as string | null,
+        locked_at: parseDate(row.locked_at as string | null),
+        disabled_at: parseDate(row.disabled_at as string | null),
+        created_at: new Date(row.created_at as string),
+      }))
+    },
+
+    async setAdminDisabled({ targetId, actingAdminId, disabled, nowIso }) {
+      const { data, error } = await client.rpc('set_admin_disabled', {
+        p_target_id: targetId,
+        p_acting_admin_id: actingAdminId,
+        p_disabled: disabled,
+        p_now: nowIso,
+      })
+      if (error) throw new Error(`set_admin_disabled failed: ${error.message}`)
+      return data as { ok: boolean; reason?: string }
+    },
+
+    async resetAdminPassword({ targetId, actingAdminId, passwordHash }) {
+      const { data, error } = await client.rpc('reset_admin_password', {
+        p_target_id: targetId,
+        p_acting_admin_id: actingAdminId,
+        p_password_hash: passwordHash,
+      })
+      if (error) throw new Error(`reset_admin_password failed: ${error.message}`)
+      return data as { ok: boolean; reason?: string; username?: string; disabled?: boolean }
+    },
+
+    async deleteAdminSessionsByAdminId(id) {
+      const { error, count } = await client
+        .from('admin_sessions')
+        .delete({ count: 'exact' })
+        .eq('admin_id', id)
+      if (error) throw new Error(`deleteAdminSessionsByAdminId failed: ${error.message}`)
+      return { deleted: count ?? 0 }
     },
 
     async getMemberEvent(todayTaipei) {

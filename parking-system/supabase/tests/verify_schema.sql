@@ -513,6 +513,19 @@ begin
   raise notice 'PASS: admin_accounts + admin_sessions + login-failure RPC + binding decider audit present';
 end $$;
 
+-- ── 31. Admin account management RPCs (Phase 8 Slice 3) ─────────────────────
+do $$
+begin
+  if not has_function_privilege('service_role', 'set_admin_disabled(uuid,uuid,boolean,timestamptz)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on set_admin_disabled';
+  end if;
+  if not has_function_privilege('service_role', 'reset_admin_password(uuid,uuid,text)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on reset_admin_password';
+  end if;
+
+  raise notice 'PASS: admin account management RPCs (set_admin_disabled, reset_admin_password) present';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='
