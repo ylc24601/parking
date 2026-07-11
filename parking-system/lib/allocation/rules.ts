@@ -57,3 +57,12 @@ export const STAFF_SESSION_TTL_HOURS = 12
 // row per login (multi-device allowed); expired rows are lazily deleted at the
 // owner's next login.
 export const MEMBER_SESSION_TTL_DAYS = 30
+
+// ── Admin UI session (Phase 8 Slice 1) ────────────────────────────────────────
+// Per-admin username+password (admin_accounts). Short TTL — admin holds write power
+// over PII, and a password-manager re-login is cheap on a desktop. Lockout follows
+// staff semantics, but an EXPIRED lock starts a new counting round (see
+// apply_admin_login_failure, 0025).
+export const ADMIN_LOGIN_MAX_ATTEMPTS = 5
+export const ADMIN_LOGIN_LOCK_MINUTES = 15
+export const ADMIN_SESSION_TTL_HOURS = 12

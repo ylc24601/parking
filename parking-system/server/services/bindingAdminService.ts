@@ -1,4 +1,8 @@
-import { createParkingRepository, type ParkingRepository } from '@/server/repositories/parkingRepository'
+import {
+  createParkingRepository,
+  type ParkingRepository,
+  type PendingBindingListRow,
+} from '@/server/repositories/parkingRepository'
 import {
   BINDING_CODE_FORMAT,
   generateBindingCode,
@@ -112,19 +116,22 @@ export async function previewApproveBinding(
 }
 
 export async function applyApproveBinding(
-  params: { pendingId: string; expectedSupersededCount: number; now?: Date },
+  params: { pendingId: string; expectedSupersededCount: number; adminId?: string | null; now?: Date },
   repo: ParkingRepository = createParkingRepository(),
 ): Promise<{ approved: number; reason: string }> {
-  const { pendingId, expectedSupersededCount, now = new Date() } = params
+  const { pendingId, expectedSupersededCount, adminId = null, now = new Date() } = params
   // 0 is a valid revision (a never-superseded claim) — validate shape, not truthiness.
   if (!Number.isInteger(expectedSupersededCount) || expectedSupersededCount < 0) {
     throw new Error('expectedSupersededCount (claimVersion) is required for an apply')
   }
+  // adminId is the decider audit (pending_binding.decided_by_admin_id). Admin routes
+  // take it from the SESSION — never from a request body; CLI decisions record null.
   const res = await repo.approvePendingBinding({
     pendingId,
     nowIso: now.toISOString(),
     dryRun: false,
     expectedSupersededCount,
+    adminId,
   })
   return { approved: res.approved, reason: res.reason }
 }
@@ -145,13 +152,8 @@ export interface PendingClaimListItem {
 const PENDING_LIST_DEFAULT = 20
 const PENDING_LIST_MAX = 100
 
-export async function listPendingBindings(
-  params: { limit?: number } = {},
-  repo: ParkingRepository = createParkingRepository(),
-): Promise<PendingClaimListItem[]> {
-  const limit = Math.min(Math.max(Math.trunc(params.limit ?? PENDING_LIST_DEFAULT), 1), PENDING_LIST_MAX)
-  const rows = await repo.listPendingBindings(limit)
-  return rows.map(r => ({
+function toPendingClaimListItem(r: PendingBindingListRow): PendingClaimListItem {
+  return {
     id: r.id,
     shortId: r.id.slice(0, 8),
     source: r.claim_source,
@@ -162,15 +164,46 @@ export async function listPendingBindings(
       r.claim_source === 'liff'
         ? `${r.claimed_name ?? '?'} / ${r.claimed_phone === null ? '?' : maskPhone(r.claimed_phone)}`
         : r.submitted_code === null ? '?' : maskCode(r.submitted_code),
-  }))
+  }
 }
 
+export async function listPendingBindings(
+  params: { limit?: number } = {},
+  repo: ParkingRepository = createParkingRepository(),
+): Promise<PendingClaimListItem[]> {
+  const limit = Math.min(Math.max(Math.trunc(params.limit ?? PENDING_LIST_DEFAULT), 1), PENDING_LIST_MAX)
+  const rows = await repo.listPendingBindings(limit)
+  return rows.map(toPendingClaimListItem)
+}
+
+// Admin UI variant (Phase 8 Slice 1): fetches limit+1 so the page can say "more
+// remain beyond these N" instead of silently truncating. CLI keeps the plain list.
+export async function listPendingBindingsPage(
+  params: { limit?: number } = {},
+  repo: ParkingRepository = createParkingRepository(),
+): Promise<{ items: PendingClaimListItem[]; hasMore: boolean }> {
+  const limit = Math.min(Math.max(Math.trunc(params.limit ?? PENDING_LIST_DEFAULT), 1), PENDING_LIST_MAX)
+  const rows = await repo.listPendingBindings(limit + 1)
+  return {
+    items: rows.slice(0, limit).map(toPendingClaimListItem),
+    hasMore: rows.length > limit,
+  }
+}
+
+// Bound because rejected_reason is stored VERBATIM as audit (and 0025 enforces the
+// same bound in the DB). char_length counts code points — compare with [...str],
+// not .length (UTF-16 units overcount astral chars).
+const MAX_REJECT_REASON_CODEPOINTS = 200
+
 export async function rejectBinding(
-  params: { pendingId: string; reason: string; now?: Date },
+  params: { pendingId: string; reason: string; adminId?: string | null; now?: Date },
   repo: ParkingRepository = createParkingRepository(),
 ): Promise<{ rejected: number; reason: string }> {
-  const { pendingId, reason, now = new Date() } = params
+  const { pendingId, reason, adminId = null, now = new Date() } = params
   const trimmed = reason.trim()
-  if (!trimmed) throw new Error('--reason must not be empty')
-  return repo.rejectPendingBinding({ pendingId, reason: trimmed, nowIso: now.toISOString() })
+  if (!trimmed) throw new Error('reason must not be empty')
+  if ([...trimmed].length > MAX_REJECT_REASON_CODEPOINTS) {
+    throw new Error(`reason must be at most ${MAX_REJECT_REASON_CODEPOINTS} characters`)
+  }
+  return repo.rejectPendingBinding({ pendingId, reason: trimmed, nowIso: now.toISOString(), adminId })
 }

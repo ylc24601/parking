@@ -28,7 +28,8 @@
     "binding:approve": "tsx scripts/run-binding-approve.ts",
     "binding:reject": "tsx scripts/run-binding-reject.ts",
     "members:import": "tsx scripts/run-members-import.ts",
-    "staff:set-pin": "tsx scripts/set-staff-pin.ts"
+    "staff:set-pin": "tsx scripts/set-staff-pin.ts",
+    "admin:create": "tsx scripts/run-admin-create.ts"
   },
   "dependencies": {
     "@line/liff": "^2.29.1",
