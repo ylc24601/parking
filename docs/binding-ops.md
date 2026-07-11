@@ -8,6 +8,14 @@
 > `binding:issue` **一次性**印出 code（操作者需轉交會友）。`binding:approve` 一律先 dry-run，
 > 加 `--apply` 才寫入。
 
+## 審核入口（Phase 8 起）
+
+- **主要：Admin UI `/admin/bindings`**（handoff §6.27）——per-admin 帳號登入（`admin:create` 開帳號），
+  待審列表（遮罩）→ 預覽 → 核准/退回；核准者記入 `pending_binding.decided_by_admin_id` 供稽核。
+  預覽→核准帶版本防偷換（申請被重送會回「請重新預覽」）。
+- **Fallback：下方 CLI**（`binding:pending/approve/reject`）照舊可用；CLI 決行的 `decided_by_admin_id`
+  為 null（「CLI／未具名」）。發碼 `binding:issue` 目前仍 CLI-only（發碼 UI 排在會友管理 slice）。
+
 ---
 
 ## 路徑 A（主要）：LIFF 自助申請

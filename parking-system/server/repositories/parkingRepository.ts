@@ -48,6 +48,27 @@ export interface MemberSessionRow {
   expires_at: Date
 }
 
+// Phase 8 Slice 1 — Admin UI operator account. password_hash stays service-side
+// (verifyPin); it must never be copied into any DTO or response.
+export interface AdminAccountRow {
+  id: string
+  username: string
+  password_hash: string
+  failed_attempts: number
+  locked_at: Date | null
+  disabled_at: Date | null
+}
+
+// Phase 8 Slice 1 — admin session joined with its account so the auth layer can kill
+// live sessions of a disabled account on every request.
+export interface AdminSessionRow {
+  id: string
+  admin_id: string
+  expires_at: Date
+  username: string
+  account_disabled_at: Date | null
+}
+
 // Phase 7 Slice 1 — the member's own reservation for one week, plate joined.
 // Member-safe projection: own data only, no penalty/eligibility fields. `id`,
 // `effective_priority` and `attended_at` are for server-side actions/affordance
@@ -436,11 +457,14 @@ export interface ParkingRepository {
   // Phase 7 Slice 2: expectedSupersededCount is the revision the admin previewed (bumped on every
   // capture upsert — a caller-supplied timestamp could collide) — REQUIRED for an apply
   // (mismatch → 'pending_changed'); pass null/omit for a dry-run.
+  // Phase 8 Slice 1: adminId (Admin-UI decider, from the session — never from a request
+  // body) lands in pending_binding.decided_by_admin_id; CLI callers omit it → null.
   approvePendingBinding(args: {
     pendingId: string
     nowIso: string
     dryRun: boolean
     expectedSupersededCount?: number | null
+    adminId?: string | null
   }): Promise<{ approved: number; would_approve: boolean; reason: string }>
   // Phase 7 Slice 2 — verified-identity LIFF claim capture (upsert of the account's active
   // pending row). Counts-only; the claim payload never comes back.
@@ -457,6 +481,7 @@ export interface ParkingRepository {
     pendingId: string
     reason: string
     nowIso: string
+    adminId?: string | null
   }): Promise<{ rejected: number; reason: string }>
   // Phase 5B Slice 2 — issue a binding code. `inserted:false` iff the code already exists (unique
   // conflict) so the caller can regenerate; other DB errors throw.
@@ -533,6 +558,29 @@ export interface ParkingRepository {
   deleteMemberSessionByTokenHash(tokenHash: string): Promise<void>
   // Lazy cleanup at login: drop the member's already-expired session rows.
   deleteExpiredMemberSessions(userId: string, nowIso: string): Promise<void>
+  // Phase 8 Slice 1 — Admin UI accounts + sessions (admin_accounts / admin_sessions).
+  // password_hash never leaves the service layer; session lookups join the account so
+  // disabled_at can evict live sessions.
+  getAdminAccountByUsername(username: string): Promise<AdminAccountRow | null>
+  // `inserted:false` iff the username already exists (unique conflict); other errors throw.
+  insertAdminAccount(args: {
+    username: string
+    passwordHash: string
+    displayName?: string | null
+  }): Promise<{ inserted: boolean }>
+  resetAdminLoginFailures(id: string): Promise<void>
+  // Atomic lock-cycle counter (apply_admin_login_failure, 0025): active lock → no-op,
+  // expired lock → new round at 1, else increment; threshold sets locked_at = now.
+  applyAdminLoginFailure(args: {
+    id: string
+    nowIso: string
+    threshold: number
+    lockMinutes: number
+  }): Promise<{ failed_attempts: number; locked_at: Date | null }>
+  createAdminSession(args: { adminId: string; tokenHash: string; expiresAt: string }): Promise<void>
+  getAdminSessionByTokenHash(tokenHash: string): Promise<AdminSessionRow | null>
+  deleteAdminSessionByTokenHash(tokenHash: string): Promise<void>
+  deleteExpiredAdminSessions(adminId: string, nowIso: string): Promise<void>
   // The member-facing "this week": smallest sunday_date >= todayTaipei (any status),
   // NOT getActiveEvent's "latest non-finalized" (that is Staff-PIN semantics and
   // points wrong once future weeks are pre-created).
@@ -973,12 +1021,13 @@ export function createParkingRepository(
       return { captured: row.captured, superseded: row.superseded }
     },
 
-    async approvePendingBinding({ pendingId, nowIso, dryRun, expectedSupersededCount }) {
+    async approvePendingBinding({ pendingId, nowIso, dryRun, expectedSupersededCount, adminId }) {
       const { data, error } = await client.rpc('approve_pending_binding', {
         p_pending_id: pendingId,
         p_expected_superseded_count: expectedSupersededCount ?? null,
         p_now: nowIso,
         p_dry_run: dryRun,
+        p_admin_id: adminId ?? null,
       })
       if (error) throw new Error(`approve_pending_binding failed: ${error.message}`)
       return data as { approved: number; would_approve: boolean; reason: string }
@@ -1009,11 +1058,12 @@ export function createParkingRepository(
       return (data ?? []) as PendingBindingListRow[]
     },
 
-    async rejectPendingBinding({ pendingId, reason, nowIso }) {
+    async rejectPendingBinding({ pendingId, reason, nowIso, adminId }) {
       const { data, error } = await client.rpc('reject_pending_binding', {
         p_pending_id: pendingId,
         p_reason: reason,
         p_now: nowIso,
+        p_admin_id: adminId ?? null,
       })
       if (error) throw new Error(`reject_pending_binding failed: ${error.message}`)
       return data as { rejected: number; reason: string }
@@ -1291,6 +1341,102 @@ export function createParkingRepository(
         .eq('user_id', userId)
         .lt('expires_at', nowIso)
       if (error) throw new Error(`deleteExpiredMemberSessions failed: ${error.message}`)
+    },
+
+    async getAdminAccountByUsername(username) {
+      const { data, error } = await client
+        .from('admin_accounts')
+        .select('id, username, password_hash, failed_attempts, locked_at, disabled_at')
+        .eq('username', username)
+        .maybeSingle()
+      if (error) throw new Error(`getAdminAccountByUsername failed: ${error.message}`)
+      if (!data) return null
+      return {
+        id: data.id as string,
+        username: data.username as string,
+        password_hash: data.password_hash as string,
+        failed_attempts: data.failed_attempts as number,
+        locked_at: parseDate(data.locked_at as string | null),
+        disabled_at: parseDate(data.disabled_at as string | null),
+      }
+    },
+
+    async insertAdminAccount({ username, passwordHash, displayName = null }) {
+      const { error } = await client.from('admin_accounts').insert({
+        username,
+        password_hash: passwordHash,
+        display_name: displayName,
+      })
+      if (error) {
+        if (error.code === '23505') return { inserted: false } // duplicate username → caller reports
+        throw new Error(`insertAdminAccount failed: ${error.message}`)
+      }
+      return { inserted: true }
+    },
+
+    async resetAdminLoginFailures(id) {
+      const { error } = await client
+        .from('admin_accounts')
+        .update({ failed_attempts: 0, locked_at: null })
+        .eq('id', id)
+      if (error) throw new Error(`resetAdminLoginFailures failed: ${error.message}`)
+    },
+
+    async applyAdminLoginFailure({ id, nowIso, threshold, lockMinutes }) {
+      const { data, error } = await client.rpc('apply_admin_login_failure', {
+        p_id: id,
+        p_now: nowIso,
+        p_threshold: threshold,
+        p_lock_minutes: lockMinutes,
+      })
+      if (error) throw new Error(`apply_admin_login_failure failed: ${error.message}`)
+      const row = data as { failed_attempts: number; locked_at: string | null } | null
+      return {
+        failed_attempts: row?.failed_attempts ?? 0,
+        locked_at: parseDate(row?.locked_at ?? null),
+      }
+    },
+
+    async createAdminSession(args) {
+      const { error } = await client.from('admin_sessions').insert({
+        admin_id: args.adminId,
+        token_hash: args.tokenHash,
+        expires_at: args.expiresAt,
+      })
+      if (error) throw new Error(`createAdminSession failed: ${error.message}`)
+    },
+
+    async getAdminSessionByTokenHash(tokenHash) {
+      // Join the account so a disabled admin's live sessions die on their next request.
+      const { data, error } = await client
+        .from('admin_sessions')
+        .select('id, admin_id, expires_at, admin_accounts!inner(username, disabled_at)')
+        .eq('token_hash', tokenHash)
+        .maybeSingle()
+      if (error) throw new Error(`getAdminSessionByTokenHash failed: ${error.message}`)
+      if (!data) return null
+      const account = data.admin_accounts as unknown as { username: string; disabled_at: string | null }
+      return {
+        id: data.id as string,
+        admin_id: data.admin_id as string,
+        expires_at: new Date(data.expires_at as string),
+        username: account.username,
+        account_disabled_at: parseDate(account.disabled_at),
+      }
+    },
+
+    async deleteAdminSessionByTokenHash(tokenHash) {
+      const { error } = await client.from('admin_sessions').delete().eq('token_hash', tokenHash)
+      if (error) throw new Error(`deleteAdminSessionByTokenHash failed: ${error.message}`)
+    },
+
+    async deleteExpiredAdminSessions(adminId, nowIso) {
+      const { error } = await client
+        .from('admin_sessions')
+        .delete()
+        .eq('admin_id', adminId)
+        .lt('expires_at', nowIso)
+      if (error) throw new Error(`deleteExpiredAdminSessions failed: ${error.message}`)
     },
 
     async getMemberEvent(todayTaipei) {

@@ -105,6 +105,8 @@
 
 ### ⚪ 之後（沿用既有 Deferred）
 - 成員 / Admin UI（P2-first）。詳見 handoff §9。
+  **進度**：會員 LIFF UI ✅（Phase 7，§6.23–6.26）；**Admin UI 進行中**——Slice 1（登入＋骨架＋綁定審核）✅（§6.27），
+  後續：會友管理/資格審查/發碼 UI、CSV 匯入上傳、營運可視化、**PII retention job（Phase 8 必收）**、牧養處理、Staff PIN 管理 UI。
 
 ---
 

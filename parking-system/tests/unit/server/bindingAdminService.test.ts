@@ -4,6 +4,7 @@ import {
   applyApproveBinding,
   issueBindingCode,
   listPendingBindings,
+  listPendingBindingsPage,
   previewApproveBinding,
   rejectBinding,
 } from '@/server/services/bindingAdminService'
@@ -130,7 +131,7 @@ describe('previewApproveBinding', () => {
 })
 
 describe('applyApproveBinding', () => {
-  it('calls the RPC with dryRun=false and the previewed revision (0 is valid)', async () => {
+  it('calls the RPC with dryRun=false and the previewed revision (0 is valid); no adminId → null', async () => {
     const approve = vi.fn(async () => ({ approved: 1, would_approve: true, reason: 'approved' }))
     const { r } = run({ approvePendingBinding: approve })
     expect(await applyApproveBinding({ pendingId: 'p1', expectedSupersededCount: 0, now: NOW }, r))
@@ -140,7 +141,15 @@ describe('applyApproveBinding', () => {
       nowIso: NOW.toISOString(),
       dryRun: false,
       expectedSupersededCount: 0,
+      adminId: null,   // CLI decisions are unattributed
     })
+  })
+
+  it('threads the Admin-UI decider through to the repo', async () => {
+    const approve = vi.fn(async () => ({ approved: 1, would_approve: true, reason: 'approved' }))
+    const { r } = run({ approvePendingBinding: approve })
+    await applyApproveBinding({ pendingId: 'p1', expectedSupersededCount: 2, adminId: 'admin-1', now: NOW }, r)
+    expect(approve).toHaveBeenCalledWith(expect.objectContaining({ adminId: 'admin-1' }))
   })
 
   it('refuses an apply without a valid revision (optimistic concurrency is not optional)', async () => {
@@ -154,15 +163,29 @@ describe('applyApproveBinding', () => {
 })
 
 describe('rejectBinding', () => {
-  it('trims the reason and forwards it', async () => {
+  it('trims the reason and forwards it (no adminId → null)', async () => {
     const reject = vi.fn(async () => ({ rejected: 1, reason: 'rejected' }))
     const { r } = run({ rejectPendingBinding: reject })
     expect(await rejectBinding({ pendingId: 'p1', reason: '  duplicate ', now: NOW }, r)).toEqual({ rejected: 1, reason: 'rejected' })
-    expect(reject).toHaveBeenCalledWith({ pendingId: 'p1', reason: 'duplicate', nowIso: NOW.toISOString() })
+    expect(reject).toHaveBeenCalledWith({ pendingId: 'p1', reason: 'duplicate', nowIso: NOW.toISOString(), adminId: null })
+  })
+  it('threads the Admin-UI decider through to the repo', async () => {
+    const reject = vi.fn(async () => ({ rejected: 1, reason: 'rejected' }))
+    const { r } = run({ rejectPendingBinding: reject })
+    await rejectBinding({ pendingId: 'p1', reason: 'duplicate', adminId: 'admin-1', now: NOW }, r)
+    expect(reject).toHaveBeenCalledWith(expect.objectContaining({ adminId: 'admin-1' }))
   })
   it('rejects an empty reason', async () => {
     const { r } = run()
     await expect(rejectBinding({ pendingId: 'p1', reason: '   ', now: NOW }, r)).rejects.toThrow(/reason must not be empty/)
+  })
+  it('caps the reason at 200 CODE POINTS (matches DB char_length, not UTF-16 units)', async () => {
+    const { r } = run()
+    // 200 CJK chars pass …
+    await expect(rejectBinding({ pendingId: 'p1', reason: '愛'.repeat(200), now: NOW }, r)).resolves.toBeDefined()
+    // … 201 fail; and 101 astral chars (2 UTF-16 units each) still count as 101, not 202.
+    await expect(rejectBinding({ pendingId: 'p1', reason: '愛'.repeat(201), now: NOW }, r)).rejects.toThrow(/at most 200/)
+    await expect(rejectBinding({ pendingId: 'p1', reason: '😀'.repeat(101), now: NOW }, r)).resolves.toBeDefined()
   })
 })
 
@@ -201,5 +224,30 @@ describe('listPendingBindings', () => {
     expect(list).toHaveBeenLastCalledWith(1)
     await listPendingBindings({ limit: 9999 }, r)
     expect(list).toHaveBeenLastCalledWith(100)
+  })
+})
+
+describe('listPendingBindingsPage', () => {
+  const row = (n: number) => ({
+    id: `a1b2c3d4-0000-0000-0000-${String(n).padStart(12, '0')}`, claim_source: 'keyword',
+    submitted_code: 'ABCD-2345', claimed_phone: null, claimed_name: null,
+    created_at: '2026-07-10T00:00:00.000Z', last_submitted_at: '2026-07-10T00:00:00.000Z', superseded_count: 0,
+  })
+
+  it('fetches limit+1 and reports hasMore without leaking the extra row', async () => {
+    const list = vi.fn(async () => Array.from({ length: 3 }, (_, i) => row(i)))
+    const { r } = run({ listPendingBindings: list })
+    const page = await listPendingBindingsPage({ limit: 2 }, r)
+    expect(list).toHaveBeenCalledWith(3)   // limit + 1 probe
+    expect(page.items).toHaveLength(2)
+    expect(page.hasMore).toBe(true)
+  })
+
+  it('hasMore=false when the probe comes back short', async () => {
+    const list = vi.fn(async () => [row(1)])
+    const { r } = run({ listPendingBindings: list })
+    const page = await listPendingBindingsPage({ limit: 2 }, r)
+    expect(page.items).toHaveLength(1)
+    expect(page.hasMore).toBe(false)
   })
 })

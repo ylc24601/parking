@@ -305,11 +305,12 @@ begin
   if not found then raise exception 'FAIL: reject_pending_binding function missing'; end if;
 
   -- 0022 re-signed approve_pending_binding to 4 args (expected-revision optimistic concurrency);
-  -- assertion #27 checks the new signature + that the old 3-arg one is gone.
-  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,bigint,timestamptz,boolean)', 'execute') then
+  -- 0025 re-signed both RPCs again with a defaulted p_admin_id (decider audit) — #27/#30
+  -- also assert the stale overloads are gone.
+  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,bigint,timestamptz,boolean,uuid)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on approve_pending_binding';
   end if;
-  if not has_function_privilege('service_role', 'reject_pending_binding(uuid,text,timestamptz)', 'execute') then
+  if not has_function_privilege('service_role', 'reject_pending_binding(uuid,text,timestamptz,uuid)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on reject_pending_binding';
   end if;
   if not has_table_privilege('service_role', 'binding_codes', 'insert') then
@@ -402,9 +403,10 @@ begin
   if not has_function_privilege('service_role', 'capture_pending_binding(text,text,text,timestamptz)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on capture_pending_binding';
   end if;
-  -- 4-arg approve (expected superseded_count revision); the old 3-arg signature must be gone.
-  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,bigint,timestamptz,boolean)', 'execute') then
-    raise exception 'FAIL: service_role lacks execute on approve_pending_binding(4-arg)';
+  -- Expected-superseded_count revision guard (0022; since 0025 the signature carries a
+  -- trailing defaulted p_admin_id). The old 3-arg signature must be gone.
+  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,bigint,timestamptz,boolean,uuid)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on approve_pending_binding(revision-guarded)';
   end if;
   perform 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.proname = 'approve_pending_binding' and p.pronargs = 3;
@@ -442,6 +444,73 @@ begin
     where n.nspname = 'public' and p.proname = 'apply_offer_resolution' and p.pronargs = 7;
   if found then raise exception 'FAIL: stale 7-arg apply_offer_resolution still present'; end if;
   raise notice 'PASS: apply_offer_resolution expiry-guard signature present (old 7-arg gone)';
+end $$;
+
+-- ── 30. Admin accounts + sessions + binding decider audit (Phase 8 Slice 1) ─
+do $$
+begin
+  -- admin_accounts: structure + constraints
+  perform 1 from pg_class where relname = 'admin_accounts' and relkind = 'r';
+  if not found then raise exception 'FAIL: admin_accounts table missing'; end if;
+  perform 1 from pg_indexes where indexname = 'admin_accounts_username_key';
+  if not found then raise exception 'FAIL: admin_accounts_username_key unique index missing'; end if;
+  perform 1 from pg_constraint where conname = 'admin_accounts_username_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: admin_accounts_username_ck (lowercase+format) missing'; end if;
+  perform 1 from pg_constraint where conname = 'admin_accounts_password_hash_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: admin_accounts_password_hash_ck (scrypt prefix) missing'; end if;
+  perform 1 from pg_constraint where conname = 'admin_accounts_display_name_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: admin_accounts_display_name_ck missing'; end if;
+  perform 1 from pg_class where relname = 'admin_accounts' and relrowsecurity;
+  if not found then raise exception 'FAIL: admin_accounts RLS not enabled'; end if;
+  if not has_table_privilege('service_role', 'admin_accounts', 'insert') then
+    raise exception 'FAIL: service_role lacks insert on admin_accounts';
+  end if;
+  if has_table_privilege('anon', 'admin_accounts', 'select') then
+    raise exception 'FAIL: anon must not read admin_accounts';
+  end if;
+
+  -- admin_sessions: hashed-token mirror of member_sessions
+  perform 1 from pg_class where relname = 'admin_sessions' and relkind = 'r';
+  if not found then raise exception 'FAIL: admin_sessions table missing'; end if;
+  perform 1 from pg_indexes where indexname = 'admin_sessions_token_hash_key';
+  if not found then raise exception 'FAIL: admin_sessions_token_hash_key unique index missing'; end if;
+  perform 1 from pg_constraint
+    where conname = 'admin_sessions_expiry_after_creation' and contype = 'c';
+  if not found then raise exception 'FAIL: admin_sessions_expiry_after_creation check missing'; end if;
+  perform 1 from pg_class where relname = 'admin_sessions' and relrowsecurity;
+  if not found then raise exception 'FAIL: admin_sessions RLS not enabled'; end if;
+  if not has_table_privilege('service_role', 'admin_sessions', 'insert') then
+    raise exception 'FAIL: service_role lacks insert on admin_sessions';
+  end if;
+  if has_table_privilege('anon', 'admin_sessions', 'select') then
+    raise exception 'FAIL: anon must not read admin_sessions';
+  end if;
+
+  -- lock-cycle failure counter
+  if not has_function_privilege('service_role', 'apply_admin_login_failure(uuid,timestamptz,int,int)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on apply_admin_login_failure';
+  end if;
+
+  -- binding decider audit: column + reason length bound + re-signed RPCs
+  perform 1 from information_schema.columns
+    where table_name = 'pending_binding' and column_name = 'decided_by_admin_id';
+  if not found then raise exception 'FAIL: pending_binding.decided_by_admin_id missing'; end if;
+  perform 1 from pg_constraint where conname = 'pending_binding_rejected_reason_len_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: pending_binding_rejected_reason_len_ck missing'; end if;
+  if not has_function_privilege('service_role', 'approve_pending_binding(uuid,bigint,timestamptz,boolean,uuid)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on approve_pending_binding(5-arg)';
+  end if;
+  perform 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'approve_pending_binding' and p.pronargs = 4;
+  if found then raise exception 'FAIL: stale 4-arg approve_pending_binding still present'; end if;
+  if not has_function_privilege('service_role', 'reject_pending_binding(uuid,text,timestamptz,uuid)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on reject_pending_binding(4-arg)';
+  end if;
+  perform 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'reject_pending_binding' and p.pronargs = 3;
+  if found then raise exception 'FAIL: stale 3-arg reject_pending_binding still present'; end if;
+
+  raise notice 'PASS: admin_accounts + admin_sessions + login-failure RPC + binding decider audit present';
 end $$;
 
 rollback;

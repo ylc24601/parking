@@ -703,6 +703,28 @@ Phase 7 最後一刀：主日前後的即時互動。狀態卡依情境長出按
 
 ---
 
+## 6.27 Phase 8 Slice 1 — Admin UI：登入 + 骨架 + 綁定審核（本次完成，Phase 8 起點）
+
+Admin UI 第一刀（規劃走 plan mode ＋ 外部審查一輪，rev 2 全數採納）。範圍＝admin 認證、`/admin` 骨架（導覽卡：綁定審核 live，其餘「規劃中」灰卡）、綁定審核頁（包既有 `bindingAdminService` 的列表／遮罩預覽／核准／退回）。
+
+- **認證模型（migration `0025`）**：獨立 **`admin_accounts`**（per-admin username + scrypt 密碼，重用 `pinHash.ts`；constraints：username 小寫+格式、`password_hash like 'scrypt$%'` 防明文、display_name 1–80）＋ **`admin_sessions`**（鏡射 0021——cookie 帶原始 opaque token、DB 只存 sha256、12h TTL、multi-device、登入 lazy 清過期列）。**刻意不用 `users.role='admin'`**（會友帳號與後台操作帳號生命週期/稽核責任不同）。帳號供給走 `admin:create` CLI（隨機密碼**只印一次**或 `--stdin`；**無 `--password` flag**，避免 shell history）。
+- **鎖定週期語意（新 RPC `apply_admin_login_failure(p_id, p_now, p_threshold, p_lock_minutes)`）**：與 staff 版不同，鎖定週期在**原子 UPDATE 內**判定——鎖定中＝no-op（不累加、不延長，防止重複請求永久續鎖）；**鎖定逾期＝新一輪從 1 計**；達門檻（5 次）設 `locked_at`（鎖 15 分）。
+- **反枚舉姿態**：查無帳號／停用／鎖定中三路徑都對 DUMMY scrypt hash 跑一次 verify（timing 一致），且對外**一律 401 `invalid`（不回 423）**——423 會洩漏帳號存在性並讓 lockout 變成可探測的 DoS；typed `locked` 留在 service 供測試/稽核。UI 文案「帳號或密碼錯誤，或帳號暫時無法登入」。
+- **Session 撤銷**：`getAdminSession()` 遇過期列或帳號已停用（每請求檢查 `disabled_at`）→ **實際刪除該 token_hash 列**再回 null（停用即殺全裝置 session；各裝置殘列在其下次請求被物理刪除）；malformed cookie（非 43 字 base64url）不查 DB。`createAdminSession` 失敗必 throw → route 500，cookie 只在 DB 列建立成功後設定。
+- **Request hardening（`adminRequestGuard.ts`，Admin POST 共通）**：非 JSON → 415、body > 4KB（UTF-8 bytes）→ 413、壞 JSON → 400、**Origin 有帶且不符 → 403**（未帶放行：non-browser client 無 ambient cookie 非 CSRF 面）、不 log body、500 一律 generic `{error:'internal'}`。`pendingId` 驗 UUID；`claimVersion` 驗 `Number.isSafeInteger && >= 0`（DB bigint，JSON number 超 safe range 會失真）；reject 原因 **200 code points 三層上限**（route/service `[...str].length` ＋ DB `char_length` check）。
+- **稽核欄 `pending_binding.decided_by_admin_id`**：approve/reject RPC 改簽名加 **defaulted `p_admin_id`**（4→5 arg / 3→4 arg，先 drop 舊簽名防 PostgREST overload ambiguity）——**adminId 只取自 session，body 偷帶一律忽略**；CLI 決行記 null（`binding:approve/reject` 零改動相容）。只有非 dry-run 的最終 commit 寫入（dry-run／`pending_changed` 等被擋路徑不寫）。
+- **順手修掉 reject race（0025）**：0019 版 `reject_pending_binding` 的 status 讀取不加鎖、UPDATE 無 status guard——併發 approve+reject 可能把剛 approved 的列覆寫回 rejected（`users.line_id` 已寫但稽核顯示 rejected）。新版 `select … for update` 與 approve 同鎖序列化；integration 以併發測試釘住「恰一方決行、輸方 `pending_not_pending`」。
+- **審核 UI**（桌機友善 `max-w-5xl`，深色 slate 同風格）：列表用 `listPendingBindingsPage`（**查 limit+1 判 `hasMore`**，滿 100 筆顯示「僅顯示最早 100 筆」提示而非默默截斷）；React key 與 API 一律**完整 UUID**（短 ID 僅顯示、點擊複製全 ID）；審核 modal 開啟即 preview（遮罩欄位＋`claimedName`/`matchedDisplayName` 全文供人工比對＋預測 reason 對映 binding-ops.md 文案），「確認核准」帶 `claimVersion` handshake（移植自 `run-binding-approve.ts`），409 `pending_changed` → 重新預覽；退回 modal 快選 chips＋「勿填個資」警語。**preview client DTO 白名單不含 `matchedUserId`**（人工審核用不到 UUID，減少內部識別碼暴露面）。
+- **新檔**：`server/http/adminAuth.ts`／`adminRequestGuard.ts`、`server/services/adminAuthService.ts`、`app/api/admin/{login,logout,bindings/{preview,approve,reject}}/route.ts`、`app/admin/{page,AdminLogin,AdminHome,LogoutButton}.tsx`、`app/admin/bindings/{page,BindingReview}.tsx`、`scripts/run-admin-create.ts`。常數 `ADMIN_LOGIN_MAX_ATTEMPTS=5`/`ADMIN_LOGIN_LOCK_MINUTES=15`/`ADMIN_SESSION_TTL_HOURS=12`。
+
+### 驗證（本回合實跑）
+- 靜態：`tsc`／`eslint`／`next build` ✅（新 `/admin`、`/admin/bindings` ＋ 5 條 `/api/admin/*` ƒ dynamic）。
+- 測試：`npm test` **632 / 121 skipped**（新增 92：adminAuthService 輸入邊界不觸 DB／三路徑 dummy verify／鎖定週期含逾期重計；adminAuth cookie 屬性全驗／過期與停用實際刪列／malformed 不查 DB；login route 統一 401／短路；logout DB 失敗仍清 cookie；bindings routes 415/413/400/403 矩陣、UUID/safe-integer 邊界、body 偷帶 adminId 被忽略、preview keys 白名單、reason→status 全對映表、未知 reason → 500 generic；bindingAdminService adminId 透傳、200 code-point 上限、page limit+1/hasMore）；`RUN_DB_TESTS=1` **753**（新增 `admin-auth.db.test.ts` 8 例：constraints 實測、duplicate username、session cascade、FK 拒未知 admin、login 全生命週期（**5 併發失敗恰一次上鎖**、鎖定中 no-op、逾期重計 1、成功歸零）、approve/reject 帶與不帶 adminId、dry-run/`pending_changed` 不寫稽核欄、**併發 approve+reject 恰一方勝**）；`db:verify` **30/30**（#30：兩表結構+constraints+RLS+grants、failure RPC、5-arg/4-arg 簽名＋舊簽名已除；#24/#27 簽名斷言同步更新）。
+- **實機 E2E**（dev server + curl）：`admin:create` 印一次性密碼 → 錯密碼 401 → 登入 200 設 cookie → 415/413/403/400/401 hardening 全中 → psql 造 LIFF claim → `/admin/bindings` 頁面渲染遮罩列 → preview 正確回 `member_already_bound`（seed 已綁）→ 清 line_id 後 preview `approved` → **預覽後重送 claim → 舊 claimVersion 核准 → 409 `pending_changed`** → 重新 preview 取新版本 → 核准 200 → psql 驗 `users.line_id`＋`status='approved'`＋`decided_by_admin_id` → 退回一筆驗 `rejected_reason`＋decider → CLI `binding:approve` dry-run 照常（5-arg default）→ 錯 5 次上鎖（全程 401 統一文案）→ psql 調鎖定逾期 → 錯一次重計 1 → 對密碼登入成功歸零 → 登出（per-device：另一裝置 session 留存）→ `/admin` 回登入頁。E2E 資料已清、seed 還原。
+- **Phase 8 後續 slices**：② 會友管理＋資格審查＋發碼 UI＋admin 帳號管理（停用/改密/`deleteAdminSessionsByAdminId` 全裝置撤銷）③ CSV 匯入上傳（`memberImportService` 抽 buffer 變體）④ 營運可視化 ⑤ **PII retention job（必收項**，決行 90 天清 `claimed_phone`/`claimed_name`/`submitted_code`，見 binding-ops.md**）** ⑥ 牧養處理＋Staff PIN 管理 UI。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。

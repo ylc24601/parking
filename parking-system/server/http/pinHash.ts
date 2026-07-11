@@ -1,8 +1,9 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 
-// scrypt PIN hashing for staff_sessions.pin_hash. Stored format:
+// scrypt secret hashing for staff_sessions.pin_hash and (Phase 8) admin_accounts
+// .password_hash. Stored format:
 //   scrypt$<saltHex>$<hashHex>
-// The plaintext PIN is never stored or logged — only this derived hash. Compare is
+// The plaintext secret is never stored or logged — only this derived hash. Compare is
 // constant-time (timingSafeEqual), matching the convention in jobAuth.ts.
 
 const KEYLEN = 32
