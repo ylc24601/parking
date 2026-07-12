@@ -1,5 +1,8 @@
-// Phase 6 — pure helpers for the member-import CLI (P2 application CSV → schema). No I/O;
-// unit-tested. See docs/delivery-model-and-roadmap.md for the CSV→schema mapping.
+// Phase 6 — pure helpers for the member-import CLI (P2 application CSV → schema). No I/O
+// (CSV parsing here operates on an in-memory string); unit-tested. See
+// docs/delivery-model-and-roadmap.md for the CSV→schema mapping.
+
+import { parse } from 'csv-parse/sync'
 
 export type ReasonType = 1 | 2 | 3 | 4
 export type P2Reason = 'mobility_long' | 'mobility_short' | 'pregnancy' | 'elderly_companion' | 'child_companion'
@@ -145,4 +148,77 @@ export function validateRow(row: RawRow): { reasonType: ReasonType | null; error
     errors.push('reason_type 3 requires child_1_name or a pregnancy remark')
   }
   return { reasonType, errors }
+}
+
+// ── CSV structural parsing + limits (Phase 8 Slice 5) ────────────────────────
+// The upload surface must bound work before touching the DB. These caps apply to
+// BOTH the CLI (via importMembersFromCsv) and the Admin UI upload — fail fast on a
+// malformed / oversized file with a typed code instead of a giant per-row report.
+
+// The header names the pipeline actually reads; a file missing any of these is
+// rejected outright rather than producing an all-rows-invalid report.
+export const REQUIRED_HEADERS = ['applicant_name', 'mobile_phone', 'license_plate', 'reason_type'] as const
+export const MAX_CSV_BYTES = 2 * 1024 * 1024 // 2 MiB — the upload byte cap (church-scale files are tens of KB)
+export const MAX_ROWS = 5000
+export const MAX_CELL_CODEPOINTS = 500
+export const MAX_REPORT_ITEMS = 500
+
+export type CsvImportErrorCode =
+  | 'invalid_csv'
+  | 'missing_headers'
+  | 'duplicate_headers'
+  | 'too_many_rows'
+
+// Typed structural failure. The message is intentionally generic (no parser output /
+// row content) so a route can surface the code without leaking PII fragments.
+export class CsvImportError extends Error {
+  constructor(readonly code: CsvImportErrorCode) {
+    super(code)
+    this.name = 'CsvImportError'
+  }
+}
+
+// Parse the CSV text into header-keyed rows, enforcing structure limits. Throws
+// CsvImportError on any structural problem; row-level content validation stays in
+// validateRow (non-fatal, reported per row).
+export function parseCsv(csvText: string): RawRow[] {
+  let headerIssue: CsvImportErrorCode | null = null
+  let records: RawRow[]
+  try {
+    records = parse(csvText, {
+      bom: true,
+      columns: (firstRow: string[]) => {
+        const seen = new Set<string>()
+        for (const h of firstRow) {
+          if (seen.has(h)) headerIssue ??= 'duplicate_headers'
+          seen.add(h)
+        }
+        for (const req of REQUIRED_HEADERS) {
+          if (!seen.has(req)) headerIssue ??= 'missing_headers'
+        }
+        return firstRow
+      },
+      skip_empty_lines: true,
+      trim: true,
+      relax_column_count: true,
+      to: MAX_ROWS + 1, // read one past the cap so we can detect an over-long file
+    }) as RawRow[]
+  } catch {
+    // Malformed CSV (bad quoting, etc.). Never surface the parser's message.
+    throw new CsvImportError('invalid_csv')
+  }
+  if (headerIssue) throw new CsvImportError(headerIssue)
+  if (records.length > MAX_ROWS) throw new CsvImportError('too_many_rows')
+  return records
+}
+
+// The longest cell (by code points) across a row's values — used to reject a row
+// whose content is implausibly long before it reaches the DB.
+export function longestCell(row: RawRow): number {
+  let max = 0
+  for (const v of Object.values(row)) {
+    const len = [...(v ?? '')].length
+    if (len > max) max = len
+  }
+  return max
 }

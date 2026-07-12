@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { CsvImportExecutionError } from '@/server/services/memberImportService'
 
 // Phase 6 — member import end-to-end (synthetic CSV → users/vehicles/eligibility/dependents)
 // against local Supabase. Gated: `RUN_DB_TESTS=1` + reachable local DB (prereq: `npm run db:reset`).
@@ -19,6 +21,7 @@ describe.skipIf(!RUN)('member import (Phase 6) — local DB integration', () => 
   let sb: Sb
   let repo: import('@/server/repositories/parkingRepository').ParkingRepository
   let importMembersFromCsv: typeof import('@/server/services/memberImportService').importMembersFromCsv
+  let importMembersFromCsvText: typeof import('@/server/services/memberImportService').importMembersFromCsvText
 
   const userByPhone = async (phone: string) =>
     (await sb.from('users').select('id, display_name').eq('phone_number', phone).maybeSingle()).data as { id: string; display_name: string } | null
@@ -40,7 +43,7 @@ describe.skipIf(!RUN)('member import (Phase 6) — local DB integration', () => 
   beforeAll(async () => {
     sb = (await import('@/lib/supabase/server')).getServiceClient()
     repo = (await import('@/server/repositories/parkingRepository')).createParkingRepository(sb)
-    importMembersFromCsv = (await import('@/server/services/memberImportService')).importMembersFromCsv
+    ;({ importMembersFromCsv, importMembersFromCsvText } = await import('@/server/services/memberImportService'))
     await cleanup()
   })
 
@@ -102,5 +105,47 @@ describe.skipIf(!RUN)('member import (Phase 6) — local DB integration', () => 
     expect(report).toMatchObject({ imported: 0, updated: 6, vehiclesAdded: 0, dependentsAdded: 0 })
     expect(report.phoneNameConflicts).toHaveLength(1)
     expect(report.plateConflicts).toHaveLength(1)
+  })
+
+  it('the text variant produces the same report as the file-path wrapper (same DB state)', async () => {
+    const csvText = readFileSync(FIXTURE, 'utf8')
+    const viaText = await importMembersFromCsvText({ csvText, dryRun: true }, repo)
+    const viaFile = await importMembersFromCsv({ filePath: FIXTURE, dryRun: true }, repo)
+    expect(viaText).toEqual(viaFile)
+  })
+
+  it('a mid-apply failure throws typed partial_apply, leaving the members processed so far written', async () => {
+    await cleanup()
+    const csvText = readFileSync(FIXTURE, 'utf8')
+
+    // Fail the 3rd importMember call; the first two members must already be committed.
+    let calls = 0
+    const throwingRepo = new Proxy(repo, {
+      get(target, prop, receiver) {
+        if (prop === 'importMember') {
+          return async (args: Parameters<typeof target.importMember>[0]) => {
+            calls++
+            if (calls === 3) throw new Error('simulated DB failure')
+            return target.importMember(args)
+          }
+        }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+
+    let thrown: unknown
+    try {
+      await importMembersFromCsvText({ csvText, dryRun: false }, throwingRepo)
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).toBeInstanceOf(CsvImportExecutionError)
+    expect((thrown as CsvImportExecutionError).processedMembers).toBe(2)
+
+    // Exactly the two members written before the failure exist.
+    const { data: written } = await sb.from('users').select('id').in('phone_number', PHONES)
+    expect((written ?? []).length).toBe(2)
+
+    await cleanup()
   })
 })
