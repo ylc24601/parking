@@ -65,13 +65,14 @@ export function evaluateOutboxAlert(
   return { healthy: breaches.length === 0, breaches }
 }
 
-export async function getOutboxAlert(
-  params: { now?: Date } = {},
-  repo: ParkingRepository = createParkingRepository(),
-): Promise<OutboxAlert> {
-  const now = params.now ?? new Date()
-  const health = await getOutboxHealth({ now }, repo)
-  const thresholds = readAlertThresholds()
+// Build the alert verdict from an ALREADY-FETCHED health snapshot — no DB read. Callers
+// that already hold a health snapshot (e.g. the ops page) use this so the banner and the
+// counts come from the SAME snapshot + the SAME `now`, instead of reading health twice.
+export function buildOutboxAlertFromHealth(
+  health: OutboxHealth,
+  thresholds: AlertThresholds,
+  now: Date,
+): OutboxAlert {
   const { healthy, breaches } = evaluateOutboxAlert(health, thresholds, now)
   return {
     healthy,
@@ -81,4 +82,13 @@ export async function getOutboxAlert(
     stale_processing: health.stale_processing,
     oldest_due_at: health.oldest_due_at,
   }
+}
+
+export async function getOutboxAlert(
+  params: { now?: Date } = {},
+  repo: ParkingRepository = createParkingRepository(),
+): Promise<OutboxAlert> {
+  const now = params.now ?? new Date()
+  const health = await getOutboxHealth({ now }, repo)
+  return buildOutboxAlertFromHealth(health, readAlertThresholds(), now)
 }

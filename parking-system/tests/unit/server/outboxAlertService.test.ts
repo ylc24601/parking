@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  buildOutboxAlertFromHealth,
   DEFAULT_ALERT_THRESHOLDS,
   evaluateOutboxAlert,
   getOutboxAlert,
@@ -80,6 +81,28 @@ describe('readAlertThresholds', () => {
   })
 })
 
+describe('buildOutboxAlertFromHealth (no DB read — same snapshot as the counts)', () => {
+  it('derives the verdict from a provided health snapshot + thresholds + now', () => {
+    const old = new Date(NOW.getTime() - 20 * 60_000).toISOString()
+    const h = health({ failed: 2, stale_processing: 1, oldest_due_at: old })
+    const alert = buildOutboxAlertFromHealth(h, T, NOW)
+    expect(alert.healthy).toBe(false)
+    expect(alert.breaches).toEqual(expect.arrayContaining(['failed_over_max', 'stale_processing_over_max', 'due_backlog_stale']))
+    // Mirrors the health snapshot exactly (single source of truth for the page).
+    expect(alert.failed).toBe(2)
+    expect(alert.stale_processing).toBe(1)
+    expect(alert.oldest_due_at).toBe(old)
+    expect(alert.thresholds).toEqual(T)
+  })
+
+  it('the same `now` drives both the stale-age and backlog-age decisions', () => {
+    const due14 = new Date(NOW.getTime() - 14 * 60_000).toISOString() // under 15 → healthy
+    expect(buildOutboxAlertFromHealth(health({ oldest_due_at: due14 }), T, NOW).healthy).toBe(true)
+    const due16 = new Date(NOW.getTime() - 16 * 60_000).toISOString()
+    expect(buildOutboxAlertFromHealth(health({ oldest_due_at: due16 }), T, NOW).healthy).toBe(false)
+  })
+})
+
 describe('getOutboxAlert', () => {
   it('returns an aggregate-only verdict — no per-row / member keys', async () => {
     const repo = makeMockRepo({ getOutboxHealth: vi.fn(async () => health({ failed: 2 })) })
@@ -91,5 +114,12 @@ describe('getOutboxAlert', () => {
     for (const k of ['payload_json', 'user_id', 'reservation_id', 'dedupe_key', 'line_id', 'license_plate', 'phone']) {
       expect(json).not.toContain(k)
     }
+  })
+
+  it('reads health exactly ONCE (no double snapshot)', async () => {
+    const getHealth = vi.fn(async () => health({ failed: 1 }))
+    const repo = makeMockRepo({ getOutboxHealth: getHealth })
+    await getOutboxAlert({ now: NOW }, asRepo(repo))
+    expect(getHealth).toHaveBeenCalledTimes(1)
   })
 })

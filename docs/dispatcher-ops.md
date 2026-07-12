@@ -6,6 +6,7 @@ How to schedule, preview, and monitor the LINE notification dispatcher that drai
 - Dispatch job: `POST|GET /api/internal/jobs/dispatch-notifications`
 - Health/visibility: `GET /api/internal/jobs/outbox-status`
 - CLIs: `npm run job:dispatch` · `npm run job:dispatch -- --dry-run` · `npm run job:outbox-status`
+- **Admin UI (Phase 8 Slice 6, handoff §6.33): `/admin/ops`** — 同工登入即可看佇列健康度（含 alert banner、失敗分類）並做死信重送（預覽→確認）。與下方 CLI/內部 route 同一批 service，只是走 admin session 而非 job secret。健康讀取只讀一次 snapshot（banner 與統計一致）；重送預覽綁定條件、改欄位即失效。**排程/監控仍走內部 job route**（Admin UI 不排程）。
 
 ---
 
