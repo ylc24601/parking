@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   collectDependents,
   computeEligibility,
+  CsvImportError,
   isPregnancy,
   isValidTaiwanMobilePhone,
+  longestCell,
+  MAX_ROWS,
   normalizePhone,
+  parseCsv,
   parseFormDate,
   validateRow,
   type RawRow,
@@ -127,5 +131,65 @@ describe('validateRow', () => {
     expect(validateRow({ ...base, mobile_phone: '123456789' } as RawRow).errors.some(e => e.startsWith('invalid mobile_phone'))).toBe(true)
     // a valid mobile passes (no phone error)
     expect(validateRow({ ...base, mobile_phone: '0912-345-678' } as RawRow).errors).toEqual([])
+  })
+})
+
+describe('parseCsv — structure + limits', () => {
+  const HEADER = 'applicant_name,mobile_phone,license_plate,reason_type'
+  const goodRow = '王小明,0912345678,ABC-1234,1'
+
+  it('parses header-keyed rows (BOM tolerated)', () => {
+    const rows = parseCsv(`﻿${HEADER}\n${goodRow}`)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ applicant_name: '王小明', mobile_phone: '0912345678', reason_type: '1' })
+  })
+
+  it('header-only or empty-ish input → zero rows (not an error)', () => {
+    expect(parseCsv(HEADER)).toEqual([])
+  })
+
+  it('tolerates CRLF, quoted commas, and quoted newlines', () => {
+    const rows = parseCsv(`${HEADER},remarks\r\n王,0912345678,"AB,CD",1,"line1\nline2"\r\n`)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].license_plate).toBe('AB,CD')
+    expect(rows[0].remarks).toBe('line1\nline2')
+  })
+
+  it('missing a required header → missing_headers', () => {
+    expect(() => parseCsv('applicant_name,mobile_phone,license_plate\n王,0912345678,A')).toThrowError(
+      expect.objectContaining({ code: 'missing_headers' }),
+    )
+  })
+
+  it('duplicate headers → duplicate_headers', () => {
+    expect(() => parseCsv(`${HEADER},mobile_phone\n${goodRow},0911111111`)).toThrowError(
+      expect.objectContaining({ code: 'duplicate_headers' }),
+    )
+  })
+
+  it('malformed quoting → invalid_csv (parser message not surfaced)', () => {
+    let thrown: unknown
+    try { parseCsv(`${HEADER}\n"unterminated,0912345678,A,1`) } catch (e) { thrown = e }
+    expect(thrown).toBeInstanceOf(CsvImportError)
+    expect((thrown as CsvImportError).code).toBe('invalid_csv')
+  })
+
+  it('more than MAX_ROWS data rows → too_many_rows', () => {
+    const body = Array.from({ length: MAX_ROWS + 1 }, () => goodRow).join('\n')
+    expect(() => parseCsv(`${HEADER}\n${body}`)).toThrowError(
+      expect.objectContaining({ code: 'too_many_rows' }),
+    )
+  })
+
+  it('exactly MAX_ROWS rows is allowed', () => {
+    const body = Array.from({ length: MAX_ROWS }, () => goodRow).join('\n')
+    expect(parseCsv(`${HEADER}\n${body}`)).toHaveLength(MAX_ROWS)
+  })
+})
+
+describe('longestCell', () => {
+  it('returns the max cell length by code points', () => {
+    expect(longestCell({ a: 'xy', b: '王小明' } as RawRow)).toBe(3)
+    expect(longestCell({ a: '', b: undefined as unknown as string } as RawRow)).toBe(0)
   })
 })
