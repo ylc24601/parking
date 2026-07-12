@@ -1,107 +1,94 @@
 import { describe, expect, it } from 'vitest'
-import { readAdminCsvUpload } from '@/server/http/csvUpload'
+import { csvUploadPreflight, readCsvBody } from '@/server/http/csvUpload'
 
 const URL = 'http://localhost/api/admin/members/import/preview'
 
-function req(
-  body: BodyInit | null,
-  headers: Record<string, string>,
-  init: RequestInit & { duplex?: 'half' } = {},
-): Request {
+function req(body: BodyInit | null, headers: Record<string, string>, init: RequestInit & { duplex?: 'half' } = {}): Request {
   return new Request(URL, { method: 'POST', headers, body, ...init } as RequestInit & { duplex?: string })
 }
 
-// A ReadableStream body with no Content-Length (chunked) — the stream cap is the only guard.
-function streamOf(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      for (const c of chunks) controller.enqueue(c)
-      controller.close()
-    },
-  })
+function headerReq(headers: Record<string, string>): Request {
+  return new Request(URL, { method: 'POST', headers })
 }
+
 const bytesN = (n: number) => new Uint8Array(n).fill(0x61) // 'a'
 
-async function status(r: Awaited<ReturnType<typeof readAdminCsvUpload>>): Promise<number | 'ok'> {
+async function statusOf(r: { ok: true } | { ok: false; response: Response }): Promise<number | 'ok'> {
   return r.ok ? 'ok' : r.response.status
 }
-async function reason(r: Awaited<ReturnType<typeof readAdminCsvUpload>>): Promise<string> {
+async function reasonOf(r: { ok: boolean; response?: Response }): Promise<string> {
   if (r.ok) return 'ok'
-  return (await r.response.json()).reason
+  return (await (r as { response: Response }).response.json()).reason
 }
 
-describe('readAdminCsvUpload — content-type', () => {
-  it('accepts text/csv and text/csv; charset=utf-8', async () => {
-    expect(await status(await readAdminCsvUpload(req('a,b\n1,2', { 'content-type': 'text/csv' }), 1024))).toBe('ok')
-    expect(await status(await readAdminCsvUpload(req('a,b\n1,2', { 'content-type': 'text/csv; charset=utf-8' }), 1024))).toBe('ok')
+describe('csvUploadPreflight — header-only (runs before auth, no body access)', () => {
+  it('accepts text/csv and text/csv; charset=utf-8', () => {
+    expect(csvUploadPreflight(headerReq({ 'content-type': 'text/csv' }), 1024).ok).toBe(true)
+    expect(csvUploadPreflight(headerReq({ 'content-type': 'text/csv; charset=utf-8' }), 1024).ok).toBe(true)
   })
 
   it('rejects a non-csv MIME even when the string contains "csv"', async () => {
-    const r = await readAdminCsvUpload(req('x', { 'content-type': 'application/not-text/csv-evil' }), 1024)
-    expect(await status(r)).toBe(415)
+    const r = csvUploadPreflight(headerReq({ 'content-type': 'application/not-text/csv-evil' }), 1024)
+    expect(await statusOf(r)).toBe(415)
   })
 
   it('rejects a missing content-type', async () => {
-    // Build a request whose body forces no default content-type override.
-    const r = await readAdminCsvUpload(
-      new Request(URL, { method: 'POST', body: 'x', headers: {} }),
-      1024,
-    )
-    // string body defaults content-type to text/plain → not text/csv → 415
-    expect(await status(r)).toBe(415)
+    expect(await statusOf(csvUploadPreflight(headerReq({}), 1024))).toBe(415)
+  })
+
+  it('rejects an over-cap declared Content-Length → 413', async () => {
+    const r = csvUploadPreflight(headerReq({ 'content-type': 'text/csv', 'content-length': '5000' }), 1024)
+    expect(await statusOf(r)).toBe(413)
+  })
+
+  it('a foreign Origin → 403 (before any body work)', async () => {
+    const r = csvUploadPreflight(headerReq({ 'content-type': 'text/csv', origin: 'https://evil.example' }), 1024)
+    expect(await statusOf(r)).toBe(403)
   })
 })
 
-describe('readAdminCsvUpload — bounded size (real cap, not Content-Length trust)', () => {
+describe('readCsvBody — bounded size (real cap, not Content-Length trust)', () => {
   it('exactly maxBytes passes; maxBytes+1 → 413', async () => {
-    expect(await status(await readAdminCsvUpload(req(bytesN(10), { 'content-type': 'text/csv' }), 10))).toBe('ok')
-    expect(await status(await readAdminCsvUpload(req(bytesN(11), { 'content-type': 'text/csv' }), 10))).toBe(413)
+    expect(await statusOf(await readCsvBody(req(bytesN(10), { 'content-type': 'text/csv' }), 10))).toBe('ok')
+    expect(await statusOf(await readCsvBody(req(bytesN(11), { 'content-type': 'text/csv' }), 10))).toBe(413)
   })
 
-  it('an over-cap body with an honest Content-Length → 413', async () => {
-    const r = await readAdminCsvUpload(req(bytesN(100), { 'content-type': 'text/csv' }), 10)
-    expect(await status(r)).toBe(413)
+  // readCsvBody only touches request.body, so a minimal fake lets us observe the reader
+  // cancel WITHOUT a real Request wrapping/buffering the stream.
+  const fakeReq = (body: ReadableStream<Uint8Array>) => ({ body } as unknown as Request)
+
+  it('an over-cap stream → 413 and cancels the underlying stream (stops the transfer)', async () => {
+    let canceled = false
+    // Lazily produces 4-byte chunks forever; must be cancelled once the cap is passed.
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) { c.enqueue(bytesN(4)) },
+      cancel() { canceled = true },
+    })
+    const r = await readCsvBody(fakeReq(body), 10)
+    expect(await statusOf(r)).toBe(413)
+    expect(canceled).toBe(true)
   })
 
-  it('an over-cap chunked stream (no Content-Length) → 413', async () => {
-    const r = await readAdminCsvUpload(
-      req(streamOf([bytesN(4), bytesN(4), bytesN(4)]), { 'content-type': 'text/csv' }, { duplex: 'half' }),
-      10,
-    )
-    expect(await status(r)).toBe(413)
-  })
-
-  it('a lying (small) Content-Length but an over-cap stream still → 413', async () => {
-    const r = await readAdminCsvUpload(
-      req(streamOf([bytesN(20)]), { 'content-type': 'text/csv', 'content-length': '5' }, { duplex: 'half' }),
-      10,
-    )
-    expect(await status(r)).toBe(413)
+  it('a read error returns 400 without throwing', async () => {
+    const body = new ReadableStream<Uint8Array>({ pull() { throw new Error('boom') } })
+    const r = await readCsvBody(fakeReq(body), 1024)
+    expect(await statusOf(r)).toBe(400)
   })
 
   it('an empty body → 400 empty', async () => {
-    const r = await readAdminCsvUpload(req(streamOf([]), { 'content-type': 'text/csv' }, { duplex: 'half' }), 1024)
-    expect(await reason(r)).toBe('empty')
+    const body = new ReadableStream<Uint8Array>({ start(c) { c.close() } })
+    const r = await readCsvBody(fakeReq(body), 1024)
+    expect(await reasonOf(r)).toBe('empty')
   })
-})
 
-describe('readAdminCsvUpload — encoding + origin', () => {
   it('invalid UTF-8 → 400 invalid_encoding (no silent replacement)', async () => {
-    const bad = new Uint8Array([0x61, 0xff, 0xfe, 0x62]) // 0xff 0xfe are not valid UTF-8
-    const r = await readAdminCsvUpload(req(bad, { 'content-type': 'text/csv' }), 1024)
-    expect(await reason(r)).toBe('invalid_encoding')
+    const bad = new Uint8Array([0x61, 0xff, 0xfe, 0x62])
+    const r = await readCsvBody(req(bad, { 'content-type': 'text/csv' }), 1024)
+    expect(await reasonOf(r)).toBe('invalid_encoding')
   })
 
   it('valid UTF-8 (incl. CJK) decodes', async () => {
-    const r = await readAdminCsvUpload(req('姓名,電話\n王,0912345678', { 'content-type': 'text/csv' }), 1024)
+    const r = await readCsvBody(req('姓名,電話\n王,0912345678', { 'content-type': 'text/csv' }), 1024)
     expect(r.ok && r.text.startsWith('姓名')).toBe(true)
-  })
-
-  it('a foreign Origin → 403', async () => {
-    const r = await readAdminCsvUpload(
-      req('a,b', { 'content-type': 'text/csv', origin: 'https://evil.example' }),
-      1024,
-    )
-    expect(await status(r)).toBe(403)
   })
 })

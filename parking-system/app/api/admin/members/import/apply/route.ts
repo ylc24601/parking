@@ -1,6 +1,6 @@
 import { adminUnauthorized, getAdminSession } from '@/server/http/adminAuth'
 import { adminInternalError } from '@/server/http/adminRequestGuard'
-import { readAdminCsvUpload } from '@/server/http/csvUpload'
+import { csvUploadPreflight, readCsvBody } from '@/server/http/csvUpload'
 import { csvDigestHex, verifyImportConfirmToken } from '@/server/http/importConfirmToken'
 import { CsvImportExecutionError, importMembersFromCsvText } from '@/server/services/memberImportService'
 import { CsvImportError, MAX_CSV_BYTES } from '@/lib/memberImport'
@@ -9,15 +9,19 @@ import { CsvImportError, MAX_CSV_BYTES } from '@/lib/memberImport'
 // issued at preview binds THIS exact file to THIS admin (and hasn't expired). The
 // per-member RPC is atomic; the whole CSV is not one transaction, so a mid-run
 // failure surfaces as a typed partial_apply (some members already written) rather
-// than a generic 500. The CSV, report, and token are never logged.
+// than a generic 500. The CSV, report, and token are never logged. Authenticate BEFORE
+// reading the body so an unauthenticated request can't make us buffer/decode up to the cap.
 const NO_STORE = { 'cache-control': 'no-store' }
 
 export async function POST(request: Request): Promise<Response> {
-  const upload = await readAdminCsvUpload(request, MAX_CSV_BYTES)
-  if (!upload.ok) return upload.response
+  const preflight = csvUploadPreflight(request, MAX_CSV_BYTES)
+  if (!preflight.ok) return preflight.response
 
   const session = await getAdminSession()
   if (!session) return adminUnauthorized()
+
+  const upload = await readCsvBody(request, MAX_CSV_BYTES)
+  if (!upload.ok) return upload.response
 
   const verdict = verifyImportConfirmToken(request.headers.get('x-import-confirmation'), {
     csvDigest: csvDigestHex(upload.bytes),

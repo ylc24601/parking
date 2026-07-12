@@ -11,12 +11,19 @@ vi.mock('@/server/http/adminAuth', async importOriginal => {
   const actual = await importOriginal<typeof import('@/server/http/adminAuth')>()
   return { ...actual, getAdminSession: vi.fn() }
 })
+// Wrap the REAL upload helpers in spies so we can assert call ORDER (auth before the
+// body is read) while keeping their real behaviour (bounded read + token still work).
+vi.mock('@/server/http/csvUpload', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/server/http/csvUpload')>()
+  return { ...actual, readCsvBody: vi.fn(actual.readCsvBody), csvUploadPreflight: vi.fn(actual.csvUploadPreflight) }
+})
 
 import { POST as previewPOST } from '@/app/api/admin/members/import/preview/route'
 import { POST as applyPOST } from '@/app/api/admin/members/import/apply/route'
 import { CsvImportExecutionError, importMembersFromCsvText, type ImportReport } from '@/server/services/memberImportService'
 import { CsvImportError } from '@/lib/memberImport'
 import { getAdminSession } from '@/server/http/adminAuth'
+import { readCsvBody } from '@/server/http/csvUpload'
 import { csvDigestHex, issueImportConfirmToken } from '@/server/http/importConfirmToken'
 
 const SESSION = { sessionId: 's1', adminId: 'admin-1', username: 'alice' }
@@ -145,5 +152,42 @@ describe('POST /import/apply', () => {
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual({ ok: false, error: 'internal' })
     spy.mockRestore()
+  })
+})
+
+describe('auth runs before the body is read', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ;(importMembersFromCsvText as Mock).mockResolvedValue(emptyReport(true))
+  })
+
+  it('preview: no session → 401 and readCsvBody is never called', async () => {
+    ;(getAdminSession as Mock).mockResolvedValue(null)
+    const res = await post(previewPOST, 'preview', CSV)
+    expect(res.status).toBe(401)
+    expect(readCsvBody).not.toHaveBeenCalled()
+    expect(importMembersFromCsvText).not.toHaveBeenCalled()
+  })
+
+  it('apply: no session → 401 and readCsvBody is never called', async () => {
+    ;(getAdminSession as Mock).mockResolvedValue(null)
+    const res = await post(applyPOST, 'apply', CSV, { 'x-import-confirmation': tokenFor(CSV) })
+    expect(res.status).toBe(401)
+    expect(readCsvBody).not.toHaveBeenCalled()
+  })
+
+  it('foreign Origin → 403 before session AND before the body is read', async () => {
+    ;(getAdminSession as Mock).mockResolvedValue(SESSION)
+    const res = await post(previewPOST, 'preview', CSV, { origin: 'https://evil.example' })
+    expect(res.status).toBe(403)
+    expect(getAdminSession).not.toHaveBeenCalled()
+    expect(readCsvBody).not.toHaveBeenCalled()
+  })
+
+  it('logged in → readCsvBody IS called', async () => {
+    ;(getAdminSession as Mock).mockResolvedValue(SESSION)
+    const res = await post(previewPOST, 'preview', CSV)
+    expect(res.status).toBe(200)
+    expect(readCsvBody).toHaveBeenCalledTimes(1)
   })
 })
