@@ -39,7 +39,7 @@ npm run members:import -- --file ./members-data/applications.csv --apply
 | `validationErrors` | 逐列缺必填 / 格式錯（如 `reason_type`、生日）→ 修 CSV 重跑；該列不匯入 |
 | `phoneNameConflicts` | 同手機出現**不同姓名**（CSV 內或與既有資料）→ 該手機不匯入，人工釐清是否同人 |
 | `plateConflicts` | 車牌已屬**其他會友** → 該車牌略過（會友本身仍建立），人工釐清是否重複/錯號 |
-| `reviewRequired` | 暫時性資格缺日期無法算效期 → 已建立但標記待審，之後於 Admin UI 補 |
+| `reviewRequired` | 暫時性資格缺日期無法算效期 → 已建立但標 `p2_review_date=匯入日`，之後於 Admin UI **資格審查**（`/admin/eligibility`，handoff §6.31）以「待覆核」列出供人工補核 |
 
 ## 特性
 

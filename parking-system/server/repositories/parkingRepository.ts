@@ -110,6 +110,18 @@ export interface MemberAdminDetailRow {
   dependents: Array<{ kind: string; name: string; birthdate: string | null }>
 }
 
+// Phase 8 Slice 4 — a P2-eligible member whose review/expiry date is at or before the
+// review cutoff. No phone/dependents: the review LIST identifies by name and links to
+// the detail page. The service computes dueDate = min(valid_until, review_date).
+export interface EligibilityReviewRow {
+  user_id: string
+  display_name: string
+  p2_reason: string | null
+  p2_valid_until: string | null
+  p2_review_date: string | null
+  reviewed_at: string | null
+}
+
 // Phase 7 Slice 1 — the member's own reservation for one week, plate joined.
 // Member-safe projection: own data only, no penalty/eligibility fields. `id`,
 // `effective_priority` and `attended_at` are for server-side actions/affordance
@@ -677,6 +689,12 @@ export interface ParkingRepository {
   }): Promise<MemberSearchRow[]>
   // Phase 8 Slice 2 — full admin member detail (raw PII). Null if the user doesn't exist.
   getMemberAdminDetail(userId: string): Promise<MemberAdminDetailRow | null>
+  // Phase 8 Slice 4 — P2-eligible members due for review at/before cutoffDate. Runs TWO
+  // date-ordered branches (by review_date, by valid_until), each capped, and merges them
+  // distinct by user_id. A single .or() with an unordered limit could drop the most-urgent
+  // rows; two ordered branches keep the earliest of each date. The service computes the
+  // effective dueDate = min(valid_until, review_date), does the final global sort, and slices.
+  listEligibilityReview(args: { cutoffDate: string; branchCap: number }): Promise<EligibilityReviewRow[]>
   // Apply window: closed once the Friday allocation job has claimed the event
   // ('running' or 'success' — rows inserted mid-run would miss the batch).
   hasFridayAllocationRun(eventId: string): Promise<boolean>
@@ -1782,6 +1800,52 @@ export function createParkingRepository(
           birthdate: d.dependent_birthdate,
         })),
       }
+    },
+
+    async listEligibilityReview({ cutoffDate, branchCap }) {
+      type Raw = {
+        user_id: string
+        p2_reason: string | null
+        p2_valid_until: string | null
+        p2_review_date: string | null
+        reviewed_at: string | null
+        users: { display_name: string } | null
+      }
+      // Disambiguate the embed: user_eligibility has TWO FKs to users (user_id and
+      // reviewed_by), so PostgREST needs the FK column hint to pick the right one.
+      const SELECT = 'user_id, p2_reason, p2_valid_until, p2_review_date, reviewed_at, users!user_id!inner(display_name)'
+
+      // Two date-ordered branches: each returns the EARLIEST rows by its own date, so
+      // truncating at branchCap keeps the most-urgent cases (an unordered .or()+limit
+      // could drop them). Merge distinct by user_id — a temporary eligibility with both
+      // dates set hits both branches.
+      const runBranch = async (column: 'p2_review_date' | 'p2_valid_until') => {
+        const { data, error } = await client
+          .from('user_eligibility')
+          .select(SELECT)
+          .eq('p2_eligible', true)
+          .lte(column, cutoffDate)
+          .order(column, { ascending: true })
+          .limit(branchCap)
+        if (error) throw new Error(`listEligibilityReview (${column}) failed: ${error.message}`)
+        return (data ?? []) as unknown as Raw[]
+      }
+
+      const byUser = new Map<string, EligibilityReviewRow>()
+      for (const branch of [await runBranch('p2_review_date'), await runBranch('p2_valid_until')]) {
+        for (const r of branch) {
+          if (byUser.has(r.user_id)) continue
+          byUser.set(r.user_id, {
+            user_id: r.user_id,
+            display_name: r.users?.display_name ?? '',
+            p2_reason: r.p2_reason,
+            p2_valid_until: r.p2_valid_until,
+            p2_review_date: r.p2_review_date,
+            reviewed_at: r.reviewed_at,
+          })
+        }
+      }
+      return [...byUser.values()]
     },
 
     async hasFridayAllocationRun(eventId) {

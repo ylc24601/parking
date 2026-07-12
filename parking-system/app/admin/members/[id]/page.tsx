@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { taipeiToday } from '@/lib/taipeiDate'
+import { deriveEligibilityStatus, type EligibilityStatus } from '@/lib/eligibilityStatus'
 import { getAdminSession } from '@/server/http/adminAuth'
 import { getMemberDetail, type MemberDetail } from '@/server/services/memberAdminService'
 import IssueBindingCode from './IssueBindingCode'
@@ -83,7 +85,18 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-        <h3 className="text-lg font-medium">P2 資格</h3>
+        <div className="flex items-center gap-3">
+          <h3 className="text-lg font-medium">P2 資格</h3>
+          {detail.eligibility !== null && detail.eligibility.p2Eligible && (
+            <EligibilityBadge
+              status={deriveEligibilityStatus(
+                { validUntil: detail.eligibility.p2ValidUntil, reviewDate: detail.eligibility.p2ReviewDate },
+                taipeiToday(new Date()),
+              )}
+              validUntil={detail.eligibility.p2ValidUntil}
+            />
+          )}
+        </div>
         {detail.eligibility === null || !detail.eligibility.p2Eligible ? (
           <p className="mt-2 text-sm text-slate-400">無 P2 資格</p>
         ) : (
@@ -116,6 +129,19 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
       </section>
     </div>
   )
+}
+
+// Makes an EXPIRED-but-still-p2_eligible qualification unmistakable — otherwise the
+// section reads as "has P2" while apply-time priority silently drops the member to P3.
+function EligibilityBadge({ status, validUntil }: { status: EligibilityStatus; validUntil: string | null }) {
+  const meta: Record<EligibilityStatus, { label: string; className: string }> = {
+    active: { label: '有效', className: 'border-emerald-800 text-emerald-300' },
+    expired: { label: validUntil ? `已過期（${validUntil}）` : '已過期', className: 'border-rose-800 text-rose-300' },
+    review_due: { label: '待覆核', className: 'border-amber-800 text-amber-300' },
+    permanent: { label: '永久', className: 'border-slate-700 text-slate-400' },
+  }
+  const { label, className } = meta[status]
+  return <span className={`rounded-full border px-2 py-0.5 text-xs ${className}`}>{label}</span>
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
