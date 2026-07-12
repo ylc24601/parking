@@ -105,8 +105,8 @@
 
 ### ⚪ 之後（沿用既有 Deferred）
 - 成員 / Admin UI（P2-first）。詳見 handoff §9。
-  **進度**：會員 LIFF UI ✅（Phase 7，§6.23–6.26）；**Admin UI 進行中**——Slice 1（登入＋骨架＋綁定審核）✅（§6.27）、Slice 2（會友查詢＋明細＋發碼 UI）✅（§6.29）、Slice 3（admin 帳號管理：停用/重啟/重設密碼/全裝置撤銷，migration 0026）✅（§6.30）、Slice 4（P2 資格審查唯讀檢視）✅（§6.31）、Slice 5（會友名單 CSV 匯入上傳）✅（§6.32）、Slice 6（營運狀態：通知佇列健康度＋失敗重送）✅（§6.33），
-  後續：**PII retention job（Phase 8 必收）**、牧養處理、Staff PIN 管理 UI；資格審查寫入型覆核（需 reviewed_by_admin_id migration）、匯入稽核欄。
+  **進度**：會員 LIFF UI ✅（Phase 7，§6.23–6.26）；**Admin UI 進行中**——Slice 1（登入＋骨架＋綁定審核）✅（§6.27）、Slice 2（會友查詢＋明細＋發碼 UI）✅（§6.29）、Slice 3（admin 帳號管理：停用/重啟/重設密碼/全裝置撤銷，migration 0026）✅（§6.30）、Slice 4（P2 資格審查唯讀檢視）✅（§6.31）、Slice 5（會友名單 CSV 匯入上傳）✅（§6.32）、Slice 6（營運狀態：通知佇列健康度＋失敗重送）✅（§6.33）、Slice 7（PII retention job：決行 90 天清綁定三欄，migration 0027，Phase 8 必收）✅（§6.34），
+  後續：牧養處理、Staff PIN 管理 UI；資格審查寫入型覆核（需 reviewed_by_admin_id migration）、匯入稽核欄。
 
 ---
 

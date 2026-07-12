@@ -23,6 +23,7 @@
     "job:outbox-status": "tsx scripts/run-outbox-status.ts",
     "job:outbox-alert": "tsx scripts/run-outbox-alert.ts",
     "job:requeue-failed": "tsx scripts/run-requeue-failed.ts",
+    "job:redact-binding-pii": "tsx scripts/run-redact-binding-pii.ts",
     "binding:issue": "tsx scripts/run-binding-issue.ts",
     "binding:pending": "tsx scripts/run-binding-pending.ts",
     "binding:approve": "tsx scripts/run-binding-approve.ts",

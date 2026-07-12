@@ -57,6 +57,8 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     })),
     // Phase 4 Slice F — dead-letter requeue
     requeueFailedOutbox: vi.fn(async () => ({ requeued: 0 })),
+    // Phase 8 Slice 7 — binding PII retention
+    redactDecidedBindingPii: vi.fn(async () => ({ count: 0, hasMore: false })),
     // Phase 5A — pending LINE binding capture
     capturePendingBinding: vi.fn(async () => ({ captured: 1, superseded: false })),
     // Phase 5B — approve / reject pending binding

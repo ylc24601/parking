@@ -526,6 +526,35 @@ begin
   raise notice 'PASS: admin account management RPCs (set_admin_disabled, reset_admin_password) present';
 end $$;
 
+-- ── 32. Binding PII retention (Phase 8 Slice 7) ─────────────────────────────
+do $$
+declare
+  v_def text;
+begin
+  -- claim-shape constraint must include the redacted-decided third arm
+  select pg_get_constraintdef(oid) into v_def
+    from pg_constraint
+   where conname = 'pending_binding_claim_shape_ck' and contype = 'c';
+  if v_def is null then
+    raise exception 'FAIL: pending_binding_claim_shape_ck missing';
+  end if;
+  if v_def !~* 'status.*approved.*rejected' then
+    raise exception 'FAIL: pending_binding_claim_shape_ck lacks the redacted-decided arm';
+  end if;
+
+  perform 1 from pg_indexes where indexname = 'pending_binding_pii_retention_idx';
+  if not found then raise exception 'FAIL: pending_binding_pii_retention_idx missing'; end if;
+
+  if not has_function_privilege('service_role', 'redact_decided_binding_pii(timestamptz,int,int,boolean)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on redact_decided_binding_pii';
+  end if;
+  if has_function_privilege('anon', 'redact_decided_binding_pii(timestamptz,int,int,boolean)', 'execute') then
+    raise exception 'FAIL: anon must not execute redact_decided_binding_pii';
+  end if;
+
+  raise notice 'PASS: binding PII retention (constraint arm, partial index, RPC grants) present';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='
