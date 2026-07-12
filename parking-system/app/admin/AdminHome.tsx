@@ -4,7 +4,6 @@ import LogoutButton from './LogoutButton'
 // Back-office home: nav skeleton. Sections ship one slice at a time — the greyed
 // cards are the agreed Phase 8 map, kept visible so operators see what's coming.
 const PLANNED = [
-  { title: '資格審查', note: 'P2 資格到期檢視與覆核' },
   { title: '名單匯入', note: 'P2 申請表 CSV 上傳' },
   { title: '營運狀態', note: '通知佇列健康度、失敗重送' },
   { title: '牧養關懷', note: '連續未到提醒處理' },
@@ -45,6 +44,14 @@ export default function AdminHome({ username }: { username: string }) {
         >
           <h2 className="text-lg font-medium text-sky-300">帳號管理</h2>
           <p className="mt-1.5 text-sm text-slate-400">管理 admin 帳號：停用、重設密碼、撤銷登入</p>
+        </Link>
+
+        <Link
+          href="/admin/eligibility"
+          className="rounded-2xl border border-sky-800 bg-slate-900 p-5 transition-colors hover:border-sky-500"
+        >
+          <h2 className="text-lg font-medium text-sky-300">資格審查</h2>
+          <p className="mt-1.5 text-sm text-slate-400">P2 資格到期檢視與覆核</p>
         </Link>
 
         {PLANNED.map(card => (
