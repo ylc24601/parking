@@ -14,6 +14,7 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "db:verify": "psql \"postgresql://postgres:postgres@127.0.0.1:54322/postgres\" -v ON_ERROR_STOP=1 -f supabase/tests/verify_schema.sql",
+    "db:verify:remote": "psql \"$SUPABASE_DB_URL\" -v ON_ERROR_STOP=1 -f supabase/tests/verify_schema_prod.sql",
     "job:friday": "tsx scripts/run-friday-allocation.ts",
     "job:expire-offers": "tsx scripts/run-expire-offers.ts",
     "job:release": "tsx scripts/run-release.ts",
