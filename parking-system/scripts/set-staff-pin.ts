@@ -1,10 +1,14 @@
 // Provision the on-site Staff PIN for one Sunday's weekly_event (mirrors run-settle.ts).
 //   npm run staff:set-pin -- --sunday 2026-06-21 --pin 246810 [--ttl-hours 12] [--created-by <uuid>]
 //
-// ⚠️ MVP convenience only: the PIN passed on the command line may be retained in
-// shell history / the process list. This is acceptable for local/admin use; a future
-// Admin UI should replace CLI PIN entry. The plaintext PIN is never stored or logged
-// (only its scrypt hash lands in staff_sessions.pin_hash).
+// ⚠️ EMERGENCY FALLBACK ONLY (Phase 8 Slice 8): the normal path is the Admin UI at
+// /admin/staff-pin, which generates a random PIN server-side (shown once, nothing on a
+// command line) and uses the admin expiry contract (valid through the END of the Sunday
+// — lib/staffPinSchedule.staffPinExpiry). This CLI keeps the LEGACY `now + ttl-hours`
+// expiry, so a PIN set here days ahead will expire before its Sunday. The PIN passed on
+// the command line may also be retained in shell history / the process list. The
+// plaintext PIN is never stored or logged (only its scrypt hash lands in
+// staff_sessions.pin_hash).
 try {
   process.loadEnvFile('.env.local')
 } catch {

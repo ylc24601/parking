@@ -555,6 +555,34 @@ begin
   raise notice 'PASS: binding PII retention (constraint arm, partial index, RPC grants) present';
 end $$;
 
+-- ── 33. Pastoral resolution + staff-PIN issuance audit (Phase 8 Slice 8) ─────
+do $$
+begin
+  perform 1 from information_schema.columns
+    where table_name = 'pastoral_care_alerts' and column_name = 'resolved_by_admin_id';
+  if not found then raise exception 'FAIL: pastoral_care_alerts.resolved_by_admin_id missing'; end if;
+  perform 1 from information_schema.columns
+    where table_name = 'pastoral_care_alerts' and column_name = 'counter_reset';
+  if not found then raise exception 'FAIL: pastoral_care_alerts.counter_reset missing'; end if;
+  perform 1 from pg_constraint where conname = 'pastoral_care_alerts_note_len_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: pastoral_care_alerts_note_len_ck missing'; end if;
+  perform 1 from pg_constraint where conname = 'pastoral_care_alerts_resolution_shape_ck' and contype = 'c';
+  if not found then raise exception 'FAIL: pastoral_care_alerts_resolution_shape_ck missing'; end if;
+
+  perform 1 from information_schema.columns
+    where table_name = 'staff_sessions' and column_name = 'created_by_admin_id';
+  if not found then raise exception 'FAIL: staff_sessions.created_by_admin_id missing'; end if;
+
+  if not has_function_privilege('service_role', 'resolve_pastoral_alert(uuid,uuid,text,boolean,timestamptz)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on resolve_pastoral_alert';
+  end if;
+  if has_function_privilege('anon', 'resolve_pastoral_alert(uuid,uuid,text,boolean,timestamptz)', 'execute') then
+    raise exception 'FAIL: anon must not execute resolve_pastoral_alert';
+  end if;
+
+  raise notice 'PASS: pastoral resolution columns/constraints/RPC + staff-PIN admin audit present';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

@@ -248,6 +248,23 @@ export interface PastoralAlertPayload {
   trigger_count: number
 }
 
+// Phase 8 Slice 8 — admin pastoral list row (sensitive; admin surface only). Carries the
+// member's display name + counts + the resolution audit fields — never phone/line_id/plate.
+export interface PastoralAlertRow {
+  id: string
+  user_id: string
+  display_name: string
+  reason: string
+  trigger_count: number
+  sunday_date: string
+  status: 'open' | 'resolved'
+  created_at: string
+  resolved_at: string | null
+  resolved_by_username: string | null
+  counter_reset: boolean
+  note: string | null
+}
+
 export interface SettlementResult {
   settled: number
   penalties_applied: number
@@ -595,6 +612,19 @@ export interface ParkingRepository {
     penalties: SettlementPenaltyPayload[]
     alerts: PastoralAlertPayload[]
   }): Promise<SettlementResult>
+  // Phase 8 Slice 8 — pastoral alert admin list + atomic resolve (sensitive: admin surface
+  // only, never Staff). Embeds users (inner — FK-guaranteed) and the resolving admin
+  // (left — null when unresolved / account gone); the CURRENT consecutive counter is a
+  // separate getPenaltyCountersForUsers lookup in the service, so a missing user_penalties
+  // row can never drop an alert from the list.
+  listPastoralAlerts(status: 'open' | 'resolved', limit: number): Promise<PastoralAlertRow[]>
+  resolvePastoralAlert(args: {
+    alertId: string
+    adminId: string
+    note: string | null
+    resetCounter: boolean
+    nowIso: string
+  }): Promise<{ resolved: number; reason: string }>
   // Phase 3 v2 — Staff PIN session (staff_sessions). pin_hash stays service-side.
   getStaffSessionByEvent(eventId: string): Promise<StaffSessionRow | null>
   getStaffSessionById(id: string): Promise<StaffSessionRow | null>
@@ -605,6 +635,7 @@ export interface ParkingRepository {
     pinHash: string
     expiresAt: string          // ISO
     createdBy?: string | null
+    createdByAdminId?: string | null   // Phase 8 Slice 8 — Admin-UI issuance audit
   }): Promise<void>
   // Phase 7 Slice 1 — member LIFF auth + read-only week status. Raw line_id never
   // leaves the repo surface beyond this lookup's input.
@@ -1351,6 +1382,52 @@ export function createParkingRepository(
       return data as SettlementResult
     },
 
+    async listPastoralAlerts(status, limit) {
+      const { data, error } = await client
+        .from('pastoral_care_alerts')
+        .select(
+          'id, user_id, reason, trigger_count, status, created_at, resolved_at, counter_reset, note, ' +
+          'users!user_id!inner(display_name), weekly_events!weekly_event_id!inner(sunday_date), ' +
+          'admin_accounts(username)',
+        )
+        .eq('status', status)
+        .order(status === 'open' ? 'created_at' : 'resolved_at', { ascending: status === 'open' })
+        .limit(limit)
+      if (error) throw new Error(`listPastoralAlerts failed: ${error.message}`)
+      return (data ?? []).map(row => {
+        const r = row as unknown as Record<string, unknown>
+        const user = r.users as { display_name: string }
+        const event = r.weekly_events as { sunday_date: string }
+        const admin = r.admin_accounts as { username: string } | null
+        return {
+          id: r.id as string,
+          user_id: r.user_id as string,
+          display_name: user.display_name,
+          reason: r.reason as string,
+          trigger_count: r.trigger_count as number,
+          sunday_date: event.sunday_date,
+          status: r.status as 'open' | 'resolved',
+          created_at: r.created_at as string,
+          resolved_at: (r.resolved_at as string | null) ?? null,
+          resolved_by_username: admin?.username ?? null,
+          counter_reset: r.counter_reset as boolean,
+          note: (r.note as string | null) ?? null,
+        }
+      })
+    },
+
+    async resolvePastoralAlert({ alertId, adminId, note, resetCounter, nowIso }) {
+      const { data, error } = await client.rpc('resolve_pastoral_alert', {
+        p_alert_id: alertId,
+        p_admin_id: adminId,
+        p_note: note,
+        p_reset_counter: resetCounter,
+        p_now: nowIso,
+      })
+      if (error) throw new Error(`resolve_pastoral_alert failed: ${error.message}`)
+      return data as { resolved: number; reason: string }
+    },
+
     async getStaffSessionByEvent(eventId) {
       const { data, error } = await client
         .from('staff_sessions')
@@ -1401,6 +1478,7 @@ export function createParkingRepository(
           failed_attempts: 0,
           locked_at: null,
           created_by: args.createdBy ?? null,
+          created_by_admin_id: args.createdByAdminId ?? null,
         },
         { onConflict: 'weekly_event_id' },
       )

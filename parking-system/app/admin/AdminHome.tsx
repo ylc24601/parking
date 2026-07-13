@@ -1,13 +1,8 @@
 import Link from 'next/link'
 import LogoutButton from './LogoutButton'
 
-// Back-office home: nav skeleton. Sections ship one slice at a time — the greyed
-// cards are the agreed Phase 8 map, kept visible so operators see what's coming.
-const PLANNED = [
-  { title: '牧養關懷', note: '連續未到提醒處理' },
-  { title: '現場 PIN 管理', note: '主日現場頁 PIN 設定' },
-]
-
+// Back-office home: nav skeleton. All Phase 8 sections have shipped (Slice 8 turned
+// the last two planned cards — 牧養關懷 / 現場 PIN 管理 — live).
 export default function AdminHome({ username }: { username: string }) {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-8 px-6 py-10 text-slate-100">
@@ -68,20 +63,21 @@ export default function AdminHome({ username }: { username: string }) {
           <p className="mt-1.5 text-sm text-slate-400">通知佇列健康度、失敗重送</p>
         </Link>
 
-        {PLANNED.map(card => (
-          <div
-            key={card.title}
-            className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 opacity-60"
-          >
-            <h2 className="flex items-center gap-2 text-lg font-medium text-slate-300">
-              {card.title}
-              <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs font-normal text-slate-500">
-                規劃中
-              </span>
-            </h2>
-            <p className="mt-1.5 text-sm text-slate-500">{card.note}</p>
-          </div>
-        ))}
+        <Link
+          href="/admin/pastoral"
+          className="rounded-2xl border border-sky-800 bg-slate-900 p-5 transition-colors hover:border-sky-500"
+        >
+          <h2 className="text-lg font-medium text-sky-300">牧養關懷</h2>
+          <p className="mt-1.5 text-sm text-slate-400">連續未到提醒處理</p>
+        </Link>
+
+        <Link
+          href="/admin/staff-pin"
+          className="rounded-2xl border border-sky-800 bg-slate-900 p-5 transition-colors hover:border-sky-500"
+        >
+          <h2 className="text-lg font-medium text-sky-300">現場 PIN 管理</h2>
+          <p className="mt-1.5 text-sm text-slate-400">主日現場頁 PIN 設定與解鎖</p>
+        </Link>
       </section>
     </main>
   )
