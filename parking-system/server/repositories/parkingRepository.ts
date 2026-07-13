@@ -494,6 +494,9 @@ export interface ParkingRepository {
   getOutboxHealth(nowIso: string, leaseSeconds: number): Promise<OutboxHealth>
   // Phase 4 Slice F — manual-only dead-letter recovery: failed → pending (bounded, optional filter).
   requeueFailedOutbox(nowIso: string, max: number, errorCode: string | null): Promise<RequeueFailedResult>
+  // Phase 8 Slice 7 — PII retention: clear claimed_phone/claimed_name/submitted_code on rows
+  // decided >= retentionDays ago (bounded, idempotent; dry-run probes max+1 rows for hasMore).
+  redactDecidedBindingPii(nowIso: string, retentionDays: number, max: number, dryRun: boolean): Promise<{ count: number; hasMore: boolean }>
   // Phase 4 Slice B — resolve a move-car target (owner user_id + plate + notifiability).
   // Returns null only when the reservation id doesn't exist (a walk-in still resolves).
   getMoveCarTarget(reservationId: string): Promise<MoveCarTarget | null>
@@ -1104,6 +1107,18 @@ export function createParkingRepository(
       })
       if (error) throw new Error(`requeue_failed_outbox failed: ${error.message}`)
       return data as RequeueFailedResult
+    },
+
+    async redactDecidedBindingPii(nowIso, retentionDays, max, dryRun) {
+      const { data, error } = await client.rpc('redact_decided_binding_pii', {
+        p_now: nowIso,
+        p_retention_days: retentionDays,
+        p_max: max,
+        p_dry_run: dryRun,
+      })
+      if (error) throw new Error(`redact_decided_binding_pii failed: ${error.message}`)
+      const row = data as { count: number; has_more: boolean }
+      return { count: row.count, hasMore: row.has_more }
     },
 
     async capturePendingBinding({ lineUserId, code, eventType, nowIso }) {

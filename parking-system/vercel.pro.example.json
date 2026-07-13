@@ -1,9 +1,13 @@
 {
-  "$comment": "Phase 4 Slice C — Vercel Cron binding for the notification dispatcher. Copy this to vercel.json to enable it. A sub-daily schedule (below runs every 2 minutes) requires a Vercel PRO plan; Hobby caps cron at once per day, so on Hobby use an external scheduler instead (see docs/dispatcher-ops.md). Also set the CRON_SECRET env var in the Vercel project — Vercel then sends `Authorization: Bearer $CRON_SECRET`, which the dispatch route accepts.",
+  "$comment": "Phase 4 Slice C — Vercel Cron binding for the notification dispatcher, plus the daily binding-PII retention sweep (Phase 8 Slice 7). Copy this to vercel.json to enable it. A sub-daily schedule (dispatch below runs every 2 minutes) requires a Vercel PRO plan; Hobby caps cron at once per day, so on Hobby use an external scheduler instead (see docs/dispatcher-ops.md / docs/binding-ops.md). Also set the CRON_SECRET env var in the Vercel project — Vercel then sends `Authorization: Bearer $CRON_SECRET`, which both routes accept.",
   "crons": [
     {
       "path": "/api/internal/jobs/dispatch-notifications",
       "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/internal/jobs/redact-binding-pii",
+      "schedule": "30 3 * * *"
     }
   ]
 }

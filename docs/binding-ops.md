@@ -114,13 +114,44 @@ npm run binding:reject -- --pending-id <pending uuid> --reason duplicate
 
 ---
 
-## PII 保留（backlog → Phase 8 必要項）
+## PII 保留（Phase 8 Slice 7 — **已實作**）
 
 - `claimed_phone` / `claimed_name` / `submitted_code` 存於 `pending_binding`（僅此處）；**不進** log、error、
   會員端回應；CLI 全程遮罩。
-- approved / rejected 列暫留原值供稽核。**Phase 8 acceptance item**：retention window——提案為
-  決行（approve/reject）**90 天後**清除 `claimed_phone`/`claimed_name`/`submitted_code`，
-  保留 `claim_source`、時間戳、decision、`approved_user_id`。
+- **Retention（migration 0027）**：決行（approve/reject）**90 天後**由 retention job 清除三欄，
+  **保留** `claim_source`、時間戳、`status`、`approved_user_id`、`rejected_reason`、`decided_by_admin_id`。
+  窗口由 `BINDING_PII_RETENTION_DAYS` 控（預設 90；**下限 30**——低於下限/非法值一律 fallback 90，
+  且 RPC 內再硬性擋一次，任何 caller 都不能縮短窗口；route/CLI **不收任何時間覆寫參數**）。
+  DB constraint（`pending_binding_claim_shape_ck`）保證：redacted 形狀**只允許已決行列**、且三欄必須一起清（無半套）。
+
+### 執行方式
+
+**排程（正式路徑）**——每日一次即可：
+
+```bash
+# Vercel Cron（vercel.pro.example.json 已含每日 03:30 條目）發 GET；外部排程器：
+curl -fsS "https://<host>/api/internal/jobs/redact-binding-pii" \
+  -H "x-job-secret: $JOB_TRIGGER_SECRET"
+```
+
+- **GET＝排程入口，預設 apply**；`?dryRun=1` 預覽、`?max=N`（1–500，預設 200）。
+- **POST＝人工/工具入口，預設 dry-run**——漏帶參數絕不觸發不可逆刪除；只有顯式
+  `{"dryRun": false}` 才 apply，`dryRun` 非 boolean 一律 400（曖昧值絕不靜默 apply）。
+
+**CLI（預覽/首次手動）**：
+
+```bash
+npm run job:redact-binding-pii                # dry run → { wouldRedact, hasMore }
+npm run job:redact-binding-pii -- --apply     # 實際清除（預設 max 200、上限 500）
+```
+
+`hasMore`＝本批之外仍有符合列（歷史 backlog 多時每日一批需數天消化）。輸出恆為 counts/timestamps
+（operation-safe），永不含三欄值或 `line_user_id`。重跑 idempotent（已清列不再匹配）。
+
+### 範圍外（backlog）
+
+- **從未被審的老 pending 列**不在本政策（無決行時間可算）——若 pilot 出現大量無人審的殘留申請再議。
+- **`binding_codes`**（`code`/`consumed_line_user_id` 等）不在本政策，如需另立 retention。
 - 若 pilot 出現大量重送（`binding:pending` 的 RETRIES 異常），再評估 per-LINE-identity cooldown / 平台 rate limit。
 
 ## 對照
