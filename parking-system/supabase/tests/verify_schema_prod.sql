@@ -550,10 +550,18 @@ end $$;
 -- ═══════════════════════════════════════════════════════════════════════════════════
 
 -- ── 25. Sensitive tables: anon/authenticated hold no direct privileges ─────────────────
+-- Full SELECT/INSERT/UPDATE/DELETE x anon/authenticated matrix on every sensitive table
+-- this file otherwise touches. admin_accounts/admin_sessions/member_sessions are
+-- included here even though earlier assertions (13, 17) already check an anon-SELECT
+-- slice of them — those were ported from the local verifier as-is; this assertion is
+-- the single place that completes the full negative-grant matrix for all six tables.
 do $$
 declare
   t text;
-  tables text[] := array['pending_binding', 'binding_codes', 'pastoral_care_alerts'];
+  tables text[] := array[
+    'pending_binding', 'binding_codes', 'pastoral_care_alerts',
+    'admin_accounts', 'admin_sessions', 'member_sessions'
+  ];
 begin
   foreach t in array tables loop
     if has_table_privilege('anon', t, 'select') or has_table_privilege('anon', t, 'insert')
@@ -565,18 +573,27 @@ begin
       raise exception 'FAIL: authenticated holds a direct privilege on %', t;
     end if;
   end loop;
-  raise notice 'PASS: anon/authenticated hold no direct privileges on pending_binding/binding_codes/pastoral_care_alerts';
+  raise notice 'PASS: anon/authenticated hold no direct privileges on pending_binding/binding_codes/pastoral_care_alerts/admin_accounts/admin_sessions/member_sessions';
 end $$;
 
 -- ── 26. Sensitive RPCs: PUBLIC holds no EXECUTE (checked via ACL, not has_function_privilege) ─
 -- PUBLIC is not an ordinary database role — has_function_privilege('PUBLIC', ...) is
--- unreliable (no such role) and is not used here. Instead this decomposes the
--- function's ACL (defaulting to the owner's implicit ACL when proacl is null, i.e. no
--- explicit GRANT/REVOKE has ever touched it) and checks for grantee = 0, which is
+-- unreliable (no such role) and is not used here. Instead this resolves each signature
+-- to a concrete function OID FIRST (to_regprocedure — returns NULL, never an error, on a
+-- typo'd/missing signature) and fails loudly if that resolution fails, before decomposing
+-- the function's ACL (defaulting to the owner's implicit ACL when proacl is null, i.e. no
+-- explicit GRANT/REVOKE has ever touched it) and checking for grantee = 0, which is
 -- pg_catalog's sentinel for the PUBLIC pseudo-role.
+--
+-- The two-step split matters: `select exists(...) into x` ALWAYS yields true or false,
+-- never null (EXISTS is a boolean operator over a subquery, unaffected by the subquery
+-- being empty) — so folding "not found" and "found but PUBLIC has no EXECUTE" into one
+-- exists() check, as an earlier draft of this file did, silently PASSES a signature that
+-- doesn't resolve to any function at all. Resolving the OID first turns that into a
+-- loud failure instead.
 do $$
 declare
-  fn record;
+  fn_oid oid;
   public_execute boolean;
   fns text[] := array[
     'approve_pending_binding(uuid,bigint,timestamptz,boolean,uuid)',
@@ -590,19 +607,19 @@ declare
   sig text;
 begin
   foreach sig in array fns loop
+    fn_oid := to_regprocedure(sig);
+    if fn_oid is null then
+      raise exception 'FAIL: function signature % does not resolve to any function (typo, or missing revoke-from-public migration never ran)', sig;
+    end if;
+
     select exists (
       select 1
         from pg_proc p
-        join pg_namespace n on n.oid = p.pronamespace
         join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl on true
-        where n.nspname = 'public'
-          and (p.oid::regprocedure)::text = sig
+        where p.oid = fn_oid
           and acl.grantee = 0
           and acl.privilege_type = 'EXECUTE'
     ) into public_execute;
-    if public_execute is null then
-      raise exception 'FAIL: could not resolve function signature % for PUBLIC-EXECUTE check', sig;
-    end if;
     if public_execute then
       raise exception 'FAIL: PUBLIC holds EXECUTE on % — expected an explicit revoke-from-public in the owning migration', sig;
     end if;
