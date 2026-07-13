@@ -1,6 +1,6 @@
 import { STAFF_SESSION_TTL_HOURS, TAIPEI_UTC_OFFSET_HOURS } from '@/lib/allocation/rules'
 import { addDaysToIsoDate } from '@/lib/eligibilityStatus'
-import { taipeiToday } from '@/lib/taipeiDate'
+import { upcomingSundayISO } from '@/lib/taipeiDate'
 
 // Phase 8 Slice 8 — the SINGLE source of truth for which Sundays the admin PIN page
 // manages, shared by the page and the mutation routes so they can never disagree.
@@ -15,11 +15,7 @@ export interface StaffPinManagedSundays {
 }
 
 export function getStaffPinManagedSundays(now: Date): StaffPinManagedSundays {
-  const today = taipeiToday(now)
-  const [year, month, day] = today.split('-').map(Number)
-  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay() // 0 = Sunday
-  const daysUntilSunday = (7 - weekday) % 7 // 0 on Sunday itself
-  const currentSunday = addDaysToIsoDate(today, daysUntilSunday)
+  const currentSunday = upcomingSundayISO(now)
   return { currentSunday, nextSunday: addDaysToIsoDate(currentSunday, 7) }
 }
 

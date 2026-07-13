@@ -9,6 +9,12 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     getWeeklyEvent: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
     getActiveEvent: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
     getWeeklyEventBySunday: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
+    // Phase 9 Slice 1 — scheduler-facing upcoming event + idempotent ensure
+    getUpcomingScheduledEvent: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
+    ensureWeeklyEvent: vi.fn(async () => ({
+      created: true,
+      event: { id: 'event-1', sunday_date: '2026-06-21', status: 'open' },
+    })),
     finalizeWeeklyEvent: vi.fn(async () => {}),
     getStaleOpenEvents: vi.fn(async () => []),
     getStaffCheckInList: vi.fn(async () => []),

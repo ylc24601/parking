@@ -420,6 +420,17 @@ export interface ParkingRepository {
   getActiveEvent(): Promise<WeeklyEventRow | null>
   // Phase 3 v2: resolve a weekly_event by its Sunday date (CLI PIN provisioning).
   getWeeklyEventBySunday(sunday: string): Promise<WeeklyEventRow | null>
+  // Phase 9 Slice 1 — scheduler-facing "this week": smallest sunday_date >= todayTaipei
+  // (any status), the same Taipei-calendar semantics as getMemberEvent, under a name the
+  // job routes can share without implying member scope. NOT getActiveEvent (Staff-PIN
+  // "latest non-finalized" — stale whenever last week was left unfinalized).
+  getUpcomingScheduledEvent(todayTaipei: string): Promise<WeeklyEventRow | null>
+  // Phase 9 Slice 1 — idempotent create-if-missing for one Sunday's weekly_event
+  // (`on conflict (sunday_date) do nothing` via upsert+ignoreDuplicates, NOT a blanket
+  // 23505 catch). Inserts sunday_date ONLY — capacity/blocked/admin_reserved/status take
+  // their DB defaults — so an existing row, including admin-tuned capacity, is never
+  // modified. created=false when the row already existed.
+  ensureWeeklyEvent(sundayDate: string): Promise<{ created: boolean; event: WeeklyEventRow }>
   // Phase 3 v2: close the week after settlement (status → 'finalized'). Idempotent
   // status-guarded write; a finalized event blocks all Staff writes.
   finalizeWeeklyEvent(eventId: string): Promise<void>
@@ -749,6 +760,31 @@ export interface ParkingRepository {
 export function createParkingRepository(
   client: SupabaseClient = getServiceClient(),
 ): ParkingRepository {
+  // Shared weekly_events lookups — single query source for the method pairs below
+  // (getWeeklyEventBySunday/ensureWeeklyEvent and getMemberEvent/getUpcomingScheduledEvent)
+  // so their semantics can never drift.
+  async function weeklyEventBySunday(sunday: string): Promise<WeeklyEventRow | null> {
+    const { data, error } = await client
+      .from('weekly_events')
+      .select('id, sunday_date, status')
+      .eq('sunday_date', sunday)
+      .maybeSingle()
+    if (error) throw new Error(`getWeeklyEventBySunday failed: ${error.message}`)
+    return (data as WeeklyEventRow | null) ?? null
+  }
+
+  async function upcomingScheduledEvent(todayTaipei: string): Promise<WeeklyEventRow | null> {
+    const { data, error } = await client
+      .from('weekly_events')
+      .select('id, sunday_date, status')
+      .gte('sunday_date', todayTaipei)
+      .order('sunday_date', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    if (error) throw new Error(`getUpcomingScheduledEvent failed: ${error.message}`)
+    return (data as WeeklyEventRow | null) ?? null
+  }
+
   return {
     async getWeeklyEvent(eventId) {
       const { data, error } = await client
@@ -773,13 +809,30 @@ export function createParkingRepository(
     },
 
     async getWeeklyEventBySunday(sunday) {
+      return weeklyEventBySunday(sunday)
+    },
+
+    async getUpcomingScheduledEvent(todayTaipei) {
+      return upcomingScheduledEvent(todayTaipei)
+    },
+
+    async ensureWeeklyEvent(sundayDate) {
       const { data, error } = await client
         .from('weekly_events')
+        .upsert(
+          { sunday_date: sundayDate },
+          { onConflict: 'sunday_date', ignoreDuplicates: true },
+        )
         .select('id, sunday_date, status')
-        .eq('sunday_date', sunday)
         .maybeSingle()
-      if (error) throw new Error(`getWeeklyEventBySunday failed: ${error.message}`)
-      return (data as WeeklyEventRow | null) ?? null
+      if (error) throw new Error(`ensureWeeklyEvent failed: ${error.message}`)
+      if (data) return { created: true, event: data as WeeklyEventRow }
+      // Conflict path: the row already existed (do-nothing returns no row) — read it back.
+      const existing = await weeklyEventBySunday(sundayDate)
+      if (!existing) {
+        throw new Error(`ensureWeeklyEvent failed: conflict but no row for ${sundayDate}`)
+      }
+      return { created: false, event: existing }
     },
 
     async finalizeWeeklyEvent(eventId) {
@@ -1694,15 +1747,7 @@ export function createParkingRepository(
     },
 
     async getMemberEvent(todayTaipei) {
-      const { data, error } = await client
-        .from('weekly_events')
-        .select('id, sunday_date, status')
-        .gte('sunday_date', todayTaipei)
-        .order('sunday_date', { ascending: true })
-        .limit(1)
-        .maybeSingle()
-      if (error) throw new Error(`getMemberEvent failed: ${error.message}`)
-      return (data as WeeklyEventRow | null) ?? null
+      return upcomingScheduledEvent(todayTaipei)
     },
 
     async getMemberWeekReservation(userId, eventId) {
