@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#0f172a',
+  themeColor: '#06c755',
 }
 
 // Server component: gate on the member session. Logged out → LIFF/mock login gate.
@@ -107,9 +107,9 @@ export default async function MemberPage() {
 // Member-facing copy stays generic; the code is operator-diagnosable and secret-free.
 function ConfigError({ code }: { code: string }) {
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-3 bg-slate-950 px-6 text-slate-100">
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-3 bg-page px-6 text-ink">
       <h1 className="text-xl font-semibold">會友專區暫時無法使用</h1>
-      <p className="text-sm text-slate-400">請聯繫管理同工（{code}）</p>
+      <p className="text-sm text-muted">請聯繫管理同工（{code}）</p>
     </main>
   )
 }

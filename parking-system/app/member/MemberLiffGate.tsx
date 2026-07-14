@@ -91,9 +91,12 @@ export default function MemberLiffGate({
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-6 bg-slate-950 px-6 py-10 text-slate-100">
-      <div className="text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">教會停車 · 會友專區</h1>
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-6 bg-page px-6 py-10 text-ink">
+      <div className="flex flex-col items-center text-center">
+        <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand text-2xl" aria-hidden>
+          ⛪
+        </span>
+        <h1 className="text-2xl font-bold tracking-tight">教會停車 · 會友專區</h1>
       </div>
 
       {state === 'not_bound' ? (
@@ -102,17 +105,17 @@ export default function MemberLiffGate({
         <BindingClaimForm mode={mode} mockLineUserId={mockId.trim() || undefined} />
       ) : mode === 'mock' ? (
         <form onSubmit={submitMock} className="w-full space-y-3">
-          <p className="text-center text-sm text-amber-400">開發模式（mock）</p>
+          <p className="text-center text-sm font-medium text-warning-fg">開發模式（mock）</p>
           <input
             value={mockId}
             onChange={e => setMockId(e.target.value)}
             placeholder="mock LINE userId（如 U_member_01）"
-            className="h-12 w-full rounded-xl bg-slate-900 px-4 text-base text-slate-100 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-sky-500"
+            className="h-12 w-full rounded-xl border border-border bg-surface px-4 text-base text-ink placeholder:text-muted/70 outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
           />
           <button
             type="submit"
             disabled={submitting || mockId.trim() === ''}
-            className="h-12 w-full rounded-xl bg-sky-600 text-base font-medium text-white active:bg-sky-500 disabled:opacity-50"
+            className="h-12 w-full rounded-2xl bg-primary text-base font-semibold text-white transition-colors active:bg-primary-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
           >
             登入
           </button>
@@ -127,28 +130,28 @@ export default function MemberLiffGate({
 
 function GateMessage({ state }: { state: GateState }) {
   if (state === 'connecting') {
-    return <p className="text-base text-slate-400">連線中，請稍候…</p>
+    return <p className="text-base text-muted">連線中，請稍候…</p>
   }
   if (state === 'invalid_token') {
     return (
       <div className="text-center">
-        <p className="text-base text-rose-400">登入已過期，請關閉此頁後重新開啟</p>
+        <p className="text-base font-medium text-danger-fg">登入已過期，請關閉此頁後重新開啟</p>
       </div>
     )
   }
   if (state === 'unreachable') {
     return (
       <div className="text-center">
-        <p className="text-base text-rose-400">連線驗證服務失敗</p>
+        <p className="text-base font-medium text-danger-fg">連線驗證服務失敗</p>
         <button
           type="button"
           onClick={() => window.location.reload()}
-          className="mt-4 h-12 rounded-xl bg-slate-800 px-6 text-base text-slate-100 active:bg-slate-700"
+          className="mt-4 h-12 rounded-2xl border border-border bg-surface px-6 text-base text-ink transition-colors active:bg-border-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           再試一次
         </button>
       </div>
     )
   }
-  return <p className="text-base text-rose-400">發生錯誤，請稍後再試</p>
+  return <p className="text-base font-medium text-danger-fg">發生錯誤，請稍後再試</p>
 }
