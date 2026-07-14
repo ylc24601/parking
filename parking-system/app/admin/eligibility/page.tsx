@@ -35,24 +35,24 @@ export default async function AdminEligibilityPage() {
   const { items, hasMore, counts } = await listEligibilityReview()
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-10 text-slate-100">
+    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header>
-        <Link href="/admin" className="text-sm text-slate-400 hover:text-slate-200">← 管理後台</Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">P2 資格審查</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <Link href="/admin" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">← 管理後台</Link>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight">P2 資格審查</h1>
+        <p className="mt-1 text-sm text-muted">
           {hasMore ? '目前顯示（最急迫前 500 筆）：' : ''}
           已過期 {counts.expired} · 待覆核 {counts.review_due} · 60 天內 {counts.upcoming}
         </p>
       </header>
 
       {hasMore && (
-        <p className="rounded-xl border border-amber-800 bg-amber-950/40 px-4 py-3 text-sm text-amber-300">
+        <p className="rounded-xl border border-warning-fg/30 bg-warning-bg px-4 py-3 text-sm text-warning-fg">
           結果超過 500 筆；以下計數與清單僅包含最急迫的前 500 筆。
         </p>
       )}
 
       {items.length === 0 ? (
-        <p className="rounded-2xl border border-slate-800 bg-slate-900/50 px-6 py-12 text-center text-slate-400">
+        <p className="rounded-xl border border-border bg-surface px-6 py-12 text-center text-muted">
           目前沒有需要處理的資格
         </p>
       ) : (
@@ -62,21 +62,21 @@ export default async function AdminEligibilityPage() {
           return (
             <section key={section.status} className="flex flex-col gap-2">
               <div>
-                <h2 className="text-lg font-medium text-slate-200">{section.title}（{rows.length}）</h2>
-                <p className="text-xs text-slate-500">{section.hint}</p>
+                <h2 className="text-lg font-semibold text-ink">{section.title}（{rows.length}）</h2>
+                <p className="text-xs text-muted">{section.hint}</p>
               </div>
-              <div className="overflow-x-auto rounded-2xl border border-slate-800">
+              <div className="w-full overflow-x-auto rounded-xl border border-border">
                 <table className="w-full min-w-[640px] text-left text-sm">
-                  <thead className="bg-slate-900 text-slate-400">
+                  <thead className="bg-surface text-muted">
                     <tr>
                       <th className="px-4 py-3 font-normal">姓名</th>
                       <th className="px-4 py-3 font-normal">事由</th>
-                      <th className="px-4 py-3 font-normal">有效至</th>
-                      <th className="px-4 py-3 font-normal">覆核日</th>
-                      <th className="px-4 py-3 font-normal">最近覆核</th>
+                      <th className="whitespace-nowrap px-4 py-3 font-normal">有效至</th>
+                      <th className="whitespace-nowrap px-4 py-3 font-normal">覆核日</th>
+                      <th className="whitespace-nowrap px-4 py-3 font-normal">最近覆核</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800">
+                  <tbody className="divide-y divide-border">
                     {rows.map(row => (
                       <Row key={row.userId} row={row} />
                     ))}
@@ -93,16 +93,16 @@ export default async function AdminEligibilityPage() {
 
 function Row({ row }: { row: EligibilityReviewItem }) {
   return (
-    <tr className="bg-slate-950/40">
+    <tr className="bg-surface">
       <td className="px-4 py-3">
-        <Link href={`/admin/members/${row.userId}`} className="text-sky-300 hover:text-sky-200">
+        <Link href={`/admin/members/${row.userId}`} className="font-medium text-primary hover:underline">
           {row.displayName}
         </Link>
       </td>
-      <td className="px-4 py-3 text-slate-300">{row.reason ? (REASON_LABEL[row.reason] ?? row.reason) : '—'}</td>
-      <td className="px-4 py-3 text-slate-400">{row.validUntil ?? '—'}</td>
-      <td className="px-4 py-3 text-slate-400">{row.reviewDate ?? '—'}</td>
-      <td className="px-4 py-3 text-slate-500">{row.reviewedAt ? row.reviewedAt.slice(0, 10) : '—'}</td>
+      <td className="px-4 py-3 text-ink">{row.reason ? (REASON_LABEL[row.reason] ?? row.reason) : '—'}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-muted">{row.validUntil ?? '—'}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-muted">{row.reviewDate ?? '—'}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-muted">{row.reviewedAt ? row.reviewedAt.slice(0, 10) : '—'}</td>
     </tr>
   )
 }

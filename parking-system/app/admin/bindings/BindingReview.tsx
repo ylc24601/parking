@@ -1,9 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { PendingClaimListItem } from '@/server/services/bindingAdminService'
+import Badge from '../../ui/Badge'
 
 // Binding review queue (Phase 8 Slice 1). Everything sensitive arrived masked from
 // the service; the ONLY deliberate full values on screen are claimedName +
@@ -72,78 +73,80 @@ export default function BindingReview({
   }, [router])
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-10 text-slate-100">
+    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header className="flex items-center justify-between">
         <div>
-          <Link href="/admin" className="text-sm text-slate-400 hover:text-slate-200">
+          <Link href="/admin" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
             ← 管理後台
           </Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">綁定審核</h1>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight">綁定審核</h1>
         </div>
         <button
           type="button"
           onClick={() => router.refresh()}
-          className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+          className="inline-flex min-h-11 items-center rounded-xl border border-border px-4 text-sm text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           重新整理
         </button>
       </header>
 
       {hasMore && (
-        <p className="rounded-xl border border-amber-800 bg-amber-950/40 px-4 py-3 text-sm text-amber-300">
+        <p className="rounded-xl border border-warning-fg/30 bg-warning-bg px-4 py-3 text-sm text-warning-fg">
           目前僅顯示最早送出的 {items.length} 筆，之後還有更多待審申請——請先完成部分審核後重新整理。
         </p>
       )}
 
       {items.length === 0 ? (
-        <p className="rounded-2xl border border-slate-800 bg-slate-900/50 px-6 py-12 text-center text-slate-400">
+        <p className="rounded-xl border border-border bg-surface px-6 py-12 text-center text-muted">
           目前沒有待審核的綁定申請
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-slate-800">
+        <div className="w-full overflow-x-auto rounded-xl border border-border">
           <table className="w-full min-w-[720px] text-left text-sm">
-            <thead className="bg-slate-900 text-slate-400">
+            <thead className="bg-surface text-muted">
               <tr>
                 <th className="px-4 py-3 font-normal">ID</th>
-                <th className="px-4 py-3 font-normal">來源</th>
+                <th className="whitespace-nowrap px-4 py-3 font-normal">來源</th>
                 <th className="px-4 py-3 font-normal">申請內容</th>
-                <th className="px-4 py-3 font-normal">首次送出</th>
-                <th className="px-4 py-3 font-normal">最後更新</th>
-                <th className="px-4 py-3 font-normal">重送</th>
-                <th className="px-4 py-3 font-normal">操作</th>
+                <th className="whitespace-nowrap px-4 py-3 font-normal">首次送出</th>
+                <th className="whitespace-nowrap px-4 py-3 font-normal">最後更新</th>
+                <th className="whitespace-nowrap px-4 py-3 font-normal">重送</th>
+                <th className="whitespace-nowrap px-4 py-3 font-normal">操作</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-border">
               {items.map(item => (
-                <tr key={item.id} className="bg-slate-950/40">
+                <tr key={item.id} className="bg-surface">
                   <td className="px-4 py-3">
                     <button
                       type="button"
                       title={`點擊複製完整 ID\n${item.id}`}
                       onClick={() => void navigator.clipboard?.writeText(item.id)}
-                      className="font-mono text-slate-400 hover:text-slate-200"
+                      className="font-mono text-muted hover:text-ink"
                     >
                       {item.shortId}
                     </button>
                   </td>
-                  <td className="px-4 py-3 text-slate-300">{sourceLabel(item.source)}</td>
-                  <td className="px-4 py-3 font-mono text-slate-200">{item.claim}</td>
-                  <td className="px-4 py-3 text-slate-400">{fmtTaipei(item.submittedAt)}</td>
-                  <td className="px-4 py-3 text-slate-400">{fmtTaipei(item.lastUpdatedAt)}</td>
-                  <td className="px-4 py-3 text-slate-400">{item.resubmits}</td>
-                  <td className="px-4 py-3">
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <Badge variant="outline" tone={item.source === 'liff' ? 'info' : 'neutral'}>{sourceLabel(item.source)}</Badge>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-ink">{item.claim}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-muted">{fmtTaipei(item.submittedAt)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-muted">{fmtTaipei(item.lastUpdatedAt)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 tabular-nums text-muted">{item.resubmits}</td>
+                  <td className="whitespace-nowrap px-4 py-3">
                     <div className="flex gap-2">
                       <button
                         type="button"
                         onClick={() => setReviewItem(item)}
-                        className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-600"
+                        className="inline-flex items-center rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                       >
                         審核
                       </button>
                       <button
                         type="button"
                         onClick={() => setRejectItem(item)}
-                        className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-rose-700 hover:text-rose-300"
+                        className="inline-flex items-center rounded-lg border border-border px-3 py-2 text-sm text-ink transition-colors hover:border-danger-fg hover:text-danger-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                       >
                         退回
                       </button>
@@ -171,12 +174,13 @@ function ModalShell({ title, children, onClose }: {
   children: React.ReactNode
   onClose: () => void
 }) {
+  const titleId = useId()
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-6">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-200" aria-label="關閉">
+          <h2 id={titleId} className="text-lg font-semibold">{title}</h2>
+          <button type="button" onClick={onClose} className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-muted transition-colors hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2" aria-label="關閉">
             ✕
           </button>
         </div>
@@ -190,8 +194,8 @@ function PreviewField({ label, value }: { label: string; value: string | null | 
   if (value === null || value === undefined || value === '') return null
   return (
     <div className="flex justify-between gap-4 py-1.5">
-      <span className="shrink-0 text-slate-400">{label}</span>
-      <span className="break-all text-right text-slate-100">{value}</span>
+      <span className="shrink-0 text-muted">{label}</span>
+      <span className="break-all text-right text-ink">{value}</span>
     </div>
   )
 }
@@ -280,10 +284,10 @@ function ReviewModal({ item, onClose, onDone }: {
   return (
     <ModalShell title="審核綁定申請" onClose={onClose}>
       {loading ? (
-        <p className="py-8 text-center text-slate-400">載入預覽中…</p>
+        <p className="py-8 text-center text-muted">載入預覽中…</p>
       ) : preview ? (
         <div className="flex flex-col gap-4">
-          <div className="divide-y divide-slate-800 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-2 text-sm">
+          <div className="divide-y divide-border rounded-xl border border-border bg-page px-4 py-2 text-sm">
             <PreviewField label="來源" value={preview.claimSource ? sourceLabel(preview.claimSource) : null} />
             <PreviewField label="LINE 帳號（遮罩）" value={preview.lineUserIdMasked} />
             <PreviewField label="綁定碼（遮罩）" value={preview.submittedCodeMasked} />
@@ -295,8 +299,8 @@ function ReviewModal({ item, onClose, onDone }: {
           <p
             className={`rounded-xl px-4 py-3 text-sm ${
               preview.wouldApprove
-                ? 'border border-emerald-800 bg-emerald-950/40 text-emerald-300'
-                : 'border border-amber-800 bg-amber-950/40 text-amber-300'
+                ? 'border border-success-fg/30 bg-success-bg text-success-fg'
+                : 'border border-warning-fg/30 bg-warning-bg text-warning-fg'
             }`}
           >
             {preview.wouldApprove ? '✓ 預檢通過：' : '✗ 無法核准：'}
@@ -307,8 +311,8 @@ function ReviewModal({ item, onClose, onDone }: {
             <p
               className={`rounded-xl px-4 py-3 text-sm ${
                 notice.kind === 'changed'
-                  ? 'border border-amber-800 bg-amber-950/40 text-amber-300'
-                  : 'border border-rose-800 bg-rose-950/40 text-rose-300'
+                  ? 'border border-warning-fg/30 bg-warning-bg text-warning-fg'
+                  : 'border border-danger-fg/30 bg-danger-bg text-danger-fg'
               }`}
             >
               {notice.text}
@@ -320,7 +324,7 @@ function ReviewModal({ item, onClose, onDone }: {
               <button
                 type="button"
                 onClick={repreview}
-                className="rounded-xl bg-amber-700 px-4 py-2 text-sm text-white hover:bg-amber-600"
+                className="inline-flex min-h-11 items-center rounded-xl bg-warning-fg px-4 text-sm font-semibold text-white transition-colors hover:bg-warning-fg/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 重新預覽
               </button>
@@ -329,7 +333,7 @@ function ReviewModal({ item, onClose, onDone }: {
                 type="button"
                 onClick={() => void approve()}
                 disabled={!canApprove}
-                className="rounded-xl bg-emerald-700 px-4 py-2 text-sm text-white hover:bg-emerald-600 disabled:opacity-40"
+                className="inline-flex min-h-11 items-center rounded-xl bg-primary px-4 text-sm font-semibold text-white transition-colors hover:bg-primary-strong disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 {applying ? '核准中…' : '確認核准'}
               </button>
@@ -337,7 +341,7 @@ function ReviewModal({ item, onClose, onDone }: {
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+              className="inline-flex min-h-11 items-center rounded-xl border border-border px-4 text-sm text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               關閉
             </button>
@@ -345,14 +349,14 @@ function ReviewModal({ item, onClose, onDone }: {
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <p className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
+          <p className="rounded-xl border border-danger-fg/30 bg-danger-bg px-4 py-3 text-sm text-danger-fg">
             {notice?.text ?? '預覽載入失敗'}
           </p>
           <div className="flex justify-end">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+              className="inline-flex min-h-11 items-center rounded-xl border border-border px-4 text-sm text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               關閉
             </button>
@@ -403,7 +407,7 @@ function RejectModal({ item, onClose, onDone }: {
   return (
     <ModalShell title="退回綁定申請" onClose={onClose}>
       <div className="flex flex-col gap-4">
-        <p className="rounded-xl border border-amber-800 bg-amber-950/40 px-4 py-3 text-sm text-amber-300">
+        <p className="rounded-xl border border-warning-fg/30 bg-warning-bg px-4 py-3 text-sm text-warning-fg">
           ⚠️ 退回原因會原樣存檔供稽核：請勿填入姓名、電話、綁定碼或 LINE ID。
         </p>
 
@@ -413,7 +417,7 @@ function RejectModal({ item, onClose, onDone }: {
               key={preset}
               type="button"
               onClick={() => { setReason(preset); setError(null) }}
-              className="rounded-full border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:border-slate-500"
+              className="inline-flex min-h-11 items-center rounded-full border border-border px-3 text-sm text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               {preset}
             </button>
@@ -421,18 +425,18 @@ function RejectModal({ item, onClose, onDone }: {
         </div>
 
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm text-slate-400">退回原因（必填，200 字內）</span>
+          <span className="text-sm text-muted">退回原因（必填，200 字內）</span>
           <textarea
             value={reason}
             onChange={e => { setReason(e.target.value); setError(null) }}
             rows={3}
-            className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-sky-500"
+            className="rounded-xl border border-border bg-surface px-4 py-3 text-sm text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
           />
-          {tooLong && <span className="text-sm text-rose-400">已超過 200 字上限</span>}
+          {tooLong && <span className="text-sm text-danger-fg">已超過 200 字上限</span>}
         </label>
 
         {error && (
-          <p className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
+          <p className="rounded-xl border border-danger-fg/30 bg-danger-bg px-4 py-3 text-sm text-danger-fg">
             {error}
           </p>
         )}
@@ -442,14 +446,14 @@ function RejectModal({ item, onClose, onDone }: {
             type="button"
             onClick={() => void submit()}
             disabled={!trimmed || tooLong || submitting}
-            className="rounded-xl bg-rose-700 px-4 py-2 text-sm text-white hover:bg-rose-600 disabled:opacity-40"
+            className="inline-flex min-h-11 items-center rounded-xl bg-danger-fg px-4 text-sm font-semibold text-white transition-colors hover:bg-danger-fg/90 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             {submitting ? '退回中…' : '確認退回'}
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+            className="inline-flex min-h-11 items-center rounded-xl border border-border px-4 text-sm text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             取消
           </button>

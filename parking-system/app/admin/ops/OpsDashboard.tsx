@@ -89,17 +89,17 @@ export default function OpsDashboard({
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-10 text-slate-100">
+    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header className="flex items-start justify-between">
         <div>
-          <Link href="/admin" className="text-sm text-slate-400 hover:text-slate-200">← 管理後台</Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">營運狀態</h1>
-          <p className="mt-1 text-xs text-slate-500">快照時間：{snapshotAt.slice(0, 19).replace('T', ' ')} UTC</p>
+          <Link href="/admin" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">← 管理後台</Link>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight">營運狀態</h1>
+          <p className="mt-1 text-xs text-muted">快照時間：{snapshotAt.slice(0, 19).replace('T', ' ')} UTC</p>
         </div>
         <button
           type="button"
           onClick={() => router.refresh()}
-          className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+          className="inline-flex min-h-11 items-center rounded-xl border border-border px-4 text-sm text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           重新整理
         </button>
@@ -107,12 +107,12 @@ export default function OpsDashboard({
 
       {/* Health banner */}
       {alert.healthy ? (
-        <p className="rounded-2xl border border-emerald-800 bg-emerald-950/30 px-5 py-3 text-sm text-emerald-300">
+        <p className="rounded-xl border border-success-fg/30 bg-success-bg px-5 py-3 text-sm font-medium text-success-fg">
           通知佇列正常
         </p>
       ) : (
-        <div className="rounded-2xl border border-rose-800 bg-rose-950/30 px-5 py-3 text-sm text-rose-300">
-          <p className="font-medium">通知佇列異常</p>
+        <div className="rounded-xl border border-danger-fg/30 bg-danger-bg px-5 py-3 text-sm text-danger-fg">
+          <p className="font-semibold">通知佇列異常</p>
           <ul className="mt-1 list-disc pl-5">
             {alert.breaches.map(b => <li key={b}>{BREACH_LABEL[b] ?? b}</li>)}
           </ul>
@@ -134,8 +134,8 @@ export default function OpsDashboard({
       <Breakdown title="失敗分類（by error）" entries={health.failed_by_error} />
 
       {/* Timestamps */}
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5 text-sm">
-        <h3 className="text-sm font-medium text-slate-200">時間點</h3>
+      <section className="rounded-xl border border-border bg-surface p-5 text-sm">
+        <h3 className="text-sm font-semibold text-ink">時間點</h3>
         <dl className="mt-2 grid grid-cols-1 gap-x-8 gap-y-1 sm:grid-cols-2">
           <TimeRow label="最舊待送（due）" iso={health.oldest_due_at} snapshotAt={snapshotAt} />
           <TimeRow label="最舊 pending" iso={health.oldest_pending_at} snapshotAt={snapshotAt} />
@@ -145,27 +145,27 @@ export default function OpsDashboard({
       </section>
 
       {/* Requeue */}
-      <section className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-        <h3 className="text-lg font-medium">死信重送</h3>
-        <p className="text-xs text-slate-500">
+      <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-6">
+        <h3 className="text-lg font-semibold">死信重送</h3>
+        <p className="text-xs text-muted">
           把終態 <code>failed</code> 通知移回 <code>pending</code> 等下次派送。
-          <span className="text-amber-300/80">請先修好根因（token/config/provider）再重送。</span>
+          <span className="text-warning-fg">請先修好根因（token/config/provider）再重送。</span>
         </p>
         <div className="flex flex-wrap items-end gap-4">
           <label className="flex flex-col gap-1 text-sm">
-            <span className="text-slate-400">筆數上限</span>
+            <span className="text-muted">筆數上限</span>
             <input
               type="number" min={1} max={500} step={1} value={max}
               onChange={e => changeMax(Number(e.target.value))}
-              className="w-28 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-sky-500"
+              className="w-28 rounded-lg border border-border bg-surface px-3 py-2 text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
-            <span className="text-slate-400">錯誤類型</span>
+            <span className="text-muted">錯誤類型</span>
             <select
               value={errorCode}
               onChange={e => changeErrorCode(e.target.value)}
-              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-sky-500"
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
             >
               <option value="">全部失敗</option>
               {errorCodes.map(c => <option key={c} value={c}>{c}（{health.failed_by_error[c]}）</option>)}
@@ -175,27 +175,27 @@ export default function OpsDashboard({
             type="button"
             onClick={doPreview}
             disabled={busy}
-            className="rounded-xl bg-sky-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+            className="inline-flex min-h-11 items-center rounded-xl bg-primary px-5 text-sm font-semibold text-white transition-colors hover:bg-primary-strong disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             {busy && !preview ? '預覽中…' : '預覽'}
           </button>
         </div>
 
-        {error && <p className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-2 text-sm text-rose-300">{error}</p>}
+        {error && <p className="rounded-lg border border-danger-fg/30 bg-danger-bg px-4 py-2 text-sm text-danger-fg">{error}</p>}
 
         {preview && (
-          <div className="flex flex-col gap-3 rounded-xl border border-amber-800 bg-amber-950/30 p-4">
-            <p className="text-sm text-amber-200">
+          <div className="flex flex-col gap-3 rounded-lg border border-warning-fg/30 bg-warning-bg p-4">
+            <p className="text-sm text-warning-fg">
               將重送最多 {preview.max} 筆・錯誤類型：{preview.errorCode || '全部失敗'}・預計符合：{preview.wouldRequeue} 筆。
               <br />
-              <span className="text-xs text-amber-300/80">預覽為當下估算；實際重送數量可能因其他操作而較少。</span>
+              <span className="text-xs">預覽為當下估算；實際重送數量可能因其他操作而較少。</span>
             </p>
             <div>
               <button
                 type="button"
                 onClick={doApply}
                 disabled={busy}
-                className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                className="inline-flex min-h-11 items-center rounded-xl bg-primary px-5 text-sm font-semibold text-white transition-colors hover:bg-primary-strong disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 {busy ? '重送中…' : '確認重送'}
               </button>
@@ -204,7 +204,7 @@ export default function OpsDashboard({
         )}
 
         {result !== null && (
-          <p className="rounded-xl border border-emerald-800 bg-emerald-950/30 px-4 py-2 text-sm text-emerald-300">
+          <p className="rounded-lg border border-success-fg/30 bg-success-bg px-4 py-2 text-sm text-success-fg">
             已將 {result} 筆失敗通知移回待送佇列，將由下一次 dispatcher 送出。
           </p>
         )}
@@ -214,11 +214,11 @@ export default function OpsDashboard({
 }
 
 function Stat({ label, value, tone }: { label: string; value: number; tone?: 'warn' | 'bad' }) {
-  const color = tone === 'bad' ? 'text-rose-300' : tone === 'warn' ? 'text-amber-300' : 'text-slate-100'
+  const color = tone === 'bad' ? 'text-danger-fg' : tone === 'warn' ? 'text-warning-fg' : 'text-ink'
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3">
-      <div className="text-xs text-slate-400">{label}</div>
-      <div className={`text-lg font-medium ${color}`}>{value}</div>
+    <div className="rounded-xl border border-border bg-surface px-4 py-3">
+      <div className="text-xs text-muted">{label}</div>
+      <div className={`text-lg font-semibold tabular-nums ${color}`}>{value}</div>
     </div>
   )
 }
@@ -227,13 +227,13 @@ function Breakdown({ title, entries }: { title: string; entries: Record<string, 
   const keys = Object.keys(entries)
   if (keys.length === 0) return null
   return (
-    <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
-      <h3 className="text-sm font-medium text-slate-200">{title}</h3>
-      <ul className="mt-2 space-y-1 text-sm text-slate-400">
+    <section className="rounded-xl border border-border bg-surface p-5">
+      <h3 className="text-sm font-semibold text-ink">{title}</h3>
+      <ul className="mt-2 space-y-1 text-sm text-muted">
         {keys.map(k => (
           <li key={k} className="flex justify-between gap-4">
             <span className="font-mono">{k}</span>
-            <span className="text-slate-200">{entries[k]}</span>
+            <span className="tabular-nums text-ink">{entries[k]}</span>
           </li>
         ))}
       </ul>
@@ -244,9 +244,9 @@ function Breakdown({ title, entries }: { title: string; entries: Record<string, 
 function TimeRow({ label, iso, snapshotAt }: { label: string; iso: string | null; snapshotAt: string }) {
   return (
     <div className="flex gap-3">
-      <dt className="w-32 shrink-0 text-slate-400">{label}</dt>
-      <dd className="text-slate-200">
-        {iso === null ? '—' : <>{relTime(snapshotAt, iso)} <span className="text-slate-500">（{iso.slice(0, 19).replace('T', ' ')} UTC）</span></>}
+      <dt className="w-32 shrink-0 text-muted">{label}</dt>
+      <dd className="text-ink">
+        {iso === null ? '—' : <>{relTime(snapshotAt, iso)} <span className="text-muted">（{iso.slice(0, 19).replace('T', ' ')} UTC）</span></>}
       </dd>
     </div>
   )

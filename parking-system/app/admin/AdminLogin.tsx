@@ -42,15 +42,15 @@ export default function AdminLogin() {
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-8 px-6 py-10 text-slate-100">
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-8 bg-page px-6 py-10 text-ink">
       <div className="text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">教會停車 · 管理後台</h1>
-        <p className="mt-2 text-base text-slate-400">請以管理員帳號登入</p>
+        <h1 className="text-2xl font-bold tracking-tight">教會停車 · 管理後台</h1>
+        <p className="mt-2 text-base text-muted">請以管理員帳號登入</p>
       </div>
 
       <form onSubmit={submit} className="flex flex-col gap-4">
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm text-slate-400">帳號</span>
+          <span className="text-sm text-muted">帳號</span>
           <input
             type="text"
             autoComplete="username"
@@ -58,28 +58,28 @@ export default function AdminLogin() {
             autoCorrect="off"
             value={username}
             onChange={e => { setUsername(e.target.value); setError(null) }}
-            className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base text-slate-100 outline-none focus:border-sky-500"
+            className="rounded-xl border border-border bg-surface px-4 py-3 text-base text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
           />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-sm text-slate-400">密碼</span>
+          <span className="text-sm text-muted">密碼</span>
           <input
             type="password"
             autoComplete="current-password"
             value={password}
             onChange={e => { setPassword(e.target.value); setError(null) }}
-            className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-base text-slate-100 outline-none focus:border-sky-500"
+            className="rounded-xl border border-border bg-surface px-4 py-3 text-base text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
           />
         </label>
 
-        <p className="h-6 text-base text-rose-400" role="alert">
+        <p className="h-6 text-base text-danger-fg" role="alert">
           {error ?? ''}
         </p>
 
         <button
           type="submit"
           disabled={submitting || !username || !password}
-          className="rounded-xl bg-sky-600 py-3 text-base font-medium text-white active:bg-sky-500 disabled:opacity-50"
+          className="rounded-xl bg-primary py-3 text-base font-semibold text-white transition-colors active:bg-primary-strong disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           {submitting ? '登入中…' : '登入'}
         </button>

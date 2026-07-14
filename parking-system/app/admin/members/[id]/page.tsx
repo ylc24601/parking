@@ -5,6 +5,7 @@ import { taipeiToday } from '@/lib/taipeiDate'
 import { deriveEligibilityStatus, type EligibilityStatus } from '@/lib/eligibilityStatus'
 import { getAdminSession } from '@/server/http/adminAuth'
 import { getMemberDetail, type MemberDetail } from '@/server/services/memberAdminService'
+import Badge, { type BadgeTone } from '../../../ui/Badge'
 import IssueBindingCode from './IssueBindingCode'
 
 export const metadata: Metadata = {
@@ -36,14 +37,14 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const detail = UUID_FORMAT.test(id) ? await getMemberDetail(id) : null
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-10 text-slate-100">
+    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header>
-        <Link href="/admin/members" className="text-sm text-slate-400 hover:text-slate-200">← 會友管理</Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">會友明細</h1>
+        <Link href="/admin/members" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">← 會友管理</Link>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight">會友明細</h1>
       </header>
 
       {detail === null ? (
-        <p className="rounded-2xl border border-slate-800 bg-slate-900/50 px-6 py-12 text-center text-slate-400">
+        <p className="rounded-xl border border-border bg-surface px-6 py-12 text-center text-muted">
           查無此會友
         </p>
       ) : (
@@ -56,16 +57,14 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
 function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
   return (
     <div className="flex flex-col gap-6">
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-        <div className="flex items-center gap-3">
-          <h2 className="text-xl font-medium">{detail.displayName}</h2>
-          <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-400">
-            {ROLE_LABEL[detail.role] ?? detail.role}
-          </span>
+      <section className="rounded-xl border border-border bg-surface p-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-xl font-semibold">{detail.displayName}</h2>
+          <Badge variant="outline" tone="neutral">{ROLE_LABEL[detail.role] ?? detail.role}</Badge>
           {detail.bound ? (
-            <span className="rounded-full border border-emerald-800 px-2 py-0.5 text-xs text-emerald-300">已綁定 LINE</span>
+            <Badge variant="outline" tone="success">已綁定 LINE</Badge>
           ) : (
-            <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-400">未綁定</span>
+            <Badge variant="outline" tone="neutral">未綁定</Badge>
           )}
         </div>
         <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
@@ -75,7 +74,7 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
               <ul className="space-y-0.5">
                 {detail.vehicles.map((v, i) => (
                   <li key={i} className="font-mono">
-                    {v.plate}{v.nickname ? <span className="ml-2 font-sans text-slate-400">{v.nickname}</span> : null}
+                    {v.plate}{v.nickname ? <span className="ml-2 font-sans text-muted">{v.nickname}</span> : null}
                   </li>
                 ))}
               </ul>
@@ -84,9 +83,9 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
         </dl>
       </section>
 
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-        <div className="flex items-center gap-3">
-          <h3 className="text-lg font-medium">P2 資格</h3>
+      <section className="rounded-xl border border-border bg-surface p-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 className="text-lg font-semibold">P2 資格</h3>
           {detail.eligibility !== null && detail.eligibility.p2Eligible && (
             <EligibilityBadge
               status={deriveEligibilityStatus(
@@ -98,7 +97,7 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
           )}
         </div>
         {detail.eligibility === null || !detail.eligibility.p2Eligible ? (
-          <p className="mt-2 text-sm text-slate-400">無 P2 資格</p>
+          <p className="mt-2 text-sm text-muted">無 P2 資格</p>
         ) : (
           <dl className="mt-3 grid grid-cols-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
             <Row label="事由">{detail.eligibility.p2Reason ? (REASON_LABEL[detail.eligibility.p2Reason] ?? detail.eligibility.p2Reason) : '—'}</Row>
@@ -109,13 +108,13 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
         )}
         {detail.dependents.length > 0 && (
           <div className="mt-4">
-            <h4 className="text-sm text-slate-400">眷屬</h4>
+            <h4 className="text-sm text-muted">眷屬</h4>
             <ul className="mt-1 space-y-0.5 text-sm">
               {detail.dependents.map((d, i) => (
                 <li key={i}>
-                  <span className="text-slate-400">{DEP_KIND_LABEL[d.kind] ?? d.kind}</span>
+                  <span className="text-muted">{DEP_KIND_LABEL[d.kind] ?? d.kind}</span>
                   <span className="ml-2">{d.name}</span>
-                  {d.birthdate ? <span className="ml-2 text-slate-500">{d.birthdate}</span> : null}
+                  {d.birthdate ? <span className="ml-2 text-muted">{d.birthdate}</span> : null}
                 </li>
               ))}
             </ul>
@@ -123,8 +122,8 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
         )}
       </section>
 
-      <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-        <h3 className="text-lg font-medium">綁定碼（fallback 綁定）</h3>
+      <section className="rounded-xl border border-border bg-surface p-6">
+        <h3 className="text-lg font-semibold">綁定碼（fallback 綁定）</h3>
         <IssueBindingCode userId={id} bound={detail.bound} />
       </section>
     </div>
@@ -134,21 +133,21 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
 // Makes an EXPIRED-but-still-p2_eligible qualification unmistakable — otherwise the
 // section reads as "has P2" while apply-time priority silently drops the member to P3.
 function EligibilityBadge({ status, validUntil }: { status: EligibilityStatus; validUntil: string | null }) {
-  const meta: Record<EligibilityStatus, { label: string; className: string }> = {
-    active: { label: '有效', className: 'border-emerald-800 text-emerald-300' },
-    expired: { label: validUntil ? `已過期（${validUntil}）` : '已過期', className: 'border-rose-800 text-rose-300' },
-    review_due: { label: '待覆核', className: 'border-amber-800 text-amber-300' },
-    permanent: { label: '永久', className: 'border-slate-700 text-slate-400' },
+  const meta: Record<EligibilityStatus, { label: string; tone: BadgeTone }> = {
+    active: { label: '有效', tone: 'success' },
+    expired: { label: validUntil ? `已過期（${validUntil}）` : '已過期', tone: 'danger' },
+    review_due: { label: '待覆核', tone: 'warning' },
+    permanent: { label: '永久', tone: 'neutral' },
   }
-  const { label, className } = meta[status]
-  return <span className={`rounded-full border px-2 py-0.5 text-xs ${className}`}>{label}</span>
+  const { label, tone } = meta[status]
+  return <Badge variant="outline" tone={tone}>{label}</Badge>
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-3">
-      <dt className="w-20 shrink-0 text-slate-400">{label}</dt>
-      <dd className="text-slate-100">{children}</dd>
+      <dt className="w-20 shrink-0 text-muted">{label}</dt>
+      <dd className="text-ink">{children}</dd>
     </div>
   )
 }
