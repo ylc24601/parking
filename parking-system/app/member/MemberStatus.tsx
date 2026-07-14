@@ -136,7 +136,7 @@ export default function MemberStatus({ status }: { status: MemberWeekStatus }) {
           type="button"
           onClick={logout}
           disabled={busy}
-          className="h-9 shrink-0 rounded-lg px-3 text-sm font-medium text-primary-deep/80 transition-colors active:bg-black/5 disabled:opacity-50"
+          className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg px-3 text-sm font-medium text-primary-deep/80 transition-colors active:bg-black/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-deep focus-visible:ring-offset-2 disabled:opacity-50"
         >
           登出
         </button>
@@ -186,7 +186,7 @@ export default function MemberStatus({ status }: { status: MemberWeekStatus }) {
           </>
         )}
 
-        <p className="mt-auto pt-6 text-center text-xs text-muted/80">
+        <p className="pt-8 text-center text-xs text-muted/80">
           如有停車需求或異動，請聯繫教會停車同工
         </p>
       </section>
