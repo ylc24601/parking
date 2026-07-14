@@ -27,7 +27,7 @@ export default function LogoutButton() {
       type="button"
       onClick={logout}
       disabled={submitting}
-      className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500 disabled:opacity-50"
+      className="inline-flex min-h-11 items-center justify-center rounded-xl border border-border px-4 text-sm text-ink transition-colors hover:border-primary disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
     >
       登出
     </button>
