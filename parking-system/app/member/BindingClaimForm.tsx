@@ -124,15 +124,15 @@ export default function BindingClaimForm({
 
   if (state === 'submitted') {
     return (
-      <div className="w-full rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-6 text-center">
-        <p className="text-lg text-emerald-300">已送出綁定申請</p>
-        <p className="mt-3 text-sm leading-relaxed text-slate-400">
+      <div className="w-full rounded-2xl border border-success-fg/30 bg-success-bg p-6 text-center">
+        <p className="text-lg font-semibold text-success-fg">已送出綁定申請</p>
+        <p className="mt-3 text-sm leading-relaxed text-muted">
           同工核准後即可使用會友專區。若資料填錯，重新送出一次即會更新申請內容。
         </p>
         <button
           type="button"
           onClick={() => setState('idle')}
-          className="mt-5 h-12 rounded-xl bg-slate-800 px-6 text-base text-slate-100 active:bg-slate-700"
+          className="mt-5 h-12 rounded-2xl border border-border bg-surface px-6 text-base text-ink transition-colors active:bg-border-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           修改重送
         </button>
@@ -141,31 +141,31 @@ export default function BindingClaimForm({
   }
 
   if (state === 'relogin') {
-    return <p className="text-base text-slate-400">此帳號已完成綁定，正在為您登入…</p>
+    return <p className="text-base text-muted">此帳號已完成綁定，正在為您登入…</p>
   }
   if (state === 'expired') {
-    return <p className="text-base text-rose-400">登入已過期，請關閉此頁後重新開啟</p>
+    return <p className="text-base font-medium text-danger-fg">登入已過期，請關閉此頁後重新開啟</p>
   }
 
   return (
     <form onSubmit={submit} className="w-full space-y-4">
-      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-        <p className="text-lg">申請綁定會友專區</p>
-        <p className="mt-1 text-sm leading-relaxed text-slate-400">
+      <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+        <p className="text-lg font-semibold">申請綁定會友專區</p>
+        <p className="mt-1 text-sm leading-relaxed text-muted">
           請填寫您在教會登記的姓名與手機，送出後由同工核對並核准。
         </p>
 
-        <label className="mt-4 block text-sm text-slate-400" htmlFor="claim-name">姓名</label>
+        <label className="mt-4 block text-sm text-muted" htmlFor="claim-name">姓名</label>
         <input
           id="claim-name"
           value={name}
           onChange={e => setName(e.target.value)}
           maxLength={NAME_MAX}
           autoComplete="name"
-          className="mt-1 h-12 w-full rounded-xl bg-slate-800 px-4 text-base text-slate-100 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-sky-500"
+          className="mt-1 h-12 w-full rounded-xl border border-border bg-surface px-4 text-base text-ink placeholder:text-muted/70 outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
         />
 
-        <label className="mt-3 block text-sm text-slate-400" htmlFor="claim-phone">手機號碼</label>
+        <label className="mt-3 block text-sm text-muted" htmlFor="claim-phone">手機號碼</label>
         <input
           id="claim-phone"
           value={phone}
@@ -174,21 +174,21 @@ export default function BindingClaimForm({
           autoComplete="tel"
           placeholder="09xxxxxxxx"
           maxLength={20}
-          className="mt-1 h-12 w-full rounded-xl bg-slate-800 px-4 text-base text-slate-100 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-sky-500"
+          className="mt-1 h-12 w-full rounded-xl border border-border bg-surface px-4 text-base text-ink placeholder:text-muted/70 outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
         />
         {phone !== '' && !phoneValid && (
-          <p className="mt-1 text-xs text-amber-400">格式：09 開頭共 10 碼</p>
+          <p className="mt-1 text-xs text-warning-fg">格式：09 開頭共 10 碼</p>
         )}
       </div>
 
-      <p className="h-5 text-center text-sm text-rose-400" role="alert">
+      <p className="h-5 text-center text-sm text-danger-fg" role="alert">
         {fieldError ?? (state === 'unreachable' ? '連線驗證服務失敗，請再試一次' : state === 'error' ? '發生錯誤，請稍後再試' : '')}
       </p>
 
       <button
         type="submit"
         disabled={state === 'submitting'}
-        className="h-12 w-full rounded-xl bg-sky-600 text-base font-medium text-white active:bg-sky-500 disabled:opacity-50"
+        className="h-12 w-full rounded-2xl bg-primary text-base font-semibold text-white transition-colors active:bg-primary-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50"
       >
         {state === 'submitting' ? '送出中…' : '送出申請'}
       </button>

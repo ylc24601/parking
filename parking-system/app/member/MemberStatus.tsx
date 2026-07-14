@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Badge, { type BadgeTone } from '../ui/Badge'
 
 // Member-safe week status DTO, built by the server page from repo rows. Own data
 // only — no penalty, no other members, no ids. Dates are ISO strings (client
@@ -45,20 +46,21 @@ function timeLabel(iso: string | null): string | null {
   return iso ? TAIPEI_TIME.format(new Date(iso)) : null
 }
 
-// 狀態 → 會友文案。offer 確認/正在路上為 Slice 4。
+// 狀態 → 會友文案 + badge tone. temp_approved 用 info（藍）與 waiting/pending（warning 琥珀）
+// 區隔；已核准/到場為 success，已釋出/未到/取消為 neutral。
 function statusView(r: NonNullable<MemberWeekStatus['reservation']>): {
   label: string
-  tone: 'ok' | 'wait' | 'off'
+  tone: BadgeTone
   detail: string | null
 } {
   const deadline = timeLabel(r.releaseDeadlineAt)
   switch (r.status) {
     case 'pending':
-      return { label: '已登記，等待分配', tone: 'wait', detail: '週五 18:00 分配後於此頁查看結果' }
+      return { label: '已登記，等待分配', tone: 'warning', detail: '週五 18:00 分配後於此頁查看結果' }
     case 'approved':
       return {
         label: '已核准車位',
-        tone: 'ok',
+        tone: 'success',
         detail: deadline
           ? `請於主日 ${deadline} 前抵達${r.p2OnTheWay ? '（已回報正在路上）' : ''}`
           : null,
@@ -66,34 +68,28 @@ function statusView(r: NonNullable<MemberWeekStatus['reservation']>): {
     case 'temp_approved':
       return {
         label: '候補遞補中',
-        tone: 'wait',
+        tone: 'info',
         detail: timeLabel(r.offerExpiresAt)
           ? `已為您保留車位，請於 ${timeLabel(r.offerExpiresAt)} 前回覆`
           : '已為您保留車位，請儘速回覆',
       }
     case 'waiting':
-      return { label: '候補中', tone: 'wait', detail: '若有車位釋出將依序遞補並通知您' }
+      return { label: '候補中', tone: 'warning', detail: '若有車位釋出將依序遞補並通知您' }
     case 'attended':
-      return { label: '已到場', tone: 'ok', detail: null }
+      return { label: '已到場', tone: 'success', detail: null }
     case 'attended_after_release':
-      return { label: '已到場（逾時補點名）', tone: 'ok', detail: null }
+      return { label: '已到場（逾時補點名）', tone: 'success', detail: null }
     case 'released_late':
-      return { label: '逾時未到，車位已釋出', tone: 'off', detail: '如已在現場請洽停車同工' }
+      return { label: '逾時未到，車位已釋出', tone: 'neutral', detail: '如已在現場請洽停車同工' }
     case 'no_show':
-      return { label: '本週未到場', tone: 'off', detail: null }
+      return { label: '本週未到場', tone: 'neutral', detail: null }
     case 'cancelled_by_user':
     case 'cancelled_late':
-      return { label: '已取消', tone: 'off', detail: null }
+      return { label: '已取消', tone: 'neutral', detail: null }
     default:
-      return { label: '狀態確認中', tone: 'wait', detail: '請洽停車同工' }
+      return { label: '狀態確認中', tone: 'warning', detail: '請洽停車同工' }
   }
 }
-
-const TONE_CLASSES = {
-  ok: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-  wait: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
-  off: 'border-slate-600 bg-slate-800/60 text-slate-300',
-} as const
 
 const APPLY_ERROR_COPY: Record<string, string> = {
   applications_closed: '本週登記已截止',
@@ -104,6 +100,11 @@ const APPLY_ERROR_COPY: Record<string, string> = {
   staff_use_p1: '全職同工車位由每週保留名額管理，無需登記',
   invalid_request: '資料有誤，請重新選擇車輛',
 }
+
+// Shared button base: large touch target, rounded, visible keyboard focus.
+const BTN =
+  'inline-flex h-12 w-full items-center justify-center rounded-2xl text-base font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:opacity-50'
+const CARD = 'rounded-2xl border border-border bg-surface p-5 shadow-sm'
 
 export default function MemberStatus({ status }: { status: MemberWeekStatus }) {
   const router = useRouter()
@@ -122,40 +123,55 @@ export default function MemberStatus({ status }: { status: MemberWeekStatus }) {
   const view = r ? statusView(r) : null
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-slate-950 px-5 py-8 text-slate-100">
-      <header className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">教會停車 · 會友專區</h1>
-          <p className="mt-1 text-sm text-slate-400">{status.displayName}，平安</p>
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-page text-ink">
+      {/* LINE-green brand strip. Dark ink text (not white) keeps AA on #06C755. */}
+      <header className="flex items-center justify-between gap-3 bg-brand px-5 pb-3 pt-[calc(env(safe-area-inset-top)+0.85rem)]">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-lg" aria-hidden>
+            ⛪
+          </span>
+          <p className="text-sm font-bold text-primary-deep">教會停車 · 會友專區</p>
         </div>
         <button
           type="button"
           onClick={logout}
           disabled={busy}
-          className="h-12 shrink-0 rounded-xl px-4 text-sm text-slate-400 active:bg-slate-800 disabled:opacity-50"
+          className="h-9 shrink-0 rounded-lg px-3 text-sm font-medium text-primary-deep/80 transition-colors active:bg-black/5 disabled:opacity-50"
         >
           登出
         </button>
       </header>
 
-      <section className="mt-8 space-y-4">
+      <section className="flex-1 space-y-4 px-5 pb-[calc(env(safe-area-inset-bottom)+2rem)] pt-5">
+        <p className="text-sm text-muted">{status.displayName}，平安</p>
+
         {status.sundayDate === null ? (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
-            <p className="text-lg">本週登記尚未開放</p>
-            <p className="mt-2 text-sm text-slate-400">開放後可在此登記並查看您的停車預約</p>
+          <div className={`${CARD} text-center`}>
+            <p className="text-lg font-medium">本週登記尚未開放</p>
+            <p className="mt-2 text-sm text-muted">開放後可在此登記並查看您的停車預約</p>
           </div>
         ) : (
           <>
+            {/* 本週主日 hero — deep→mid green gradient, white text passes AA. */}
+            <div className="rounded-2xl bg-gradient-to-br from-primary to-primary-deep p-4 text-white shadow-[0_8px_20px_rgba(21,128,61,0.22)]">
+              <p className="text-xs font-medium tracking-wide text-white/80">本週主日</p>
+              <p className="mt-0.5 text-2xl font-extrabold tracking-tight text-balance">
+                {sundayLabel(status.sundayDate)}
+              </p>
+            </div>
+
             {r && view && (
-              <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-                <p className="text-sm text-slate-400">{sundayLabel(status.sundayDate)}</p>
-                <p
-                  className={`mt-3 inline-block rounded-full border px-4 py-1.5 text-base font-medium ${TONE_CLASSES[view.tone]}`}
-                >
-                  {view.label}
-                </p>
-                {r.plate && <p className="mt-4 text-2xl font-semibold tracking-wide">{r.plate}</p>}
-                {view.detail && <p className="mt-3 text-sm leading-relaxed text-slate-400">{view.detail}</p>}
+              <div className={CARD}>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted">本週停車狀態</p>
+                <div className="mt-2.5">
+                  <Badge tone={view.tone} className="text-sm">
+                    {view.label}
+                  </Badge>
+                </div>
+                {r.plate && (
+                  <p className="mt-4 font-mono text-2xl font-bold tracking-wide">{r.plate}</p>
+                )}
+                {view.detail && <p className="mt-3 text-sm leading-relaxed text-muted">{view.detail}</p>}
                 {status.canRespondOffer && <OfferActions disabled={busy} />}
                 {status.canReportOnTheWay && <OnTheWayButton disabled={busy} />}
                 {status.canCancel && (
@@ -165,19 +181,15 @@ export default function MemberStatus({ status }: { status: MemberWeekStatus }) {
             )}
 
             {status.apply && (
-              <ApplyBlock
-                sundayDate={status.sundayDate}
-                apply={status.apply}
-                hasCancelledCard={r !== null}
-              />
+              <ApplyBlock apply={status.apply} hasCancelledCard={r !== null} />
             )}
           </>
         )}
-      </section>
 
-      <p className="mt-auto pt-8 text-center text-xs text-slate-600">
-        如有停車需求或異動，請聯繫教會停車同工
-      </p>
+        <p className="mt-auto pt-6 text-center text-xs text-muted/80">
+          如有停車需求或異動，請聯繫教會停車同工
+        </p>
+      </section>
     </main>
   )
 }
@@ -221,13 +233,13 @@ function OfferActions({ disabled }: { disabled: boolean }) {
     <div className="mt-5 space-y-2">
       {arming ? (
         <>
-          <p className="text-sm text-amber-400">確定放棄？車位將轉給下一位候補</p>
+          <p className="text-sm text-warning-fg">確定放棄？車位將轉給下一位候補</p>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => respond('decline')}
               disabled={submitting !== null || disabled}
-              className="h-12 flex-1 rounded-xl bg-rose-600 text-base font-medium text-white active:bg-rose-500 disabled:opacity-50"
+              className={`${BTN} flex-1 bg-danger-fg text-white active:bg-danger-fg/90`}
             >
               {submitting === 'decline' ? '送出中…' : '確定放棄'}
             </button>
@@ -235,7 +247,7 @@ function OfferActions({ disabled }: { disabled: boolean }) {
               type="button"
               onClick={() => setArming(false)}
               disabled={submitting !== null}
-              className="h-12 flex-1 rounded-xl bg-slate-800 text-base text-slate-100 active:bg-slate-700 disabled:opacity-50"
+              className={`${BTN} flex-1 border border-border bg-surface text-ink active:bg-border-subtle`}
             >
               返回
             </button>
@@ -247,7 +259,7 @@ function OfferActions({ disabled }: { disabled: boolean }) {
             type="button"
             onClick={() => respond('confirm')}
             disabled={submitting !== null || disabled}
-            className="h-12 w-full rounded-xl bg-sky-600 text-base font-medium text-white active:bg-sky-500 disabled:opacity-50"
+            className={`${BTN} bg-info-fg text-white active:bg-info-fg/90`}
           >
             {submitting === 'confirm' ? '確認中…' : '確認保留車位'}
           </button>
@@ -255,13 +267,13 @@ function OfferActions({ disabled }: { disabled: boolean }) {
             type="button"
             onClick={() => setArming(true)}
             disabled={submitting !== null || disabled}
-            className="h-12 w-full rounded-xl border border-slate-700 text-base text-slate-300 active:bg-slate-800 disabled:opacity-50"
+            className={`${BTN} border border-border bg-surface text-muted active:bg-border-subtle`}
           >
             放棄這個車位
           </button>
         </>
       )}
-      {error && <p className="text-sm text-rose-400" role="alert">{error}</p>}
+      {error && <p className="text-sm text-danger-fg" role="alert">{error}</p>}
     </div>
   )
 }
@@ -296,11 +308,11 @@ function OnTheWayButton({ disabled }: { disabled: boolean }) {
         type="button"
         onClick={report}
         disabled={submitting || disabled}
-        className="h-12 w-full rounded-xl bg-amber-600 text-base font-medium text-white active:bg-amber-500 disabled:opacity-50"
+        className={`${BTN} bg-warning-fg text-white active:bg-warning-fg/90`}
       >
         {submitting ? '回報中…' : '我正在路上（保留至 10:55）'}
       </button>
-      {error && <p className="mt-2 text-sm text-rose-400" role="alert">{error}</p>}
+      {error && <p className="mt-2 text-sm text-danger-fg" role="alert">{error}</p>}
     </div>
   )
 }
@@ -342,7 +354,7 @@ function CancelButton({ approved, disabled }: { approved: boolean; disabled: boo
     <div className="mt-5">
       {arming ? (
         <div className="space-y-2">
-          <p className="text-sm text-amber-400">
+          <p className="text-sm text-warning-fg">
             {approved ? '確定取消？車位將釋出給候補會友' : '確定取消本週登記？'}
           </p>
           <div className="flex gap-2">
@@ -350,7 +362,7 @@ function CancelButton({ approved, disabled }: { approved: boolean; disabled: boo
               type="button"
               onClick={doCancel}
               disabled={submitting || disabled}
-              className="h-12 flex-1 rounded-xl bg-rose-600 text-base font-medium text-white active:bg-rose-500 disabled:opacity-50"
+              className={`${BTN} flex-1 bg-danger-fg text-white active:bg-danger-fg/90`}
             >
               {submitting ? '取消中…' : '確定取消'}
             </button>
@@ -358,7 +370,7 @@ function CancelButton({ approved, disabled }: { approved: boolean; disabled: boo
               type="button"
               onClick={() => setArming(false)}
               disabled={submitting}
-              className="h-12 flex-1 rounded-xl bg-slate-800 text-base text-slate-100 active:bg-slate-700 disabled:opacity-50"
+              className={`${BTN} flex-1 border border-border bg-surface text-ink active:bg-border-subtle`}
             >
               返回
             </button>
@@ -369,22 +381,20 @@ function CancelButton({ approved, disabled }: { approved: boolean; disabled: boo
           type="button"
           onClick={() => setArming(true)}
           disabled={disabled}
-          className="h-12 w-full rounded-xl border border-slate-700 text-base text-slate-300 active:bg-slate-800 disabled:opacity-50"
+          className={`${BTN} border border-danger-fg/30 bg-surface text-danger-fg active:bg-danger-bg`}
         >
           取消本週登記
         </button>
       )}
-      {error && <p className="mt-2 text-sm text-rose-400" role="alert">{error}</p>}
+      {error && <p className="mt-2 text-sm text-danger-fg" role="alert">{error}</p>}
     </div>
   )
 }
 
 function ApplyBlock({
-  sundayDate,
   apply,
   hasCancelledCard,
 }: {
-  sundayDate: string
   apply: NonNullable<MemberWeekStatus['apply']>
   hasCancelledCard: boolean
 }) {
@@ -396,16 +406,16 @@ function ApplyBlock({
 
   if (apply.staffP1) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
-        <p className="text-base text-slate-300">全職同工車位由每週保留名額管理，無需登記</p>
+      <div className={`${CARD} text-center`}>
+        <p className="text-base text-muted">全職同工車位由每週保留名額管理，無需登記</p>
       </div>
     )
   }
   if (apply.closed) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
-        <p className="text-lg">本週登記已截止</p>
-        <p className="mt-2 text-sm leading-relaxed text-slate-400">
+      <div className={`${CARD} text-center`}>
+        <p className="text-lg font-medium">本週登記已截止</p>
+        <p className="mt-2 text-sm leading-relaxed text-muted">
           週五分配已完成；主日若臨時需要車位，請至現場洽停車同工
         </p>
       </div>
@@ -413,9 +423,9 @@ function ApplyBlock({
   }
   if (apply.vehicles.length === 0) {
     return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-center">
-        <p className="text-base text-slate-300">尚未登記車輛資料</p>
-        <p className="mt-2 text-sm text-slate-400">請聯繫停車同工登記您的車牌後再使用線上登記</p>
+      <div className={`${CARD} text-center`}>
+        <p className="text-base font-medium">尚未登記車輛資料</p>
+        <p className="mt-2 text-sm text-muted">請聯繫停車同工登記您的車牌後再使用線上登記</p>
       </div>
     )
   }
@@ -445,16 +455,17 @@ function ApplyBlock({
   }
 
   return (
-    <form onSubmit={submit} className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-      <p className="text-sm text-slate-400">{sundayLabel(sundayDate)}</p>
-      <p className="mt-2 text-lg">{hasCancelledCard ? '重新登記本週停車' : '登記本週停車'}</p>
+    <form onSubmit={submit} className={CARD}>
+      <p className="text-[11px] font-bold uppercase tracking-wider text-muted">
+        {hasCancelledCard ? '重新登記本週停車' : '登記本週停車'}
+      </p>
 
-      <label className="mt-4 block text-sm text-slate-400" htmlFor="apply-vehicle">車輛</label>
+      <label className="mt-4 block text-sm text-muted" htmlFor="apply-vehicle">車輛</label>
       <select
         id="apply-vehicle"
         value={vehicleId}
         onChange={e => setVehicleId(e.target.value)}
-        className="mt-1 h-12 w-full rounded-xl bg-slate-800 px-4 text-base text-slate-100 outline-none focus:ring-2 focus:ring-sky-500"
+        className="mt-1 h-12 w-full rounded-xl border border-border bg-surface px-4 text-base text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
       >
         {apply.vehicles.map(v => (
           <option key={v.id} value={v.id}>
@@ -465,23 +476,26 @@ function ApplyBlock({
       </select>
 
       {apply.companionKind && (
-        <label className="mt-4 flex min-h-12 items-center gap-3 text-base">
+        <label className="mt-4 flex min-h-12 items-start gap-3 rounded-xl bg-info-bg/50 p-3 text-base">
           <input
             type="checkbox"
             checked={companion}
             onChange={e => setCompanion(e.target.checked)}
-            className="h-5 w-5 accent-sky-500"
+            className="mt-0.5 h-5 w-5 accent-info-fg"
           />
-          本週有{apply.companionKind === 'elderly' ? '年長者' : '學齡前幼兒'}同行
+          <span>
+            本週有{apply.companionKind === 'elderly' ? '年長者' : '學齡前幼兒'}同行
+            <span className="mt-0.5 block text-xs text-muted">勾選後本次享 P2 優先順序</span>
+          </span>
         </label>
       )}
 
-      <p className="mt-3 h-5 text-sm text-rose-400" role="alert">{error ?? ''}</p>
+      <p className="mt-3 h-5 text-sm text-danger-fg" role="alert">{error ?? ''}</p>
 
       <button
         type="submit"
         disabled={submitting}
-        className="h-12 w-full rounded-xl bg-sky-600 text-base font-medium text-white active:bg-sky-500 disabled:opacity-50"
+        className={`${BTN} bg-primary text-white active:bg-primary-strong`}
       >
         {submitting ? '送出中…' : '送出登記'}
       </button>
