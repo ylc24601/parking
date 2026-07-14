@@ -38,6 +38,10 @@ yarn-error.log*
 # fixtures live under tests/fixtures/ and ARE committed.
 /members-data/
 
+# Phase 9 Slice 4 demo: runtime-only temp files that inject the developer's real
+# live-member row into the synthetic demo cohort before upload — never commit.
+/.local/
+
 # vercel
 .vercel
 

@@ -435,11 +435,23 @@ only.
 
 ---
 
-## 8. Free → Pro upgrade (deferred to Slice 4 close-out)
+## 8. Free → Pro upgrade
 
-Placeholder. Content to be filled in when the project moves from demo data to real
-member data, per [delivery-model-and-roadmap.md](delivery-model-and-roadmap.md)'s
-hosting guidance (Supabase Pro: no inactivity pausing, daily backups).
+Do this **before delivery / before real member data** — Free projects can be paused on
+inactivity and have no daily backups; Pro removes both (per
+[delivery-model-and-roadmap.md](delivery-model-and-roadmap.md)).
+
+1. Confirm the Slice 4 demo cohort + developer test identity have been cleaned up (§12.3
+   teardown) so no synthetic/PII rows carry into the paid project.
+2. Supabase Dashboard → the project → **Settings → Subscription / Billing** → upgrade to
+   **Pro**. The upgrade is in-place: same project ref, URL, service-role key, and data —
+   **no re-link, no re-push, no re-bootstrap**. Do not create a new project.
+3. After upgrade: confirm the project is not paused, and that daily backups (PITR /
+   scheduled backups) show as enabled in the dashboard.
+4. `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are unchanged, so Vercel env needs no
+   edit. (Only rotate the service-role key if you have a reason to; if you do, remember it
+   also signs the member-import HMAC — rotate outside a 30-min import window.)
+5. Record the upgrade date + who performed it in `current_handoff.md`.
 
 ---
 
@@ -496,3 +508,191 @@ hosting guidance (Supabase Pro: no inactivity pausing, daily backups).
       yet executed — **A1 decision stands, action item for Slice 4 close-out**.
 - [x] No secrets or the exposed `JOB_TRIGGER_SECRET` value appear in this document — only
       pass/fail outcomes and non-secret IDs (jobIds, event IDs).
+
+---
+
+## 12. Slice 4 — demo-complete on prod (scripted walkthrough)
+
+> The full design and rationale were worked out and reviewed over four rounds in the
+> Phase 9 Slice 4 planning process. **This section is the repository-owned operator
+> procedure and is the execution source of truth.** It runs on a **dedicated far-future
+> demo event**, never the real upcoming Sunday ("07-19" below = whatever the real
+> nearest-upcoming event is at run time). Env discipline as in §1.4/§3:
+> `SUPABASE_DB_URL` / `JOB_TRIGGER_SECRET` live only in the shell session; `unset` when
+> done; nothing sensitive in screenshots/PR/chat.
+
+**Prerequisite gate:** 11 cron jobs healthy; `outbox-alert` currently healthy; the real
+upcoming (07-19) event's state + reservation count recorded; prod not yet in real member
+use; the developer test identity (§6.4 / §11) still pending its A1 cleanup — it becomes
+the live demo member here and is removed in §12.3.
+
+### 12.1 Walkthrough (Steps 0–5)
+
+**Step 0 — setup.** Verify the 6 synthetic phones (`0900000001`–`06`) and 6 plates
+(`DEMO01`–`06`) have **zero** matches in prod `users`/`vehicles` (swap the block if any
+hit). Create the demo event: `npm run job:ensure-event -- --sunday <far-future Sunday>`;
+record its `eventId`. Record the 07-19 event id + status + reservation count. Drop
+effective capacity to 2: `UPDATE weekly_events SET blocked_spaces=21 WHERE id='<demo>'`
+(record original 23/0/0). **Record the `outbox-alert` cron job's original settings
+(enabled / cron / timezone / notification-on-failure / next-run), then pause that cron +
+its failure notification** — synthetic members produce expected `no_line_id` failures
+during the window.
+
+**Step 1 — Admin import (incl. dev live row).** Locally: copy
+`parking-system/tests/fixtures/demo-cohort.prod.csv` to
+`parking-system/.local/demo-cohort-live.csv` (gitignored), append one row built from shell
+env vars (dev real name/phone + a dev plate). Upload that temp file at prod `/admin/import`
+→ preview (6 synthetic will-insert + dev will-update, no conflict) → apply. Then `unset`
+the vars and `rm` the temp file; `git status` clean; `git grep` the dev phone/plate →
+record "0 matches". Confirm roster at `/admin/members` + `/admin/eligibility`.
+
+**Step 2 — member-apply UI chain (real 07-19, minimal).** Dev device LIFF auto-login →
+apply on 07-19 → confirm the status card shows it → **cancel immediately** (07-19 back to
+pristine, leaving only a cancelled row) → dev receives `reservation_cancelled`. Do **not**
+allocate/finalize 07-19.
+
+**Step 3 — business chain (demo event, explicit eventId). Order is fixed:**
+1. Create the 6 synthetic + dev reservations via the `apply_reservation` RPC (explicit demo
+   `p_event_id`, increasing `p_now`); read back `applied_at` to confirm order A→B→dev→C–F.
+2. `POST /api/jobs/friday-allocation {eventId}` → check `allocation_order`: A/B approved,
+   dev waiting rank 1, C–F waiting → dev receives `reservation_waiting`.
+3. `POST /api/internal/reservations/cancel {reservationId: A}` → substitution offer lands
+   on dev → dev receives `offer_2hr_confirm`.
+4. Dev accepts via the real Member UI (`POST /api/member/reservation/offer
+   {action:'confirm'}`) → dev → approved → receives `reservation_approved`.
+5. **reminder BEFORE release:** `POST /api/internal/jobs/p2-arrival-reminder {eventId}` →
+   dev (approved, not arrived) receives `p2_arrival_reminder`.
+6. **release (deadline compression).** Far-future deadlines mean a plain release returns
+   `released:0`. Move the two targets' deadline back **inside a transaction, with a
+   `FOR UPDATE` lock and an affected-row gate** — do not run the bare `UPDATE`:
+
+   ```sql
+   BEGIN;
+
+   -- lock + inspect first; manually confirm: exactly 2 rows, all the demo event,
+   -- all 'approved', and none belong to the real 07-19 event.
+   SELECT id, weekly_event_id, status
+   FROM reservations
+   WHERE id = ANY(:target_ids)          -- {<dev>,<B>}
+   FOR UPDATE;
+
+   UPDATE reservations
+   SET release_deadline_at = now() - interval '1 minute'
+   WHERE weekly_event_id = :demo_event_id
+     AND id = ANY(:target_ids)
+     AND status = 'approved';
+   -- affected rows MUST be exactly 2; if not, ROLLBACK and investigate.
+
+   COMMIT;
+   ```
+
+   Then `POST /api/internal/jobs/release {eventId}` → expect `released:2`, dev + B →
+   `released_late`, dev receives `reservation_released`. **This compresses only the
+   deadline of 2 demo rows — it does not re-validate the real Sunday clock (proven in
+   Slice 3).**
+   **Stop gate before Staff:** release returned `released:2` and both rows are
+   `released_late`.
+
+**Step 4 — Staff (phone, demo event).** Issue the demo event's PIN via `/admin/staff-pin`
+→ PIN login at `/staff` → 補點名 dev (`released_late → attended_after_release`) / walk-in →
+**請移車** on dev's vehicle → dev receives `move_car_request` (a synthetic owner has no
+`line_id`, so move-car pre-filters it — no row) → **結束當週點名** (`POST /api/staff/settle`,
+finalizes) → this settle turns B (still `released_late`) into `no_show`.
+
+**Step 5 — Ops + Pastoral (three stages).** `/admin/ops` outbox health (expected
+`no_line_id` failures = synthetic enqueues) / requeue **dryRun** only. Pastoral:
+- **setup (legit data-prep, not status-faking):** before Step 3, seed
+  `UPDATE user_penalties SET consecutive_no_show=3 WHERE user_id='<B>'` (a historical
+  counter).
+- **trigger:** Step 4's settle turns B `released_late → no_show`, counter 3→4 ≥ threshold →
+  a `pastoral_care_alert` (`trigger_count=4`) opens.
+- **resolve:** close it via the real `/admin/pastoral`.
+- **Verification boundary:** this validates only the 4th settle (3→4 + alert). The prior
+  three no-shows are seeded history, not re-run end-to-end — do not report them as
+  end-to-end verified.
+
+Each mutation: check response body (`ok:true` / counts) **and** exact SQL row state, not
+just HTTP 200. Assert `status='sent'` only for the dev-targeted notifications above.
+
+### 12.2 PII leak check (two layers, match-count only)
+
+- **Layer A (logs / errors / `last_error`): zero tolerance.** Search Vercel function logs
+  + the `notification_outbox.last_error` column for any of: `line_id`, phone (incl. dev),
+  plate (`DEMO0x` + dev plate), notification body, access token/secret, raw request body,
+  pastoral note. Any hit = blocker. `no_line_id` and other sanitized codes **may** appear
+  (not PII). Raw values stay in shell vars; record only `searched <field>: 0 matches`.
+- **Layer B (API role boundary): per-endpoint allowlist, not "all business fields = 0".**
+
+  | Surface | May see (legal) | Must NOT see (hit = blocker) |
+  |---|---|---|
+  | Member (self) | own name/plate/reservation status/sundayDate | others' data, `line_id`, internal penalty, pastoral, `release_deadline_at`, `p2_on_the_way` |
+  | Staff roster | name/plate/attendance needed to check in, `owner_notifiable` | phone, `line_id`, `p2_reason`, pastoral, penalty |
+  | Admin | business data (sensitive fields per existing masking) | token/secret, full `line_id`, unnecessary notification body |
+  | Unauthenticated | nothing | everything |
+
+  Pass = Layer A all-zero; Layer B only allowed fields on authorized surfaces, forbidden
+  fields zero.
+
+### 12.3 FK-safe teardown (stop-gate)
+
+Cleans the synthetic cohort **and** the developer test identity (Slice 3 §6.4 A1) in one
+pass.
+
+1. Stop all Admin/Member/Staff actions on the demo event; **log the Staff phone out**
+   (clears cookie).
+2. **Pause all 11 cron jobs** (including dispatch).
+3. **Drain in-flight dispatch:** confirm no demo `processing`/`retrying` rows in
+   `notification_outbox`; if the dispatch lease is still open, wait it out / confirm no
+   in-flight claim.
+4. **Re-run dependency inventory + preview** (FK-catalog query; do not list tables from
+   memory). Resolve synthetic user ids by marker (`display_name LIKE 'DEMO%'` / reserved
+   phone block / `DEMO%` plates), **union the developer user id** (recorded in Slice 3) =
+   the id set. Count expected deletions per table for the id set + demo `eventId` + the
+   07-19 cancelled row. **Rule: every nonzero RESTRICT reference the preview finds must be
+   handled (nullable + semantics allow → `SET NULL`; else delete in FK order) — not just
+   the pre-listed set; any unexpected nonzero = stop and investigate.** (Verified:
+   `audit_logs` has no insert path and `staff_sessions.created_by` stays null in the
+   admin-PIN path, so both are expected zero — but go by the preview.)
+5. **Delete in FK-safe order (in a transaction):** `notification_outbox` (user_id ∈ set OR
+   weekly_event_id = demo) → `reservations` (same; incl. the 07-19 cancelled row) →
+   `weekly_staff_allocations` (demo) → `job_runs` (demo) → **`staff_sessions`
+   (weekly_event_id = demo — holds the PIN, RESTRICT, no cascade; must go before the
+   event)** → `binding_codes` (dev, if any) → `pending_binding` (dev approval row) →
+   `pastoral_care_alerts` (demo) → `user_penalties` (set — incl. B's seeded row) →
+   `vehicles` (set) → (cascade: `member_sessions` / `user_eligibility` /
+   `eligibility_dependents`) → `weekly_events` (demo event) → `users` (set).
+6. **Zero-check:** re-run the preview + search by phone/plate/`line_id` → all zero (not
+   just by user_id — a leftover unique-index value would block a future real member).
+7. **07-19 pristine (precise query):** `status='open'`; capacity columns = the Step 0
+   originals (23/0/0); demo-user reservations on 07-19 = 0 (**incl. cancelled**);
+   demo-related outbox / allocations / job_runs = 0; remaining row counts match the Step 0
+   snapshot. Demo event deleted; its PIN no longer logs in.
+8. `outbox-alert` back to healthy.
+9. **Re-enable all 11 cron jobs**; check each next-run preview; **reconcile `outbox-alert`
+   against its Step 0 settings** (enabled / cron / timezone / notification-on-failure /
+   next-run) — don't just re-enable the cron and forget the failure notification.
+10. Keep a teardown record of **row counts only, no PII.** Do not delete the admin account,
+    migration history, or the real 07-19 event. Once done, tick the A1 item in §11.
+
+---
+
+## 13. Post-delivery checklist (church handover)
+
+Everything here is **after** the Slice 4 demo, when switching from the developer's demo OA
+to the church's real setup. None of it is done during Phase 9 itself.
+
+- [ ] Supabase Free → **Pro** (§8), demo/PII data already cleaned.
+- [ ] Swap to the **church LINE OA**: new `LINE_CHANNEL_ACCESS_TOKEN` + `LINE_CHANNEL_SECRET`
+      (Messaging API), new `LINE_LOGIN_CHANNEL_ID` + `NEXT_PUBLIC_LIFF_ID` (LIFF), and the
+      LIFF endpoint + Messaging webhook URLs repointed to the same Vercel domain.
+      `NEXT_PUBLIC_LIFF_ID` is build-time → trigger a fresh build. Remove/replace the
+      developer OA token from Vercel (changing `NOTIFICATION_TRANSPORT` does **not**
+      invalidate an old token — see §11). Re-run the LINE webhook Verify + a real
+      bind/notify smoke on the church OA.
+- [ ] Set the church LINE Login channel to **Published** (Developing only lets
+      channel-role accounts in).
+- [ ] Import the **real member CSV** (church data) via Admin import; spot-check eligibility.
+- [ ] Copy sign-off: notification templates + member/staff/admin wording reviewed by the
+      church.
+- [ ] Confirm the 11 cron jobs still point at the Vercel domain and `JOB_TRIGGER_SECRET`
+      matches.
