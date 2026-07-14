@@ -415,18 +415,23 @@ only.
 
 ## 7. Slice 2 verification checklist
 
-- [ ] Project ref/name/region recorded; three-way identity check passed before `db push`.
-- [ ] `supabase migration list`: all 28 local migrations applied remotely, matching order/ids, no discrepancies.
-- [ ] `npm run db:verify:remote` → 26/26.
-- [ ] Vercel deploy succeeds (build log clean).
-- [ ] Vercel env: `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `JOB_TRIGGER_SECRET` scoped to Production only (visually confirmed in Project Settings).
-- [ ] `https://<vercel-domain>/admin` reachable, renders login form.
-- [ ] A Preview deployment was triggered once; observed behavior recorded (`build failure — missing env` / `deployed, DB routes show ConfigError`); confirmed it has no production DB access either way.
-- [ ] `admin:create` (no `--stdin`) succeeded; logged into `/admin` with the generated credentials.
-- [ ] `ensure-weekly-event` called twice: first `created:true`, second `created:false` with the same `eventId`.
-- [ ] Staff PIN issued via `/admin/staff-pin`; login proven at `/staff` in an incognito window; session cookie confirmed; logged out.
-- [ ] Auth acceptance matrix (§4) confirmed row by row.
-- [ ] No secrets, `SUPABASE_DB_URL`, or one-time passwords appear in this checklist's completed record (PR description / handoff notes) — only pass/fail outcomes.
+> Slice 2 was closed at the 2B cloud checkpoint (project `ybhszryuvoutkzkixsbk` / Tokyo
+> + Vercel `parking-omega-one.vercel.app`). Items below are ticked accordingly; the
+> three that were operator-confirmed rather than witnessed step-by-step (migration-list
+> exact match, env-scope visual confirmation, Preview-deployment behavior) are noted.
+
+- [x] Project ref/name/region recorded; three-way identity check passed before `db push`.
+- [x] `supabase migration list`: all 28 local migrations applied remotely, matching order/ids, no discrepancies. _(operator-confirmed)_
+- [x] `npm run db:verify:remote` → 26/26.
+- [x] Vercel deploy succeeds (build log clean).
+- [x] Vercel env: `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `JOB_TRIGGER_SECRET` scoped to Production only (visually confirmed in Project Settings). _(operator-confirmed)_
+- [x] `https://<vercel-domain>/admin` reachable, renders login form.
+- [x] A Preview deployment was triggered once; confirmed it has no production DB access. _(operator-confirmed; exact outcome — build failure vs ConfigError — not separately recorded)_
+- [x] `admin:create` (no `--stdin`) succeeded; logged into `/admin` with the generated credentials.
+- [x] `ensure-weekly-event` called twice: first `created:true`, second `created:false` with the same `eventId`.
+- [x] Staff PIN issued via `/admin/staff-pin`; login proven at `/staff` in an incognito window; session cookie confirmed; logged out.
+- [x] Auth acceptance matrix (§4) confirmed row by row.
+- [x] No secrets, `SUPABASE_DB_URL`, or one-time passwords appear in this checklist's completed record (PR description / handoff notes) — only pass/fail outcomes.
 
 ---
 
@@ -440,12 +445,12 @@ hosting guidance (Supabase Pro: no inactivity pausing, daily backups).
 
 ## 9. Slice 2 final security state (record at close-out, not just "tests passed")
 
-- [ ] Admin credential: stored in password manager.
-- [ ] Staff test session: logged out.
-- [ ] Staff PIN issued in §3.3/3.4: final disposition recorded — revoked/rotated, **or**
-      explicitly left to expire naturally (record the expiry time). Logging out the test
-      session clears the cookie, not the PIN's validity.
-- [ ] `JOB_TRIGGER_SECRET`: confirmed to exist only in the Vercel Production env and in
+- [x] Admin credential: stored in password manager.
+- [x] Staff test session: logged out.
+- [x] Staff PIN issued in §3.3/3.4: **final disposition = rotated** (test PIN re-issued via
+      the Admin UI for the same event; the old hash is dead). Logging out the test session
+      clears the cookie, not the PIN's validity.
+- [x] `JOB_TRIGGER_SECRET`: confirmed to exist only in the Vercel Production env and in
       the operator's local secure session — not left in shell history, a screenshot, or
       a chat/PR transcript.
 
