@@ -478,10 +478,12 @@ hosting guidance (Supabase Pro: no inactivity pausing, daily backups).
 ## 11. Slice 3 final security state (record at close-out)
 
 - [x] LINE Channel Access Token: owner = developer, issued 2026-07-14, stored in Vercel
-      Production env + password manager only. Rotation/revocation: re-issue in LINE
-      Developers Console (invalidates the prior token); **must be replaced — not just
-      have `NOTIFICATION_TRANSPORT` changed — before/at delivery or any church-OA
-      switchover**.
+      Production env + password manager only. Rotation/revocation: follow the explicit
+      issue/revoke workflow LINE Developers Console currently provides — **do not assume
+      issuing a replacement automatically invalidates the previous token**; after
+      revocation, verify the old token fails against the LINE API. The token **must be
+      replaced — not just have `NOTIFICATION_TRANSPORT` changed — before/at delivery or
+      any church-OA switchover**.
 - [x] `JOB_TRIGGER_SECRET`: rotated once already (see §6.6 incident) — current value
       confirmed live in Vercel Production and matching all 11 cron-job.org job headers;
       the exposed prior value is dead (superseded, not just "hopefully unused").
