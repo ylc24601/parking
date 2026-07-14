@@ -148,15 +148,15 @@ export default function MemberImport() {
     (report.totals.validationErrors > 0 || report.totals.phoneNameConflicts > 0 || report.totals.plateConflicts > 0)
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-10 text-slate-100">
+    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header>
-        <Link href="/admin" className="text-sm text-slate-400 hover:text-slate-200">← 管理後台</Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">名單匯入</h1>
-        <p className="mt-1 text-sm text-slate-400">P2 申請表 CSV 上傳（UTF-8）。匯入只寫資料紀錄，不會變動 LINE 綁定。</p>
+        <Link href="/admin" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">← 管理後台</Link>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight">名單匯入</h1>
+        <p className="mt-1 text-sm text-muted">P2 申請表 CSV 上傳（UTF-8）。匯入只寫資料紀錄，不會變動 LINE 綁定。</p>
       </header>
 
-      <section className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-        <p className="text-xs text-amber-300/90">
+      <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-6">
+        <p className="text-xs text-warning-fg">
           此檔含會友個資，請勿另存他處或貼到共用日誌。預覽結果依當下資料狀態產生，最終以「確認寫入」後的報告為準。
         </p>
         <div className="flex flex-wrap items-center gap-3">
@@ -164,24 +164,24 @@ export default function MemberImport() {
             type="file"
             accept=".csv,text/csv"
             onChange={onPick}
-            className="text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700 file:px-4 file:py-2 file:text-slate-100 hover:file:bg-slate-600"
+            className="text-sm text-ink file:mr-3 file:min-h-11 file:rounded-lg file:border file:border-border file:bg-page file:px-4 file:text-ink hover:file:border-primary"
           />
           <button
             type="button"
             onClick={preview}
             disabled={!fileName || busy}
-            className="rounded-xl bg-sky-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+            className="inline-flex min-h-11 items-center rounded-xl bg-primary px-5 text-sm font-semibold text-white transition-colors hover:bg-primary-strong disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           >
             {busy && phase === 'idle' ? '處理中…' : '上傳並預覽'}
           </button>
         </div>
         {error && (
-          <p className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-2 text-sm text-rose-300">{error}</p>
+          <p className="rounded-lg border border-danger-fg/30 bg-danger-bg px-4 py-2 text-sm text-danger-fg">{error}</p>
         )}
       </section>
 
       {report && phase === 'partial' && (
-        <p className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">
+        <p className="rounded-xl border border-danger-fg/30 bg-danger-bg px-4 py-3 text-sm text-danger-fg">
           匯入中途發生錯誤，可能已寫入部分資料
           {processedMembers !== null ? `（已處理 ${processedMembers} 位會友）` : ''}
           。請保留此檔、重新預覽後再匯入一次——匯入具冪等性，不會重複建立相同車輛。
@@ -193,14 +193,14 @@ export default function MemberImport() {
       )}
 
       {report && phase === 'previewed' && (
-        <section className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+        <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-6">
           {hasSkips && (
-            <label className="flex items-start gap-2 text-sm text-amber-200">
+            <label className="flex items-start gap-2 text-sm text-warning-fg">
               <input
                 type="checkbox"
                 checked={acknowledged}
                 onChange={e => setAcknowledged(e.target.checked)}
-                className="mt-0.5"
+                className="mt-0.5 accent-primary"
               />
               <span>上方標記為錯誤/衝突的列會被略過，其餘合法會友仍會寫入。我已了解並仍要匯入。</span>
             </label>
@@ -210,7 +210,7 @@ export default function MemberImport() {
               type="button"
               onClick={apply}
               disabled={busy || (hasSkips && !acknowledged)}
-              className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+              className="inline-flex min-h-11 items-center rounded-xl bg-primary px-5 text-sm font-semibold text-white transition-colors hover:bg-primary-strong disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               {busy ? '寫入中…' : '確認寫入'}
             </button>
@@ -219,15 +219,15 @@ export default function MemberImport() {
       )}
 
       {report && phase === 'applied' && (
-        <section className="flex flex-col gap-3 rounded-2xl border border-emerald-800 bg-slate-900 p-6">
-          <p className="text-sm text-emerald-300">
+        <section className="flex flex-col gap-3 rounded-xl border border-success-fg/30 bg-success-bg p-6">
+          <p className="text-sm text-success-fg">
             匯入完成：新增 {report.imported} 位、更新 {report.updated} 位、車輛 +{report.vehiclesAdded}。
           </p>
           <div>
             <button
               type="button"
               onClick={resetAll}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+              className="inline-flex min-h-11 items-center rounded-xl border border-border bg-surface px-4 text-sm text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               匯入下一份
             </button>
@@ -240,9 +240,9 @@ export default function MemberImport() {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-3">
-      <div className="text-xs text-slate-400">{label}</div>
-      <div className="text-lg font-medium text-slate-100">{value}</div>
+    <div className="rounded-xl border border-border bg-surface px-4 py-3">
+      <div className="text-xs text-muted">{label}</div>
+      <div className="text-lg font-semibold tabular-nums text-ink">{value}</div>
     </div>
   )
 }
@@ -260,7 +260,7 @@ function ReportView({ report }: { report: ImportReport }) {
       </div>
 
       {report.truncated && (
-        <p className="rounded-xl border border-amber-800 bg-amber-950/40 px-4 py-2 text-sm text-amber-300">
+        <p className="rounded-xl border border-warning-fg/30 bg-warning-bg px-4 py-2 text-sm text-warning-fg">
           問題項目過多，各清單僅顯示前 500 筆（實際數量見各區塊標題）。
         </p>
       )}
@@ -295,7 +295,7 @@ function ReportView({ report }: { report: ImportReport }) {
       <IssueList
         title="待覆核（已建立、需人工補核）" total={report.totals.reviewRequired}
         empty={report.reviewRequired.length === 0}
-        note={<Link href="/admin/eligibility" className="text-sky-300 hover:text-sky-200">前往資格審查 →</Link>}
+        note={<Link href="/admin/eligibility" className="text-primary hover:underline">前往資格審查 →</Link>}
       >
         {report.reviewRequired.map((r, i) => (
           <li key={i}>{r.phone}（{r.reason}）</li>
@@ -316,12 +316,12 @@ function IssueList({
 }) {
   if (empty) return null
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+    <div className="rounded-xl border border-border bg-surface p-5">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-slate-200">{title}（{total}）</h3>
+        <h3 className="text-sm font-semibold text-ink">{title}（{total}）</h3>
         {note}
       </div>
-      <ul className="mt-2 space-y-1 text-sm text-slate-400">{children}</ul>
+      <ul className="mt-2 space-y-1 text-sm text-muted">{children}</ul>
     </div>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import Badge, { type BadgeTone } from '../../ui/Badge'
 
 // Admin account management. Peer model: every row except the operator's own is
 // actionable; the operator's own row shows no buttons (self-target is refused by
@@ -26,10 +27,10 @@ const STATUS_LABEL: Record<AccountItem['status'], string> = {
   disabled: '已停用',
   locked: '鎖定中',
 }
-const STATUS_STYLE: Record<AccountItem['status'], string> = {
-  active: 'border-emerald-800 text-emerald-300',
-  disabled: 'border-rose-800 text-rose-300',
-  locked: 'border-amber-800 text-amber-300',
+const STATUS_TONE: Record<AccountItem['status'], BadgeTone> = {
+  active: 'success',
+  disabled: 'danger',
+  locked: 'warning',
 }
 
 type PendingConfirm =
@@ -135,35 +136,35 @@ export default function AdminAccounts({
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 px-6 py-10 text-slate-100">
+    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header>
-        <Link href="/admin" className="text-sm text-slate-400 hover:text-slate-200">← 管理後台</Link>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">帳號管理</h1>
+        <Link href="/admin" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">← 管理後台</Link>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight">帳號管理</h1>
       </header>
 
       {error && (
-        <p className="rounded-xl border border-rose-800 bg-rose-950/40 px-4 py-3 text-sm text-rose-300">{error}</p>
+        <p className="rounded-xl border border-danger-fg/30 bg-danger-bg px-4 py-3 text-sm text-danger-fg">{error}</p>
       )}
 
       {resetResult && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-emerald-800 bg-slate-900 p-5">
-          <p className="rounded-xl border border-amber-800 bg-amber-950/40 px-4 py-3 text-sm text-amber-300">
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
+          <p className="rounded-lg border border-warning-fg/30 bg-warning-bg px-4 py-3 text-sm text-warning-fg">
             請立即複製並安全轉交；關閉此視窗後，Admin UI 不會再次顯示這組密碼。
           </p>
-          <p className="text-sm text-slate-400">帳號：{resetResult.username}</p>
+          <p className="text-sm text-muted">帳號：{resetResult.username}</p>
           <div className="flex items-center gap-3">
-            <code className="rounded-xl border border-emerald-800 bg-slate-950 px-5 py-3 text-xl font-semibold tracking-wide text-emerald-300">
+            <code className="rounded-xl border border-primary/40 bg-success-bg px-5 py-3 text-xl font-semibold tracking-wide text-primary-deep">
               {resetResult.password}
             </code>
             <button
               type="button"
               onClick={async () => { await navigator.clipboard?.writeText(resetResult.password); setCopied(true) }}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+              className="inline-flex min-h-11 items-center rounded-xl border border-border px-4 text-sm text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               {copied ? '已複製' : '複製'}
             </button>
           </div>
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-muted">
             {resetResult.disabled
               ? '密碼已重設；此帳號目前為停用狀態，需先重啟才能登入。'
               : '密碼已重設；該帳號所有裝置已登出，需以新密碼重新登入。'}
@@ -172,7 +173,7 @@ export default function AdminAccounts({
             <button
               type="button"
               onClick={() => { setResetResult(null); setCopied(false) }}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+              className="inline-flex min-h-11 items-center rounded-xl border border-border px-4 text-sm text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               關閉
             </button>
@@ -181,14 +182,14 @@ export default function AdminAccounts({
       )}
 
       {pendingConfirm && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-amber-800 bg-amber-950/40 p-5">
-          <p className="text-sm text-amber-200">{confirmMessage(pendingConfirm)}</p>
+        <div className="flex flex-col gap-3 rounded-xl border border-warning-fg/30 bg-warning-bg p-5">
+          <p className="text-sm text-warning-fg">{confirmMessage(pendingConfirm)}</p>
           <div className="flex gap-3">
             <button
               type="button"
               onClick={confirmAction}
               disabled={busyId !== null}
-              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-50"
+              className="inline-flex min-h-11 items-center rounded-lg bg-warning-fg px-4 text-sm font-semibold text-white transition-colors active:bg-warning-fg/90 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               {busyId !== null ? '處理中…' : '確認'}
             </button>
@@ -196,7 +197,7 @@ export default function AdminAccounts({
               type="button"
               onClick={cancelConfirm}
               disabled={busyId !== null}
-              className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:border-slate-500"
+              className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm text-ink transition-colors hover:border-primary disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
             >
               取消
             </button>
@@ -204,34 +205,32 @@ export default function AdminAccounts({
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-2xl border border-slate-800">
+      <div className="w-full overflow-x-auto rounded-xl border border-border">
         <table className="w-full min-w-[720px] text-left text-sm">
-          <thead className="bg-slate-900 text-slate-400">
+          <thead className="bg-surface text-muted">
             <tr>
               <th className="px-4 py-3 font-normal">帳號</th>
               <th className="px-4 py-3 font-normal">顯示名稱</th>
-              <th className="px-4 py-3 font-normal">狀態</th>
-              <th className="px-4 py-3 font-normal">建立時間</th>
+              <th className="whitespace-nowrap px-4 py-3 font-normal">狀態</th>
+              <th className="whitespace-nowrap px-4 py-3 font-normal">建立時間</th>
               <th className="px-4 py-3 font-normal"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-border">
             {accounts.map(a => {
               const isSelf = a.id === currentAdminId
               return (
-                <tr key={a.id} className="bg-slate-950/40">
-                  <td className="px-4 py-3 text-slate-100">{a.username}</td>
-                  <td className="px-4 py-3 text-slate-400">{a.displayName ?? '—'}</td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full border px-2 py-0.5 text-xs ${STATUS_STYLE[a.status]}`}>
-                      {STATUS_LABEL[a.status]}
-                    </span>
+                <tr key={a.id} className="bg-surface">
+                  <td className="px-4 py-3 text-ink">{a.username}</td>
+                  <td className="px-4 py-3 text-muted">{a.displayName ?? '—'}</td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <Badge variant="outline" tone={STATUS_TONE[a.status]}>{STATUS_LABEL[a.status]}</Badge>
                   </td>
-                  <td className="px-4 py-3 text-slate-400">{a.createdAt.slice(0, 10)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-muted">{a.createdAt.slice(0, 10)}</td>
                   <td className="px-4 py-3">
                     {isSelf ? (
-                      <div className="text-xs text-slate-500">
-                        <span className="rounded-full border border-slate-700 px-2 py-0.5">目前登入</span>
+                      <div className="text-xs text-muted">
+                        <Badge variant="outline" tone="neutral">目前登入</Badge>
                         <p className="mt-1">結束自己的 session 請用登出</p>
                       </div>
                     ) : (
@@ -241,21 +240,21 @@ export default function AdminAccounts({
                           onClick={() =>
                             startAction(a.status === 'disabled' ? 'enable' : 'disable', a.id, a.username)
                           }
-                          className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-slate-500"
+                          className="inline-flex items-center whitespace-nowrap rounded-lg border border-border px-3 py-2 text-xs text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                         >
                           {a.status === 'disabled' ? '啟用' : '停用'}
                         </button>
                         <button
                           type="button"
                           onClick={() => startAction('reset', a.id, a.username)}
-                          className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-slate-500"
+                          className="inline-flex items-center whitespace-nowrap rounded-lg border border-border px-3 py-2 text-xs text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                         >
                           重設密碼
                         </button>
                         <button
                           type="button"
                           onClick={() => startAction('revoke', a.id, a.username)}
-                          className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-slate-500"
+                          className="inline-flex items-center whitespace-nowrap rounded-lg border border-border px-3 py-2 text-xs text-ink transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                         >
                           撤銷所有 session
                         </button>
