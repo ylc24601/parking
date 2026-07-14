@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { OutboxHealth } from '@/server/repositories/parkingRepository'
 import type { OutboxAlert } from '@/server/services/outboxAlertService'
@@ -92,8 +91,7 @@ export default function OpsDashboard({
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header className="flex items-start justify-between">
         <div>
-          <Link href="/admin" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">← 管理後台</Link>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight">營運狀態</h1>
+          <h1 className="text-2xl font-bold tracking-tight">營運狀態</h1>
           <p className="mt-1 text-xs text-muted">快照時間：{snapshotAt.slice(0, 19).replace('T', ' ')} UTC</p>
         </div>
         <button

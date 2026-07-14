@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Badge from '../../ui/Badge'
 
@@ -63,8 +62,7 @@ export default function MemberSearch() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header>
-        <Link href="/admin" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">← 管理後台</Link>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight">會友管理</h1>
+        <h1 className="text-2xl font-bold tracking-tight">會友管理</h1>
       </header>
 
       <form onSubmit={submit} className="flex gap-3">

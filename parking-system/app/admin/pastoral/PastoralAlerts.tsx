@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { OpenAlertItem, ResolvedAlertItem } from '@/server/services/pastoralAlertService'
 
@@ -77,8 +76,7 @@ export default function PastoralAlerts({
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header>
-        <Link href="/admin" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">← 管理後台</Link>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight">牧養關懷</h1>
+        <h1 className="text-2xl font-bold tracking-tight">牧養關懷</h1>
         <p className="mt-1 text-sm text-muted">
           連續未到提醒。性質為關心而非懲罰——建議先由牧長／幹事聯繫了解狀況，再回來結案。
         </p>

@@ -150,8 +150,7 @@ export default function MemberImport() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header>
-        <Link href="/admin" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">← 管理後台</Link>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight">名單匯入</h1>
+        <h1 className="text-2xl font-bold tracking-tight">名單匯入</h1>
         <p className="mt-1 text-sm text-muted">P2 申請表 CSV 上傳（UTF-8）。匯入只寫資料紀錄，不會變動 LINE 綁定。</p>
       </header>
 

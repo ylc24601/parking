@@ -1,0 +1,82 @@
+'use client'
+
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import LogoutButton from './LogoutButton'
+
+// Persistent back-office nav (Slice 3.5 follow-up). Routes are unchanged — this is a
+// shared shell over the existing 8 admin pages, not an SPA. Rendered only when the
+// layout has a session; it does NOT gate auth (pages/APIs keep their own checks).
+const NAV: Array<{ href: string; label: string; icon: string }> = [
+  { href: '/admin/bindings', label: '綁定審核', icon: '🔗' },
+  { href: '/admin/members', label: '會友管理', icon: '👥' },
+  { href: '/admin/accounts', label: '帳號管理', icon: '⚙️' },
+  { href: '/admin/eligibility', label: '資格審查', icon: '🏷️' },
+  { href: '/admin/import', label: '名單匯入', icon: '📥' },
+  { href: '/admin/ops', label: '營運狀態', icon: '📊' },
+  { href: '/admin/pastoral', label: '牧養關懷', icon: '💚' },
+  { href: '/admin/staff-pin', label: '現場 PIN 管理', icon: '🔑' },
+]
+
+// Boundary-safe: /admin matches only itself; a section matches itself and its nested
+// routes (so /admin/members/[id] keeps 會友管理 active) — never a bare startsWith that
+// would let /admin/member falsely match /admin/members.
+function isActive(pathname: string, href: string): boolean {
+  if (href === '/admin') return pathname === '/admin'
+  return pathname === href || pathname.startsWith(`${href}/`)
+}
+
+export default function AdminSidebar({ username }: { username: string }) {
+  const pathname = usePathname()
+  const homeActive = pathname === '/admin'
+  return (
+    <div className="sticky top-0 z-20 flex flex-col border-b border-border bg-surface lg:h-dvh lg:w-56 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+      {/* brand + username (mobile: logout shares this row) */}
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div className="min-w-0">
+          <Link
+            href="/admin"
+            aria-current={homeActive ? 'page' : undefined}
+            className="inline-flex min-h-11 items-center text-base font-bold text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
+            ⛪ 管理後台
+          </Link>
+          <p className="truncate text-xs text-muted">{username}</p>
+        </div>
+        <div className="shrink-0 lg:hidden">
+          <LogoutButton />
+        </div>
+      </div>
+
+      {/* nav — mobile: one horizontally-scrollable row; desktop: vertical, grows to push logout down */}
+      <nav
+        aria-label="管理後台導覽"
+        className="flex gap-1 overflow-x-auto overscroll-x-contain px-3 pb-2 lg:flex-1 lg:flex-col lg:gap-0.5 lg:overflow-x-visible lg:px-2 lg:pb-2"
+      >
+        {NAV.map(item => {
+          const active = isActive(pathname, item.href)
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? 'page' : undefined}
+              className={`inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border-b-2 px-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 lg:border-b-0 ${
+                active
+                  ? 'border-primary font-semibold text-primary lg:bg-success-bg lg:shadow-[inset_2px_0_0_var(--color-primary)]'
+                  : 'border-transparent text-ink hover:text-primary lg:hover:bg-page'
+              }`}
+            >
+              <span aria-hidden>{item.icon}</span>
+              {item.label}
+            </Link>
+          )
+        })}
+      </nav>
+
+      {/* desktop: logout pinned at the bottom (reachable via the sidebar's own scroll) */}
+      <div className="hidden px-4 pb-4 lg:block">
+        <LogoutButton />
+      </div>
+    </div>
+  )
+}
