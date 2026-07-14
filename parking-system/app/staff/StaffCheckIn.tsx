@@ -11,11 +11,31 @@ import {
   rowPlate,
   isWalkIn,
   sundayLabel,
+  statusLabel,
 } from '@/lib/staffRow'
+import Badge, { type BadgeTone } from '../ui/Badge'
 
 export type { StaffRow }
 
 const UNDO_MS = 5000
+
+// Row status badge tone. Text always comes from statusLabel() (the lib/staffRow
+// single source shared with the print sheet) — this only picks the colour. Walk-ins
+// read as info (現場) to signal the on-site source; otherwise it tracks attendance.
+function statusTone(r: StaffRow): BadgeTone {
+  if (isWalkIn(r)) return 'info'
+  if (r.status === 'released_late') return 'warning'
+  if (DONE_STATUSES.has(r.status)) return 'success'
+  return 'neutral' // approved / not yet arrived
+}
+
+// Left card stripe = attendance/operational status ONLY (walk-in counts as done);
+// vehicle type (優先/現場) is shown as a separate badge, not encoded in the stripe.
+function stripeClass(r: StaffRow): string {
+  if (r.status === 'released_late') return 'border-l-warning-fg'
+  if (DONE_STATUSES.has(r.status)) return 'border-l-success-fg'
+  return 'border-l-neutral-fg/40'
+}
 
 interface EventInfo {
   id: string
@@ -289,6 +309,15 @@ export default function StaffCheckIn({
     () => rows.filter(r => r.status === 'released_late').length,
     [rows],
   )
+  // Header count bar — four MUTUALLY EXCLUSIVE buckets that sum to rows.length (so a
+  // volunteer can trust the arithmetic). Walk-ins are their own bucket, NOT folded
+  // into 已到 (unlike attendedCount above, which stays for the "all done" empty state).
+  const arrivedCount = useMemo(
+    () => rows.filter(r => !isWalkIn(r) && DONE_STATUSES.has(r.status)).length,
+    [rows],
+  )
+  const notArrivedCount = useMemo(() => rows.filter(r => r.status === 'approved').length, [rows])
+  const walkInCount = useMemo(() => rows.filter(isWalkIn).length, [rows])
   // A finalized event is a terminal, read-only week: all writes are blocked.
   const finalized = event?.status === 'finalized'
 
@@ -483,32 +512,37 @@ export default function StaffCheckIn({
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-slate-950 text-slate-100">
-      {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold">{event ? sundayLabel(event.sunday_date) : '現場點名'}</h1>
-          <div className="flex items-center gap-3">
-            <span className="text-base tabular-nums text-slate-300">
-              已到 {attendedCount} / {rows.length}
-            </span>
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col bg-page text-ink">
+      {/* Deep-green app bar. White text on primary-deep passes AA. */}
+      <header className="sticky top-0 z-10 bg-primary-deep px-4 pb-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] text-white shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-lg font-bold">{event ? sundayLabel(event.sunday_date) : '現場點名'}</h1>
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={() => void reload()}
               disabled={refreshing}
               aria-label="重新整理"
-              className="rounded-lg px-2 py-1 text-sm text-slate-400 active:bg-slate-800 disabled:opacity-50"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-lg text-white/90 transition-colors active:bg-black/15 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary-deep"
             >
               🔄
             </button>
             <button
               type="button"
               onClick={logout}
-              className="rounded-lg px-2 py-1 text-sm text-slate-400 active:bg-slate-800"
+              className="inline-flex min-h-11 items-center justify-center rounded-lg px-2 text-sm font-medium text-white/90 transition-colors active:bg-black/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary-deep"
             >
               登出
             </button>
           </div>
+        </div>
+
+        {/* Mutually-exclusive counts (sum = total). */}
+        <div className="mt-2 flex gap-1.5 text-xs font-semibold tabular-nums">
+          <span className="rounded-md bg-black/15 px-2.5 py-1">已到 {arrivedCount}</span>
+          <span className="rounded-md bg-black/15 px-2.5 py-1">未到 {notArrivedCount}</span>
+          <span className="rounded-md bg-black/15 px-2.5 py-1">已釋出 {releasedLateCount}</span>
+          <span className="rounded-md bg-black/15 px-2.5 py-1">現場 {walkInCount}</span>
         </div>
 
         <input
@@ -516,17 +550,17 @@ export default function StaffCheckIn({
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder="🔍 輸入車牌後四碼…"
-          className="mt-3 h-12 w-full rounded-xl bg-slate-900 px-4 text-base text-slate-100 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-sky-500"
+          className="mt-3 h-12 w-full rounded-xl bg-white px-4 text-base text-ink placeholder:text-muted outline-none focus:ring-2 focus:ring-primary"
         />
 
-        <div className="mt-3 flex gap-2">
+        <div className="mt-2.5 flex gap-2">
           {chips.map(c => (
             <button
               key={c.key}
               type="button"
               onClick={() => setFilter(c.key)}
-              className={`rounded-full px-3 py-1.5 text-sm ${
-                filter === c.key ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300'
+              className={`inline-flex min-h-11 items-center rounded-full px-3.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary-deep ${
+                filter === c.key ? 'bg-white text-primary-deep' : 'bg-white/15 text-white'
               }`}
             >
               {c.label}
@@ -536,15 +570,15 @@ export default function StaffCheckIn({
       </header>
 
       {offline && (
-        <div className="border-b border-amber-900 bg-amber-950/60 px-4 py-2 text-center text-sm text-amber-200">
-          離線中
+        <div className="bg-warning-bg px-4 py-2 text-center text-sm font-medium text-warning-fg">
+          ⚠ 離線中
           {lastUpdated ? ` · 資料更新於 ${attendedTime(lastUpdated)}` : '，請恢復網路後重新整理'}
           {lastUpdated && event ? `（${sundayLabel(event.sunday_date)}）` : ''}
         </div>
       )}
 
       {finalized && (
-        <div className="border-b border-slate-700 bg-slate-800/80 px-4 py-2 text-center text-sm text-slate-300">
+        <div className="bg-neutral-bg px-4 py-2 text-center text-sm text-neutral-fg">
           本週點名已結束，僅供檢視
         </div>
       )}
@@ -552,22 +586,22 @@ export default function StaffCheckIn({
       {/* List */}
       <section className="flex-1 px-4">
         {noCurrentList ? (
-          <p className="py-16 text-center text-slate-400">
+          <p className="py-16 text-center text-muted">
             尚未下載本週清單，請恢復網路後重新整理
           </p>
         ) : rows.length === 0 ? (
-          <p className="py-16 text-center text-slate-400">
+          <p className="py-16 text-center text-muted">
             {event ? '本週尚無核准車輛' : '尚未開放本週點名'}
           </p>
         ) : visibleRows.length === 0 ? (
-          <div className="py-16 text-center text-slate-400">
+          <div className="py-16 text-center text-muted">
             {query ? (
               <>
                 <p>找不到符合車牌</p>
                 <button
                   type="button"
                   onClick={() => openWalkIn(query)}
-                  className="mt-4 h-12 rounded-xl bg-emerald-700 px-5 text-base font-medium text-white active:bg-emerald-800"
+                  className="mt-4 h-12 rounded-xl bg-info-fg px-5 text-base font-semibold text-white transition-colors active:bg-info-fg/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 >
                   ＋ 登記為現場車輛
                 </button>
@@ -579,33 +613,29 @@ export default function StaffCheckIn({
             )}
           </div>
         ) : (
-          <ul className="divide-y divide-slate-800">
+          <ul className="flex flex-col gap-2 py-3">
             {visibleRows.map(r => {
               const done = DONE_STATUSES.has(r.status)
               const released = r.status === 'released_late'
               return (
-                <li key={r.reservation_id} className="flex items-center justify-between gap-3 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-base font-medium">
-                      {r.is_priority && <span aria-label="優先車位">⭐ </span>}
-                      {rowName(r)}
-                      {isWalkIn(r) && <span className="ml-1 text-sm text-slate-500">· 現場</span>}
-                    </p>
-                    <p className="mt-0.5 font-mono text-base tracking-wide text-slate-300">
+                <li
+                  key={r.reservation_id}
+                  className={`flex items-center justify-between gap-3 rounded-xl border border-border border-l-4 ${stripeClass(r)} bg-surface p-3 ${done ? 'opacity-70' : ''}`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      {r.is_priority && <Badge tone="priority">⭐ 優先</Badge>}
+                      <span className="truncate text-base font-bold">{rowName(r)}</span>
+                    </div>
+                    <p className="mt-0.5 font-mono text-base tracking-wide text-muted">
                       {rowPlate(r)}
                     </p>
-                    <p className="mt-0.5 text-sm">
-                      {done ? (
-                        <span className="text-emerald-400">
-                          ✅ 已到{attendedTime(r.attended_at) && ` ${attendedTime(r.attended_at)}`}
-                          {r.status === 'attended_after_release' && '（補）'}
-                        </span>
-                      ) : released ? (
-                        <span className="text-amber-400">⏰ 已釋出</span>
-                      ) : (
-                        <span className="text-slate-400">未到場</span>
-                      )}
-                    </p>
+                    <div className="mt-1">
+                      <Badge tone={statusTone(r)}>
+                        {statusLabel(r.status)}
+                        {done && attendedTime(r.attended_at) ? ` ${attendedTime(r.attended_at)}` : ''}
+                      </Badge>
+                    </div>
                   </div>
 
                   <div className="flex shrink-0 flex-col items-end gap-2">
@@ -614,8 +644,8 @@ export default function StaffCheckIn({
                         type="button"
                         onClick={() => tapCheckIn(r)}
                         disabled={finalized}
-                        className={`h-12 rounded-xl px-5 text-base font-medium disabled:opacity-40 ${
-                          released ? 'bg-amber-600 text-white active:bg-amber-700' : 'bg-sky-600 text-white active:bg-sky-700'
+                        className={`h-12 rounded-xl px-5 text-base font-semibold text-white transition-colors disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
+                          released ? 'bg-warning-fg active:bg-warning-fg/90' : 'bg-info-fg active:bg-info-fg/90'
                         }`}
                       >
                         {released ? '補點名' : '點名'}
@@ -627,7 +657,7 @@ export default function StaffCheckIn({
                       onClick={() => openMoveCar(r)}
                       disabled={finalized || settleBusy || !r.owner_notifiable}
                       title={r.owner_notifiable ? undefined : '此車主未綁定 LINE，無法通知'}
-                      className="h-11 rounded-lg border border-violet-700 px-3 text-sm font-medium text-violet-200 active:bg-violet-900/40 disabled:opacity-30"
+                      className="inline-flex min-h-11 items-center rounded-lg border border-priority-fg/40 px-3 text-sm font-medium text-priority-fg transition-colors active:bg-priority-bg disabled:opacity-30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                     >
                       請移車
                     </button>
@@ -639,12 +669,12 @@ export default function StaffCheckIn({
         )}
       </section>
 
-      <footer className="space-y-2 border-t border-slate-800 px-4 py-4">
+      <footer className="space-y-2 border-t border-border bg-surface px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
         <button
           type="button"
           onClick={() => openWalkIn()}
           disabled={finalized}
-          className="h-12 w-full rounded-xl bg-emerald-700 text-base font-medium text-white active:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-12 w-full rounded-xl bg-info-fg text-base font-semibold text-white transition-colors active:bg-info-fg/90 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           ＋ 登記現場車輛
         </button>
@@ -653,7 +683,7 @@ export default function StaffCheckIn({
           href="/staff/print"
           target="_blank"
           rel="noopener"
-          className="flex h-12 w-full items-center justify-center rounded-xl border border-slate-700 text-base text-slate-300 active:bg-slate-800"
+          className="flex h-12 w-full items-center justify-center rounded-xl border border-border text-base text-ink transition-colors active:bg-border-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           🖨 列印備援清單
         </a>
@@ -662,7 +692,7 @@ export default function StaffCheckIn({
           type="button"
           onClick={() => setSettleOpen(true)}
           disabled={!event || finalized || settleBusy || offline}
-          className="h-12 w-full rounded-xl border border-slate-700 text-base text-slate-200 active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-12 w-full rounded-xl border border-danger-fg/40 text-base font-medium text-danger-fg transition-colors active:bg-danger-bg disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           ✔ 結束當週點名
         </button>
@@ -676,28 +706,28 @@ export default function StaffCheckIn({
             className="flex-1"
             onClick={() => !walkInBusy && setWalkInOpen(false)}
           />
-          <div className="mx-auto w-full max-w-md rounded-t-2xl border-t border-slate-700 bg-slate-900 px-4 pb-6 pt-4">
-            <h2 className="text-lg font-semibold">登記現場車輛</h2>
-            <label className="mt-4 block text-sm text-slate-400">車牌 *</label>
+          <div className="mx-auto max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-md overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-surface px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+            <h2 className="text-lg font-bold">登記現場車輛</h2>
+            <label className="mt-4 block text-sm text-muted">車牌 *</label>
             <input
               autoFocus
               value={walkInPlate}
               onChange={e => setWalkInPlate(e.target.value)}
               placeholder="例：ABC-1234"
-              className="mt-1 h-12 w-full rounded-xl bg-slate-800 px-4 text-base text-slate-100 placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-emerald-500"
+              className="mt-1 h-12 w-full rounded-xl border border-border bg-surface px-4 text-base text-ink placeholder:text-muted outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
             />
-            <label className="mt-3 block text-sm text-slate-400">姓名／備註（選填）</label>
+            <label className="mt-3 block text-sm text-muted">姓名／備註（選填）</label>
             <input
               value={walkInName}
               onChange={e => setWalkInName(e.target.value)}
-              className="mt-1 h-12 w-full rounded-xl bg-slate-800 px-4 text-base text-slate-100 outline-none focus:ring-2 focus:ring-emerald-500"
+              className="mt-1 h-12 w-full rounded-xl border border-border bg-surface px-4 text-base text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
             />
             <div className="mt-5 flex gap-3">
               <button
                 type="button"
                 onClick={() => setWalkInOpen(false)}
                 disabled={walkInBusy}
-                className="h-12 flex-1 rounded-xl bg-slate-800 text-base text-slate-200 active:bg-slate-700 disabled:opacity-50"
+                className="h-12 flex-1 rounded-xl border border-border bg-surface text-base text-ink transition-colors active:bg-border-subtle disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 取消
               </button>
@@ -705,7 +735,7 @@ export default function StaffCheckIn({
                 type="button"
                 onClick={() => void submitWalkIn()}
                 disabled={walkInBusy || walkInPlate.trim() === ''}
-                className="h-12 flex-1 rounded-xl bg-emerald-600 text-base font-medium text-white active:bg-emerald-700 disabled:opacity-50"
+                className="h-12 flex-1 rounded-xl bg-info-fg text-base font-semibold text-white transition-colors active:bg-info-fg/90 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 確認登記
               </button>
@@ -722,15 +752,15 @@ export default function StaffCheckIn({
             className="flex-1"
             onClick={() => !settleBusy && setSettleOpen(false)}
           />
-          <div className="mx-auto w-full max-w-md rounded-t-2xl border-t border-slate-700 bg-slate-900 px-4 pb-6 pt-4">
-            <h2 className="text-lg font-semibold">結束本週點名</h2>
-            <p className="mt-3 text-sm text-slate-300">
+          <div className="mx-auto max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-md overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-surface px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+            <h2 className="text-lg font-bold">結束本週點名</h2>
+            <p className="mt-3 text-sm text-ink">
               目前有 {releasedLateCount} 台已釋出未到將被結算。
             </p>
-            <p className="mt-2 text-sm text-slate-300">
-              將所有「已釋出未到」標記為未到並結束本週點名，<span className="font-semibold text-rose-300">此動作無法復原</span>。
+            <p className="mt-2 text-sm text-ink">
+              將所有「已釋出未到」標記為未到並結束本週點名，<span className="font-semibold text-danger-fg">此動作無法復原</span>。
             </p>
-            <p className="mt-2 text-xs text-slate-500">
+            <p className="mt-2 text-xs text-muted">
               實際結算台數可能不同：系統會先做一次最終釋出掃描再結算。
             </p>
             <div className="mt-5 flex gap-3">
@@ -738,7 +768,7 @@ export default function StaffCheckIn({
                 type="button"
                 onClick={() => setSettleOpen(false)}
                 disabled={settleBusy}
-                className="h-12 flex-1 rounded-xl bg-slate-800 text-base text-slate-200 active:bg-slate-700 disabled:opacity-50"
+                className="h-12 flex-1 rounded-xl border border-border bg-surface text-base text-ink transition-colors active:bg-border-subtle disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 取消
               </button>
@@ -746,7 +776,7 @@ export default function StaffCheckIn({
                 type="button"
                 onClick={() => void submitSettle()}
                 disabled={settleBusy}
-                className="h-12 flex-1 rounded-xl bg-rose-600 text-base font-medium text-white active:bg-rose-700 disabled:opacity-50"
+                className="h-12 flex-1 rounded-xl bg-danger-fg text-base font-semibold text-white transition-colors active:bg-danger-fg/90 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 {settleBusy ? '結算中…' : '確認結束'}
               </button>
@@ -763,12 +793,12 @@ export default function StaffCheckIn({
             className="flex-1"
             onClick={() => !moveCarBusy && setMoveCarRow(null)}
           />
-          <div className="mx-auto w-full max-w-md rounded-t-2xl border-t border-slate-700 bg-slate-900 px-4 pb-6 pt-4">
-            <h2 className="text-lg font-semibold">請車主移車</h2>
-            <p className="mt-3 text-sm text-slate-300">
+          <div className="mx-auto max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-md overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-surface px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+            <h2 className="text-lg font-bold">請車主移車</h2>
+            <p className="mt-3 text-sm text-ink">
               透過教會 LINE 通知車牌 <span className="font-mono tracking-wide">{rowPlate(moveCarRow)}</span> 的車主移車？
             </p>
-            <p className="mt-2 text-xs text-slate-500">
+            <p className="mt-2 text-xs text-muted">
               通知由教會官方帳號代發，不會顯示您的個人聯絡方式。
             </p>
             <div className="mt-5 flex gap-3">
@@ -776,7 +806,7 @@ export default function StaffCheckIn({
                 type="button"
                 onClick={() => setMoveCarRow(null)}
                 disabled={moveCarBusy}
-                className="h-12 flex-1 rounded-xl bg-slate-800 text-base text-slate-200 active:bg-slate-700 disabled:opacity-50"
+                className="h-12 flex-1 rounded-xl border border-border bg-surface text-base text-ink transition-colors active:bg-border-subtle disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 取消
               </button>
@@ -784,7 +814,7 @@ export default function StaffCheckIn({
                 type="button"
                 onClick={() => void submitMoveCar()}
                 disabled={moveCarBusy}
-                className="h-12 flex-1 rounded-xl bg-violet-600 text-base font-medium text-white active:bg-violet-700 disabled:opacity-50"
+                className="h-12 flex-1 rounded-xl bg-priority-fg text-base font-semibold text-white transition-colors active:bg-priority-fg/90 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 {moveCarBusy ? '傳送中…' : '送出通知'}
               </button>
@@ -794,16 +824,20 @@ export default function StaffCheckIn({
       )}
 
       {pendingName && (
-        <div className="fixed inset-x-0 bottom-28 z-30 mx-auto flex w-fit items-center gap-3 rounded-full bg-slate-800 px-4 py-2 text-sm text-slate-100 shadow-lg">
+        <div className="fixed inset-x-0 bottom-28 z-30 mx-auto flex w-fit items-center gap-2 rounded-full bg-ink pl-4 pr-1.5 text-sm text-white shadow-lg">
           <span>已點名 {pendingName} · 尚未送出</span>
-          <button type="button" onClick={undo} className="font-semibold text-sky-400 active:text-sky-300">
+          <button
+            type="button"
+            onClick={undo}
+            className="inline-flex min-h-11 items-center rounded-full px-3 font-bold text-white underline underline-offset-2 transition-opacity active:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
             復原
           </button>
         </div>
       )}
 
       {toast && (
-        <div className="fixed inset-x-0 bottom-24 z-30 mx-auto w-fit rounded-full bg-rose-600 px-4 py-2 text-sm text-white shadow-lg">
+        <div className="fixed inset-x-0 bottom-24 z-30 mx-auto w-fit rounded-full bg-danger-fg px-4 py-2 text-sm font-medium text-white shadow-lg">
           {toast}
         </div>
       )}
