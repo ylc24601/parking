@@ -153,6 +153,13 @@ successful requeue, the next dispatch run drains the rows; watch `outbox-alert` 
 
 ---
 
+## Phase 9 prod correspondence
+
+The 11 live cron-job.org jobs (including `dispatch`), their exact schedules, jobIds, and
+the actual scheduler-timezone decision made (Asia/Taipei, not UTC — this account's
+setting) are recorded in
+[prod-deploy-runbook.md](prod-deploy-runbook.md) §6.5, not duplicated here.
+
 ## Rollback
 
 - **Stop delivery:** disable the external cron job (remove the scheduled `dispatch` call). Rows keep

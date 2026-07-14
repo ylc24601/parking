@@ -4,6 +4,11 @@
 > 即可完整開發/測試。真機冒煙為 **Phase 7 結案（交付）前必跑**（見 handoff §6.23），
 > 依交付模式在**開發者自己的 OA / provider** 上執行即可，不需教會協調。
 > 相關：[binding-ops.md](binding-ops.md)、[oa-dry-run-tunnel-runbook.md](oa-dry-run-tunnel-runbook.md)、[delivery-model-and-roadmap.md](delivery-model-and-roadmap.md)。
+>
+> **Phase 9 prod 對應**：本文件描述的是本機＋tunnel 的一次性真機冒煙。正式接上 prod
+> （Vercel 網域取代 tunnel URL、Endpoint/Webhook 改指向 `parking-omega-one.vercel.app`、
+> 兩個易貼錯的 ID 症狀）記在 [prod-deploy-runbook.md](prod-deploy-runbook.md) §6.1，
+> 不在本文重複。
 
 ## 1. 名詞與 env 對照（易混淆）
 

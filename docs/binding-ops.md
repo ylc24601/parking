@@ -156,6 +156,7 @@ npm run job:redact-binding-pii -- --apply     # 實際清除（預設 max 200、
 
 ## 對照
 
-- 綁定成功後，該會友的 `owner_notifiable` 轉為可通知，dispatcher 才送得到（仍需真 OA token + `NOTIFICATION_TRANSPORT=line`；另需一次教會正式 OA capture dry-run，見 [oa-dry-run-tunnel-runbook.md](oa-dry-run-tunnel-runbook.md)）。
+- 綁定成功後，該會友的 `owner_notifiable` 轉為可通知，dispatcher 才送得到（開發者 OA 上 `NOTIFICATION_TRANSPORT=line` 已於 Phase 9 Slice 3 接上；教會正式 OA token + capture dry-run 仍是交付後 ops，見 [oa-dry-run-tunnel-runbook.md](oa-dry-run-tunnel-runbook.md)）。
 - 擷取端：keyword `綁定 <code>` → handoff §6.19；LIFF 申請 → §6.24。審核 RPC：§6.20（0022 改版）。
 - 會友端 LIFF 建置與真機冒煙：[member-liff-setup.md](member-liff-setup.md)。
+- **Phase 9 prod 對應**：prod 上第一筆真實走完整 LIFF 申請→核准鏈路的紀錄（開發者自己的帳號，dependency-aware 清理決策）記在 [prod-deploy-runbook.md](prod-deploy-runbook.md) §6.3–§6.4。
