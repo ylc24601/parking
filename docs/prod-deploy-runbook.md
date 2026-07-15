@@ -504,8 +504,11 @@ inactivity and have no daily backups; Pro removes both (per
 - [x] `JOB_TRIGGER_SECRET`: rotated once already (see §6.6 incident) — current value
       confirmed live in Vercel Production and matching all 11 cron-job.org job headers;
       the exposed prior value is dead (superseded, not just "hopefully unused").
-- [ ] Developer test identity (`users` row bound via real LIFF flow, §6.4): cleanup not
-      yet executed — **A1 decision stands, action item for Slice 4 close-out**.
+- [x] Developer test identity (`users` row bound via real LIFF flow, §6.4): **A1 cleanup
+      executed 2026-07-15** as part of the Slice 4 teardown (§12.3) — deleted together with
+      the synthetic cohort in one FK-safe transaction; post-delete verify showed
+      `any bound users (line_id) left = 0` and no rows by phone/plate. See `current_handoff.md`
+      §6.36.
 - [x] No secrets or the exposed `JOB_TRIGGER_SECRET` value appear in this document — only
       pass/fail outcomes and non-secret IDs (jobIds, event IDs).
 
