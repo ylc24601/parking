@@ -954,16 +954,24 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 1a（Staff 現場頁 #23／#24）
+### Current HEAD 最近驗證：Wave 1b（Member UX #29／#30）
 
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1135 passed**（113 檔全過） |
-| `npm run build` | ✅ route 清單出現 `ƒ /admin/print`、**不再有 `/staff/print`** |
-| 實跑路由 | `GET /staff/print` → **404**；未登入 `GET /admin/print` → **307 → /admin**；`/staff` → 200 |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1137 passed**（113 檔全過） |
+| `npm run build` | ✅ |
+| 手動實跑（mock 會員、真頁面） | waiting 會友 → **「目前候補第 2 位」**＋caveat（前方 `approved`/`temp_approved` 正確**未計入**）；申請區塊 → 「車位預計於週五 18:00 分配」、**零個**「18:00 截止」；驗證用 seed 已全數清除（0 leftover） |
 | DB schema | 本刀無 migration（仍 `0001–0029`） |
+
+> **Wave 1b（#29／#30）**：
+> - **#29 候補序號**：新 `repo.getWaitingRank(eventId, allocationOrder)`＝同 event、仍 `waiting`、`allocation_order` 較小者 count **+1**（1-based）。**只數 `waiting`**——持 offer（`temp_approved`）者當下不佔候補位，但 `failOffer` 會讓他帶**原 `allocation_order`** 退回 waiting、**插回前面**，故序號可能**變大**；UI 明示「順序可能因取消、資格與分配狀態而變動」，這不是號碼牌。`allocation_order` 為 server-only，只有衍生的 `waitingRank` 進 DTO；rank 不明時回退既有文案，不編造序號。count 查詢 error 或 `count === null` 一律 **throw**（絕不默默顯示假的「第 1 位」）。
+> - **#30 取消 reassurance**：**triage 原訂「10:30 前取消不計違規」經讀碼推翻**——(a) 違規只來自 `released_late → no_show`，取消**從不**計違規；(b) 過了截止根本**不能**取消（`cancellationService` 對其他狀態 throw）；(c) 截止**每人不同**（P3 10:30／P2 10:45／P2 正在路上 10:55），寫死 10:30 對 P2 是錯的。故改**無條件**：「主動取消不會被記為未到場；已核准但未取消且未到場，才會列入未到場紀錄。」
+> - **申請區塊只寫「預計分配」、不寫「截止」**：該區塊由 `hasFridayAllocationRun` 而非時鐘把關，cron 延遲時頁面仍開放，若宣稱「18:00 截止」會與正下方的表單自相矛盾。
+> - 測試：`getWaitingRank` DB 整合（`approved`/`temp_approved`/null order/他週皆不計；前方取消→序號下降）。該 describe **自有 Sundays `2099-09-13`/`2099-09-20`**——`weekly_events.sunday_date` 為 **unique**，各整合檔必須claim 未被使用的日期。
+
+> 前幾刀：Wave 1a 全套 1135、`/staff/print`→404；Wave 0.1 非 DB 956／全套 1131；Wave 0（#20/#21/#22＋migration `0029`）全套 1118／`db:verify` PASS；Wave -1 非 DB 906。
 
 > **Wave 1a（#23／#24）**：紙本點名備援清單由 `/staff/print` **搬到 `/admin/print`**——列印是主日前的辦公室準備動作，不該綁在全同工共用的現場 PIN。event 改用**台北日曆當週主日**（`upcomingSundayISO`），**非 `getActiveEvent`**（latest-non-finalized 會印出上週）；資料解析抽成可測的 `printSheetService`（測試釘住：日曆主日／未呼叫 `getActiveEvent`／只讀 Staff-safe view）。`/staff/print` 已刪除、**不做 redirect**（跨 auth domain 混亂）；sidebar 加入口並對整個 shell 上 `print:hidden`。
 > Staff footer 只留「＋登記現場車輛」；不可逆的「結束當週點名」移入 header ⋯ 選單（**真 `<button disabled>`**——disabled 時不可開確認 sheet；先關選單再開 sheet；Escape／點外只關閉、不觸發），既有二次確認 sheet 未動。

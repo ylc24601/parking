@@ -52,6 +52,15 @@ export default async function MemberPage() {
     reservation.status !== 'cancelled_by_user' &&
     reservation.status !== 'cancelled_late'
 
+  // Live queue position (#29), only meaningful while waiting. allocation_order is assigned to
+  // every row at Friday allocation, so a waiting row should always have one — guard anyway and
+  // fall back to the generic copy rather than invent a position. allocation_order itself is
+  // server-only; just the derived rank reaches the DTO.
+  const waitingRank =
+    event && reservation?.status === 'waiting' && reservation.allocation_order !== null
+      ? await repo.getWaitingRank(event.id, reservation.allocation_order)
+      : null
+
   // Apply affordance (Slice 3): only assembled when there is an open week and no live
   // reservation. Eligibility stays server-side — the DTO carries derived bits only.
   let apply: MemberWeekStatus['apply'] = null
@@ -80,6 +89,7 @@ export default async function MemberPage() {
           releaseDeadlineAt: reservation.release_deadline_at?.toISOString() ?? null,
           offerExpiresAt: reservation.offer_expires_at?.toISOString() ?? null,
           p2OnTheWay: reservation.p2_on_the_way,
+          waitingRank,
         }
       : null,
     apply,

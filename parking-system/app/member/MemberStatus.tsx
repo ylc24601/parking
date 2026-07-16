@@ -18,6 +18,9 @@ export interface MemberWeekStatus {
     releaseDeadlineAt: string | null
     offerExpiresAt: string | null
     p2OnTheWay: boolean
+    // Live queue position while waiting (#29); null when not waiting or unknown. A moving
+    // number, not a ticket — see the note rendered beside it.
+    waitingRank: number | null
   } | null
   apply: {
     closed: boolean               // Friday allocation ran — this week is closed
@@ -52,6 +55,7 @@ function statusView(r: NonNullable<MemberWeekStatus['reservation']>): {
   label: string
   tone: BadgeTone
   detail: string | null
+  note?: string // secondary line, rendered smaller than detail
 } {
   const deadline = timeLabel(r.releaseDeadlineAt)
   switch (r.status) {
@@ -74,7 +78,16 @@ function statusView(r: NonNullable<MemberWeekStatus['reservation']>): {
           : '已為您保留車位，請儘速確認',
       }
     case 'waiting':
-      return { label: '候補中', tone: 'warning', detail: '若有車位釋出將依序遞補並通知您' }
+      // Explicit null check, not truthiness: a real rank starts at 1, but `0` would be an
+      // anomaly worth showing as unknown rather than silently hiding.
+      return r.waitingRank !== null
+        ? {
+            label: '候補中',
+            tone: 'warning',
+            detail: `目前候補第 ${r.waitingRank} 位`,
+            note: '順序可能因取消、資格與分配狀態而變動',
+          }
+        : { label: '候補中', tone: 'warning', detail: '若有車位釋出將依序遞補並通知您' }
     case 'attended':
       return { label: '已到場', tone: 'success', detail: null }
     case 'attended_after_release':
@@ -172,6 +185,7 @@ export default function MemberStatus({ status }: { status: MemberWeekStatus }) {
                   <p className="mt-4 font-mono text-2xl font-bold tracking-wide">{r.plate}</p>
                 )}
                 {view.detail && <p className="mt-3 text-sm leading-relaxed text-muted">{view.detail}</p>}
+                {view.note && <p className="mt-1 text-xs leading-relaxed text-muted">{view.note}</p>}
                 {status.canRespondOffer && <OfferActions disabled={busy} />}
                 {status.canReportOnTheWay && <OnTheWayButton disabled={busy} />}
                 {status.canCancel && (
@@ -357,6 +371,13 @@ function CancelButton({ approved, disabled }: { approved: boolean; disabled: boo
           <p className="text-sm text-warning-fg">
             {approved ? '確定取消？車位將釋出給候補會友' : '確定取消本週登記？'}
           </p>
+          {/* The fear that stops members cancelling is "will this count against me?" — it does
+              not: only a released_late row becomes no_show (settleNoShow). Deliberately states
+              no time: cancelling is never recorded, and each member's release deadline differs
+              (10:30 / 10:45 / 10:55), so naming one hour would be wrong for P2. */}
+          <p className="text-xs leading-relaxed text-muted">
+            主動取消不會被記為未到場；已核准但未取消且未到場，才會列入未到場紀錄。
+          </p>
           <div className="flex gap-2">
             <button
               type="button"
@@ -459,6 +480,11 @@ function ApplyBlock({
       <p className="text-[11px] font-bold uppercase tracking-wider text-muted">
         {hasCancelledCard ? '重新登記本週停車' : '登記本週停車'}
       </p>
+      {/* States the SCHEDULE, never a cutoff: this block is gated by hasFridayAllocationRun,
+          not by a clock, so if the friday-allocation cron is late the page is still open —
+          promising "18:00 截止" here would contradict the form right below it. 18:00 is that
+          cron's scheduled time (runbook §6); if ops reschedules it, this copy moves too. */}
+      <p className="mt-1 text-xs text-muted">車位預計於週五 18:00 分配</p>
 
       <label className="mt-4 block text-sm text-muted" htmlFor="apply-vehicle">車輛</label>
       <select
