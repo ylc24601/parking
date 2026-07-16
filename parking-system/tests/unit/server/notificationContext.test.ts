@@ -4,6 +4,7 @@ import {
   getSundayDateForNotification,
   withNotificationContext,
 } from '@/server/services/notification/context'
+import { renderTemplate } from '@/server/services/notification/templates'
 import { asRepo, makeMockRepo, type MockRepo } from './mockRepo'
 
 // Wave 1d (#27). This helper is the single authority for `sunday_date` / `license_plate` in a
@@ -140,6 +141,25 @@ describe('withNotificationContext', () => {
     expect(out.user_id).toBe(original.user_id)
     expect(out.reservation_id).toBe(original.reservation_id)
     expect(out.template_key).toBe(original.template_key)
+  })
+
+  // The fail-soft boundary: when the decorative event lookup returns nothing, an inherited date
+  // must go too. Leaving it would render an unverified date as fact instead of falling back to
+  //「本週」 — and would quietly break the single-authority contract this helper claims.
+  it('strips an inherited Sunday when the date lookup produced no trusted date', async () => {
+    const [out] = await withNotificationContext(
+      [
+        row('reservation_cancelled', {
+          payload: { cancel_status: 'cancelled_by_user', sunday_date: '1999-01-01' },
+        }),
+      ],
+      { sundayDate: null, repo: asRepo(repoWithPlates()) },
+    )
+
+    expect(out.payload.cancel_status).toBe('cancelled_by_user')
+    expect(out.payload).not.toHaveProperty('sunday_date')
+    expect(renderTemplate('reservation_cancelled', out.payload)).toContain('本週')
+    expect(renderTemplate('reservation_cancelled', out.payload)).not.toContain('1999')
   })
 
   it('omits sunday_date when there is no date, rather than writing null', async () => {
