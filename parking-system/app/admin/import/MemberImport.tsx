@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react'
 import Link from 'next/link'
+import { GROUP_CONFLICT_FIELD_LABEL, type GroupConflictField } from '@/lib/memberImportSchema'
 
 // Member CSV upload: two-step preview → apply. The raw file lives ONLY in a ref (not
 // React state) so its full PII contents don't sit in devtools-inspectable state — only
@@ -21,7 +22,7 @@ interface ImportReport {
   phoneNameConflicts: Array<{ phone: string; names: string[]; existingName?: string }>
   plateConflicts: Array<{ phone: string; plates: string[] }>
   batchPlateConflicts: Array<{ plate: string; phones: string[] }>
-  priorityConflicts: Array<{ phone: string; priorities: string[]; reasons: string[] }>
+  groupConflicts: Array<{ phone: string; field: GroupConflictField; subject?: string; values: string[] }>
   reviewRequired: Array<{ phone: string; reason: string }>
   p2Retained: Array<{ phone: string }>
   validationErrors: Array<{ line: number; errors: string[] }>
@@ -30,7 +31,7 @@ interface ImportReport {
     phoneNameConflicts: number
     plateConflicts: number
     batchPlateConflicts: number
-    priorityConflicts: number
+    groupConflicts: number
     reviewRequired: number
     p2Retained: number
     validationErrors: number
@@ -161,7 +162,7 @@ export default function MemberImport() {
       report.totals.phoneNameConflicts > 0 ||
       report.totals.plateConflicts > 0 ||
       report.totals.batchPlateConflicts > 0 ||
-      report.totals.priorityConflicts > 0)
+      report.totals.groupConflicts > 0)
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
@@ -322,11 +323,14 @@ function ReportView({ report }: { report: ImportReport }) {
       </IssueList>
 
       <IssueList
-        title="同手機資料不一致（優先序／事由，整位略過）" total={report.totals.priorityConflicts}
-        empty={report.priorityConflicts.length === 0}
+        title="同手機資料不一致（整位略過）" total={report.totals.groupConflicts}
+        empty={report.groupConflicts.length === 0}
+        note={<span className="text-xs text-muted">每人一次只顯示一項；修正後重新預覽可能顯示下一項</span>}
       >
-        {report.priorityConflicts.map((c, i) => (
-          <li key={i}>{c.phone}：優先序 {c.priorities.join('／')}{c.reasons.length ? `；事由 ${c.reasons.join('／')}` : ''}</li>
+        {report.groupConflicts.map((c, i) => (
+          <li key={i}>
+            {c.phone}：{GROUP_CONFLICT_FIELD_LABEL[c.field]}{c.subject ? `（${c.subject}）` : ''} {c.values.join('／')}
+          </li>
         ))}
       </IssueList>
 

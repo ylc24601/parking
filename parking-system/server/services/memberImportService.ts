@@ -5,6 +5,7 @@ import {
   collectDependents,
   computeEligibility,
   deriveRosterEligibility,
+  isPregnancy,
   longestCell,
   MAX_CELL_CODEPOINTS,
   MAX_REPORT_ITEMS,
@@ -13,7 +14,9 @@ import {
   parseMobilePhone,
   validateRow,
   type Dependent,
+  type DependentKind,
   type EligibilityResult,
+  type GroupConflictField,
   type P2Reason,
   type RawRow,
   type ReasonType,
@@ -47,8 +50,10 @@ export interface ImportReport {
   // CSV self-contradiction: one plate claimed by >1 phone in THIS file. Distinct from plateConflicts
   // (a plate already owned by another member in the DB) — the whole member is skipped, fail closed.
   batchPlateConflicts: Array<{ plate: string; phones: string[] }>
-  // Same phone, inconsistent priority (or P2 事由) across rows — the whole member is skipped.
-  priorityConflicts: Array<{ phone: string; priorities: string[]; reasons: string[] }>
+  // Same phone, rows disagree on a field that decides eligibility — the whole member is skipped
+  // (row order must never pick a winner). One mechanism for both profiles; `values` are canonical
+  // (never raw free text). Only the FIRST conflict per member is reported — see resolveP2Group.
+  groupConflicts: Array<{ phone: string; field: GroupConflictField; subject?: string; values: string[] }>
   reviewRequired: Array<{ phone: string; reason: string }>
   // Existing-P2 member marked P1/P3 in a roster import: eligibility kept, NOT revoked (warning).
   p2Retained: Array<{ phone: string }>
@@ -59,7 +64,7 @@ export interface ImportReport {
     phoneNameConflicts: number
     plateConflicts: number
     batchPlateConflicts: number
-    priorityConflicts: number
+    groupConflicts: number
     reviewRequired: number
     p2Retained: number
     validationErrors: number
@@ -91,7 +96,90 @@ interface ParsedRow {
   rosterReason: P2Reason | null
 }
 
-const dedupeKey = (d: Dependent) => `${d.kind}|${d.name}|${d.birthdate ?? ''}`
+// ── Group resolution ─────────────────────────────────────────────────────────
+// A member (canonical phone) spans one row per vehicle. These resolvers derive the member's reason
+// + eligibility from the WHOLE group and fail closed on any disagreement, so row order can never
+// decide eligibility. Each returns at most ONE conflict; the checks run in a fixed order
+// (reason_type → pregnancy → application_date → dependent_birthdate), so a member with several
+// contradictions surfaces the next one after the first is fixed and re-previewed.
+
+type GroupResolution =
+  | { ok: true; reason: string | null; elig: EligibilityResult | null; dependents: Dependent[] }
+  | { ok: false; field: GroupConflictField; subject?: string; values: string[] }
+
+function resolveRosterGroup(rows: ParsedRow[], now: Date): GroupResolution {
+  const priorities = [...new Set(rows.map(r => r.priority))] as RosterPriority[]
+  if (priorities.length > 1) return { ok: false, field: 'priority', values: [...priorities].sort() }
+  // P1/P3 = general member: no eligibility, and never revokes an existing P2.
+  if (priorities[0] !== 'P2') return { ok: true, reason: null, elig: null, dependents: [] }
+
+  const reasons = [...new Set(rows.map(r => r.rosterReason))].filter(Boolean) as P2Reason[]
+  if (reasons.length > 1) return { ok: false, field: 'reason_label', values: [...reasons].sort() }
+  return { ok: true, reason: reasons[0], elig: deriveRosterEligibility(reasons[0], now), dependents: [] }
+}
+
+function resolveP2Group(rows: ParsedRow[], now: Date): GroupResolution {
+  const reasonTypes = [...new Set(rows.map(r => r.reasonType))] as ReasonType[]
+  if (reasonTypes.length > 1) {
+    return { ok: false, field: 'reason_type', values: reasonTypes.map(String).sort() }
+  }
+  const reasonType = reasonTypes[0]
+
+  // remarks only ever matters through isPregnancy(), and only for reason 3 — so require the DERIVED
+  // flag to agree, not the verbatim text. Report a controlled label, never the raw remarks.
+  let pregnancy = false
+  if (reasonType === 3) {
+    const flags = [...new Set(rows.map(r => isPregnancy(r.remarks)))]
+    if (flags.length > 1) return { ok: false, field: 'pregnancy', values: ['孕婦', '非孕婦'] }
+    pregnancy = flags[0]
+  }
+
+  // Blank is "not provided" and is filled by the single valid value; two different valid dates are a
+  // contradiction. A present-but-unparseable date never reaches here — validateRow rejects that row,
+  // which taints the whole member via row-completeness.
+  const dates = [...new Set(rows.map(r => (r.applicationDate ? parseFormDate(r.applicationDate) : null)).filter(Boolean))] as string[]
+  if (dates.length > 1) return { ok: false, field: 'application_date', values: [...dates].sort() }
+  const applicationDate = dates[0] ?? null
+
+  const merged = mergeDependents(rows.flatMap(r => r.dependents))
+  if (!merged.ok) return merged
+
+  const childBirthdates = merged.dependents.filter(d => d.kind === 'child' && d.birthdate).map(d => d.birthdate as string)
+  // Canonical input built from the resolved group — deliberately NOT rows[0].remarks, so it is
+  // evident that eligibility is a property of the member, not of whichever row happened to be first.
+  const elig = computeEligibility({
+    reasonType, remarks: pregnancy ? '懷孕' : '', applicationDate, childBirthdates, now,
+  })
+  return { ok: true, reason: elig.p2_reason, elig, dependents: merged.dependents }
+}
+
+// Merge a member's dependents across rows by (kind, name): a blank birthdate is filled by the single
+// valid one; two different birthdates for the same dependent are a contradiction (silently taking
+// max() would quietly extend valid_until). Birthdates are already ISO-normalized by collectDependents,
+// so 2022-03-01 and 2022/03/01 collapse to one value.
+function mergeDependents(all: Dependent[]):
+  | { ok: true; dependents: Dependent[] }
+  | { ok: false; field: 'dependent_birthdate'; subject: string; values: string[] } {
+  const byKey = new Map<string, { kind: DependentKind; name: string; birthdates: Set<string> }>()
+  for (const d of all) {
+    const name = d.name.trim()
+    const key = `${d.kind}|${name}`
+    let entry = byKey.get(key)
+    if (!entry) { entry = { kind: d.kind, name, birthdates: new Set() }; byKey.set(key, entry) }
+    if (d.birthdate) entry.birthdates.add(d.birthdate)
+  }
+  const dependents: Dependent[] = []
+  for (const entry of byKey.values()) {
+    if (entry.birthdates.size > 1) {
+      return {
+        ok: false, field: 'dependent_birthdate',
+        subject: `${entry.kind}／${entry.name}`, values: [...entry.birthdates].sort(),
+      }
+    }
+    dependents.push({ kind: entry.kind, name: entry.name, birthdate: [...entry.birthdates][0] ?? null })
+  }
+  return { ok: true, dependents }
+}
 
 // Core pipeline over CSV TEXT. Throws CsvImportError for structural problems (parseCsv),
 // and CsvImportExecutionError if an apply fails partway through.
@@ -104,11 +192,11 @@ export async function importMembersFromCsvText(
 
   const report: ImportReport = {
     dryRun, rows: records.length, members: 0, imported: 0, updated: 0, vehiclesAdded: 0, dependentsAdded: 0,
-    phoneNameConflicts: [], plateConflicts: [], batchPlateConflicts: [], priorityConflicts: [],
+    phoneNameConflicts: [], plateConflicts: [], batchPlateConflicts: [], groupConflicts: [],
     reviewRequired: [], p2Retained: [], validationErrors: [],
     truncated: false,
     totals: {
-      phoneNameConflicts: 0, plateConflicts: 0, batchPlateConflicts: 0, priorityConflicts: 0,
+      phoneNameConflicts: 0, plateConflicts: 0, batchPlateConflicts: 0, groupConflicts: 0,
       reviewRequired: 0, p2Retained: 0, validationErrors: 0,
     },
   }
@@ -206,41 +294,15 @@ export async function importMembersFromCsvText(
     }
     const name = names[0]
 
-    // Resolve reason + eligibility per profile. roster P1/P3 → no eligibility (reason null).
-    let reason: string | null
-    let elig: EligibilityResult | null
-    let dependents: Dependent[] = []
-    if (profile === 'roster') {
-      const priorities = [...new Set(rows.map(r => r.priority))] as RosterPriority[]
-      if (priorities.length > 1) {
-        pushCapped(report.priorityConflicts, { phone, priorities, reasons: [] })
-        report.totals.priorityConflicts++
-        continue
-      }
-      if (priorities[0] === 'P2') {
-        const reasons = [...new Set(rows.map(r => r.rosterReason))].filter(Boolean) as P2Reason[]
-        if (reasons.length > 1) {
-          pushCapped(report.priorityConflicts, { phone, priorities, reasons })
-          report.totals.priorityConflicts++
-          continue
-        }
-        reason = reasons[0]
-        elig = deriveRosterEligibility(reasons[0], now)
-      } else {
-        reason = null // P1/P3: general member, no eligibility
-        elig = null
-      }
-    } else {
-      const first = rows[0]
-      dependents = [...new Map(rows.flatMap(r => r.dependents).map(d => [dedupeKey(d), d])).values()]
-      const childBirthdates = dependents.filter(d => d.kind === 'child' && d.birthdate).map(d => d.birthdate as string)
-      elig = computeEligibility({
-        reasonType: first.reasonType as ReasonType, remarks: first.remarks,
-        applicationDate: first.applicationDate ? parseFormDate(first.applicationDate) : null,
-        childBirthdates, now,
-      })
-      reason = elig.p2_reason
+    // Resolve reason + eligibility from the WHOLE group (never rows[0]); disagreement fails closed.
+    const resolved = profile === 'roster' ? resolveRosterGroup(rows, now) : resolveP2Group(rows, now)
+    if (!resolved.ok) {
+      const { field, values, subject } = resolved
+      pushCapped(report.groupConflicts, { phone, field, ...(subject ? { subject } : {}), values })
+      report.totals.groupConflicts++
+      continue
     }
+    const { reason, elig, dependents } = resolved
 
     const plates = [...new Set(rows.map(r => r.plate).filter(Boolean))]
     // Batch-local plate conflict → skip the whole member (already reported per-plate above).
@@ -300,7 +362,7 @@ function finalizeTruncation(report: ImportReport): void {
     report.totals.phoneNameConflicts > report.phoneNameConflicts.length ||
     report.totals.plateConflicts > report.plateConflicts.length ||
     report.totals.batchPlateConflicts > report.batchPlateConflicts.length ||
-    report.totals.priorityConflicts > report.priorityConflicts.length ||
+    report.totals.groupConflicts > report.groupConflicts.length ||
     report.totals.reviewRequired > report.reviewRequired.length ||
     report.totals.p2Retained > report.p2Retained.length
 }

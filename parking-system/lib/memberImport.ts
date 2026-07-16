@@ -16,7 +16,9 @@ import {
 } from '@/lib/memberImportSchema'
 
 // Single entry point: re-export the schema types so existing '@/lib/memberImport' imports work.
-export type { P2Reason, ImportProfile, RosterPriority, CsvImportErrorCode } from '@/lib/memberImportSchema'
+export type {
+  P2Reason, ImportProfile, RosterPriority, CsvImportErrorCode, GroupConflictField,
+} from '@/lib/memberImportSchema'
 
 export type ReasonType = 1 | 2 | 3 | 4
 export type DependentKind = 'impaired' | 'child' | 'elder'
@@ -217,6 +219,14 @@ function validateRosterRow(row: RawRow, phone: string | null, errors: string[]):
   return { ok: true, profile: 'roster', phone, priority, reason }
 }
 
+// An optional date cell that is PRESENT but unparseable is bad input, not a missing value: it must
+// surface as a row error (which taints the whole member via row-completeness) rather than silently
+// becoming null — otherwise a typo'd date reads as "not provided" and quietly changes eligibility.
+function rejectUnparseableDate(raw: string | undefined | null, field: string, errors: string[]): void {
+  const s = (raw ?? '').trim()
+  if (s && !parseFormDate(s)) errors.push(`invalid ${field} "${s}" (expect YYYY-MM-DD or YYYY/MM/DD)`)
+}
+
 function validateP2ApplicationRow(row: RawRow, phone: string | null, errors: string[]): RowValidation {
   const rt = Number(row.reason_type)
   const reasonType = (rt === 1 || rt === 2 || rt === 3 || rt === 4 ? rt : null) as ReasonType | null
@@ -224,6 +234,7 @@ function validateP2ApplicationRow(row: RawRow, phone: string | null, errors: str
     errors.push(`invalid reason_type "${row.reason_type ?? ''}"`)
     return { ok: false, errors }
   }
+  rejectUnparseableDate(row.application_date, 'application_date', errors)
   if ((reasonType === 1 || reasonType === 2) && !(row.impaired_person_name ?? '').trim()) {
     errors.push('reason_type 1/2 requires impaired_person_name')
   }
@@ -231,8 +242,16 @@ function validateP2ApplicationRow(row: RawRow, phone: string | null, errors: str
     if (!(row.elder_1_name ?? '').trim()) errors.push('reason_type 4 requires elder_1_name')
     if (!parseFormDate(row.elder_1_birthdate)) errors.push('reason_type 4 requires a valid elder_1_birthdate')
   }
-  if (reasonType === 3 && !isPregnancy(row.remarks) && !(row.child_1_name ?? '').trim()) {
-    errors.push('reason_type 3 requires child_1_name or a pregnancy remark')
+  if (reasonType === 3) {
+    if (!isPregnancy(row.remarks) && !(row.child_1_name ?? '').trim()) {
+      errors.push('reason_type 3 requires child_1_name or a pregnancy remark')
+    }
+    // Only children that are actually collected (name present) carry a birthdate worth validating.
+    for (const i of [1, 2, 3]) {
+      if ((row[`child_${i}_name`] ?? '').trim()) {
+        rejectUnparseableDate(row[`child_${i}_birthdate`], `child_${i}_birthdate`, errors)
+      }
+    }
   }
   if (errors.length > 0 || phone === null) return { ok: false, errors }
   return { ok: true, profile: 'p2_application', phone, reasonType }
