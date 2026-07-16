@@ -1,121 +1,97 @@
-# 功能想法 Triage（rev.2 — 已外部審查一輪）
+# 功能想法 Triage（rev.3 — 兩輪外部審查後接近定稿）
 
-> 目的：Phase 9 收官後，逐一討論想改動的功能，記錄可行性與設計決策；**尚未實作**。
-> rev.1：2026-07-16 完成 30 條判定＋動工順序。
-> rev.2：2026-07-16 經一輪外部審查，修正規格與**改為 delivery-first 排序**（見文末）。
-> 對應：[current_handoff.md](current_handoff.md)（⚠️ 已過期，Wave -1 待修）、[prod-deploy-runbook.md](prod-deploy-runbook.md)、[v2-backlog.md](v2-backlog.md)
+> 目的：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**；尚未實作。
+> rev.1（2026-07-16）：30 條判定＋動工順序。
+> rev.2：一輪審查，修規格＋改 delivery-first 排序。
+> rev.3：二輪審查，修實作語意（PIN 旋轉、commit-then-dispatch、雙真相、actor 模型、拒絕科學記號…）＋拆 Wave 2A/2B/2C。
+> 對應：[current_handoff.md](current_handoff.md)（⚠️ 已過期，Wave -1 待修）、[prod-deploy-runbook.md](prod-deploy-runbook.md)。
 
 ---
 
-## 判定圖例 (verdict legend)
+## 判定圖例
 
 | 判定 | 意義 |
 |------|------|
 | ✅ 加入 backlog | 可行、值得做 |
-| 🕒 defer / 延後 | 可做但現在不划算，或有前置依賴 |
+| 🕒 defer | 可做但現在不划算，或有前置依賴 |
 | ❌ 不做 | 與隱私邊界／架構衝突，或成本不成比例 |
 
-規模標記：S（<半天）／M（1–2 天）／L（需切多刀）。
+規模：S（<半天）／M（1–2 天）／L（需切多刀）。
 
 ---
 
-## 想法一覽（30 條）
+## 想法一覽
 
-| # | 想法 | 相關 surface | 規模 | 判定 | 備註（含審查後修正） |
-|---|------|--------------|------|------|------|
-| 1 | 換人值班「換碼」（撤舊碼）＋手動轉發文案 | admin/staff-pin | S | ✅ 現有即正解 | 現有「重新發碼」＝新碼、舊 hash 立即失效。文案：「換人值班？重發即可，舊 PIN 立即失效。請將新 PIN 手動傳給本週值班同工。」**交付前完成**（配合 #3/#4 deferred）。 |
-| 2 | 顯示回當週同一組 PIN | admin/staff-pin | — | ❌ 不做 | scrypt 單向、明碼不落地；換人本就該撤舊碼，看回舊碼反安全。 |
-| 3 | PIN 每週**自動發同工 LINE 群** | webhook/通知/cron/staff-pin | **M＋安全 design review** | ✅ backlog（Wave 4） | ⚠️ **最大風險＝cron retry 反覆旋轉 PIN**（重跑再發碼→舊碼立即失效）。**採方案 A**：產碼+push **同步一次**、失敗→標記人工重發（明碼不落地，無法自動重送同碼）、**不建可逆秘密儲存**。`ensureWeeklyStaffPin(eventId)` 冪等（當週已有自動批次有效 PIN 則不重發）。每次旋轉寫 audit。groupId 走 **allowlist/啟用流程**，不 auto-trust webhook 捕獲。需獨立 design review。 |
-| 4 | PIN**個別私訊**當週值班人 | 通知＋member 綁定＋輪值表 | L | ✅ defer（Wave 4，於 #3 後） | 需值班同工完成 OA 綁定（都是會友但不一定已綁）。全自動選人需系統內輪值表 model。 |
-| 5A | 名冊瀏覽：**列全部會友（最小欄位、server 分頁）** | admin/members | M | ✅ backlog（Wave 1） | server-side pagination、25–50/頁；欄位僅**姓名/遮罩電話/車牌摘要或遮罩/啟用·綁定·資格狀態**；不預載眷屬/敏感事由、**不匯出、不 bulk edit**、點入明細才讀完整。可在 role 前上（現有 admin session gate）；**明確接受**「全名冊可見」隱私姿態先於 role。不把全體載入 client 再前端分頁。 |
-| 5B | 名冊**匯出/批次/敏感欄位權限** | admin/members | M | ✅ backlog（Wave 3） | 依賴 #19：幹事能否看完整電話、誰可匯出、誰可批次、誰可看敏感資格詳情。 |
-| 6 | Admin **憑車牌隨時請移車** | admin/members（新動作）＋通知 | M–L | ✅ backlog（Wave 4） | 走**通用通知目的地模型**（見地基）。護欄：**二次確認、遮罩姓名+完整車牌供核對、可選原因（擋出入口/車燈/施工/其他）、同車牌 5–10min 冷卻、reservation-independent dedupe、audit、顯示最近通知時間+狀態、未綁 LINE 明示「無法通知」不假裝送**。role：**幹事可用、但不看 ops 技術細節**（#19 matrix）。 |
-| 7 | 移車/急件**即時通知** | 通知/dispatcher | S–M | ✅ backlog（Wave 4） | **best-effort、不阻塞業務操作**：txn 內 enqueue 成功即回→best-effort 觸發「只 claim 這筆/dedupe key」的 bounded dispatch→LINE 失敗不回滾業務、cron 續 retry。UI **三態文案**：已排入傳送／已送達 LINE／暫時失敗稍後重試（不用模糊「通知成功」）。 |
-| 8 | **本週概覽**（Admin 首頁，上指標下待辦） | admin/page（現空） | M | ✅ backlog（Wave 3） | 必鎖**管理日曆當週主日**（非 `getActiveEvent`）；標本週階段數字才可解讀。容量顯示用**「可分配 / 保留·停用」總數，不用「外賓」字樣**（與 #14 單一 blocked 語意對齊）。上 KPI 下待辦連各頁；mockup 快速操作為各自獨立功能，先 link-only。 |
-| 9 | **Sidebar 待辦徽章** | admin sidebar | S–M | ✅ backlog（Wave 3） | 與 #8 待辦共用**一份 server-side query/service contract**（不硬「一支 RPC」）；business semantics 留 service、SQL 只聚合；layout 一次取傳 sidebar、每頁不重複呼叫；暫不 polling。**先定義各 badge**：P2 待審=哪些 status／牧養=open 或 overdue／通知 backlog=全 pending 或超時／系統健康異常**只系統管理員可見**。 |
-| 10 | **P2 寫入型覆核**（狀態機） | admin/members/[id]＋admin/eligibility inline | M | ✅ backlog（Wave 3） | **不只幾顆按鈕**：資料層先定 `review_status` enum（pending/approved/rejected/needs_information/revoked）＋`reviewed_at/by`、`review_note`、`effective_from/until`、`revoked_at/by`、**`version`/`updated_at` optimistic lock（兩 admin 併發覆蓋）**。「標記已覆核」≠「核准資格」（不同動作）。UX：寫入放明細頁、eligibility 頁保留佇列＋inline，共用寫入 service。 |
-| 11 | **P2 會友自助申請＋待審 inbox** | member＋admin/eligibility | L | ✅ backlog（Wave 5，於 #10 後） | 現無自助送件流程，要新建送件 UI＋進件審核。 |
-| 12 | **資料最小化橫幅** | admin/eligibility, members/[id] | S | ✅ backlog（Wave 1） | 明示「不索取/不顯示診斷證明」。便宜治理訊號。 |
-| 13 | P1 全職同工名單管理＋「本週不停」自動釋出 | admin（新） | M–L | 🕒 defer / 另計 | auto-release 是未定業務規則（mockup 標「提案待確認」）。 |
-| 14 | **本週車位設定** | admin（新）＋weekly_events | M | ✅ backlog（Wave 3） | **transactional guard**：當週已分配後 `effective_capacity >= approved_count` 由 **DB RPC 在 txn 內**檢查更新（不能只靠 UI 警告）。**第一版單一 blocked 語意**：`total_capacity`／`blocked_spaces`（顯示用「保留·停用」字樣，**不拆外賓/維修**、不加未定業務語意）／`application_override` enum（`automatic`/`forced_open`/`forced_closed`，比 boolean 清楚）。toggle 語意要定義：override vs 時間規則、關閉後已送申請如何處理、分配後重開是否允許。未來拆欄再保留 constraint。 |
-| 15 | **稽核記錄（Audit Log）** — 地基 | 橫切（所有寫入）＋唯讀頁 | L | ✅ backlog（Wave 2） | ✅ **表已存在**（[0003_infra.sql:49](../parking-system/supabase/migrations/0003_infra.sql#L49) `audit_logs`）但**無 insert path**→這刀＝補 insert substrate＋對齊/補欄位。**存 ID 不存姓名**：actor_admin_id/actor_role_snapshot/action/entity_type/entity_id/event_id/request_id/result/metadata_redacted/created_at；顯示時 join，刪除者顯示「已刪除會友（ID 尾碼 xxxx）」。**actor 多型**（Admin/Staff/Member 自助/Job/System，非 `admin_id NOT NULL`）。**DB 落實 append-only**：app role 只 INSERT/SELECT、單一 RPC、metadata allowlist（不塞 raw body）、**永不寫 PII/token/LINE ID**、retention 用受限 maintenance function。記錄：role change/帳號停用/容量修改/P2 覆核/PIN rotation/群組設定/**會員車牌 CRUD(#28)**。 |
-| 16 | **停車樣態分析**（先聚合） | admin（新）＋歷史 | L | ✅ backlog（Wave 5） | 決策支援：開放 P3 依據。價值隨營運週數累積；「候補等待週數」需先定義；圖表用 dataviz skill。**不列具名 No-show 排名**。 |
-| 17 | **營運狀態頁重構 B＋C** | admin/ops＋sidebar | M | ✅ backlog（Wave 3） | B：白話健康＋「怎麼辦」在上、技術細節+重送工具摺疊。C（有 #19）：完整技術 ops 只給系統管理員。quick win：UTC→台北、改名（→系統通知健康）、異常給指引、移 sidebar 最下。 |
-| 18 | **側欄資訊架構重整**（日常/系統維運兩區） | admin sidebar | S–M | ✅ backlog（Wave 3） | 上區日常工作、下區系統維運（車位設定·稽核·營運狀態）。**分區線 = #19 角色邊界**。 |
-| 19 | **Admin 角色分級（兩級）＋新增管理者 UI** | admin/accounts＋橫切敏感面 | M–L（地基） | ✅ backlog（Wave 2） | 兩級＝**系統管理員/幹事**（照人設命名）。**`role` enum**（非 boolean，預留第三級唯讀）。**session：敏感操作每次從 DB 讀 current active+role**（既有 session 已每 request 重查 `disabled_at` [adminAuth.ts:36](../parking-system/server/http/adminAuth.ts#L36)，role 沿同路、**不塞 cookie**）；sidebar 隱藏只 UX 非安全控制；role 變更/停用 bump `session_version` 或刪該帳號 sessions。guardrails：不停用/降級最後一位系統管理員、不自我升權、禁自我降/停、CLI bootstrap=系統管理員、UI 新增預設=幹事、重設密碼撤舊 sessions。**role matrix 明確定義**（含 #6 幹事可用移車但不看 ops 內部）。 |
-| 20 | **匯入器支援中文 header ＋中文 reason 對照** | lib/memberImport | S | ✅ backlog（Wave 0） | 中文→英文 header 對照＋**明確 reason 值對照**（行動不便長期→mobility_long／短期→mobility_short／陪同長者→elderly_companion／陪同幼兒→child_companion／懷孕→pregnancy）。**未知→preview 錯誤要人工選、不 silently map、不解析模糊備註判敏感資格**。讓 [import-templates](import-templates/) 可直接匯入。 |
-| 21 | **簡易全體會友匯入**（reason 選填） | admin/import＋匯入 service | M | ✅ backlog（Wave 0） | 新增一般會友匯入變體，**重用既有 `memberImportService` 的 dry-run preview、`phoneNameConflicts`/`plateConflicts`/`reviewRequired`、apply 流程**（非重建）。測試**兩模式共存不互破**（P2 完整申請 vs 一般精簡名冊）。對應 [會友簡易名單範本](import-templates/會友簡易名單範本.csv)。 |
-| 22 | **匯入手機容錯補 0**（Excel 掉前導零） | lib/memberImport `normalizePhone` | S | ✅ backlog（Wave 0） | ⚠️ 修正：**補「一個 `0`」不是字串「09」**（否則 11 碼）。規格：去非數字後 → 10 碼合 `^09\d{8}$` 接受／**9 碼合 `^9\d{8}$` 前置補一個 0 再驗**／其他拒絕不猜。測試：Excel numeric cell、scientific notation、前後空白、`+886…`、`886…`、固網誤入、9 碼非 9 開頭。`+886` 是否接受另定，但不 silently 過度推測。 |
-| 23 | **點名備援清單搬 admin** | /staff/print → admin＋sidebar | S–M | ✅ backlog（Wave 1） | staff 地下室無印表機、列印非 staff 權限。event 解析用管理日曆當週主日、gate 改 `getAdminSession`。資料源/`lib/staffRow`/`PrintButton` 全重用；保留 Staff-safe 最小內容。放側欄日常工作區。 |
-| 24 | **staff footer 精簡**（結束鍵移 header） | /staff StaffCheckIn | S | ✅ backlog（Wave 1，於 #23 後） | footer 只留全寬「＋登記現場車輛」；「結束當週點名」移 header 選單、保留二次確認。省兩列、零誤觸。 |
-| 25 | **通知文案 correctness 修正**（死指令） | templates.ts | S | ✅ **go-live 必修（Wave -1）** | webhook capture-only、「回覆正在路上/請回覆確認」被 ignored→P2 以為講了、車位照釋出。**Wave -1 做全 template copy audit**（`p2_arrival_reminder`＋`offer_2hr_confirm` 至少兩則同類）：短期改寫指向 LIFF/移除該句；正解=#26。 |
-| 26 | **通知可動作化：LIFF deep-link 按鈕** | 通知模板＋LIFF | M | ✅ backlog（Wave 4） | 確認保留/放棄、正在路上、回會員頁做成點擊即開 LIFF。吸收 phase9「通知 deep-link」backlog。 |
-| 27 | **通知內容 enrich**（日期＋車牌＋粗體期限＋換行） | 通知模板＋producer payload | S–M | ✅ backlog（Wave 1） | 現況核准通知無日期/車牌/具體時間。producer 端須補 plate/date 到 payload。語氣維持。 |
-| 28 | **管理我的車牌**（member 自助 CRUD，全自助） | app/member＋新 routes | M | ✅ backlog（Wave 5） | 新增/刪除/設預設全自助＋暱稱。**刪除擋所有未結束關聯**（upcoming open event/waiting/approved/temp-approved·offer/未 finalized 之已釋出/未來多週）；**soft delete（`active=false`）保留歷史 reservation FK**，不 hard delete 用過的車牌。normalize 大小寫/空白/連字號＋**unique on normalized plate**；collision 安全訊息**不洩另一車主姓名**；set default 要 transactional；至少留一台或明確允許零台。**增刪寫 audit（#15）**。濫用治理（P2 出借）＝輕護欄（plate 唯一性＋audit 可見＋一人一週一位天花板）＋社群處理（勸導→停用）。 |
-| 29 | **member 顯示候補序號** | app/member 狀態卡 | S | ✅ backlog（Wave 1） | 顯示**「目前候補第 N 位」**＋一行「順序可能因取消、資格與分配狀態而變動」（rank 動態、非固定號碼）。 |
-| 30 | **取消加「恩慈／不計違規」reassurance** | app/member CancelButton | S | ✅ backlog（Wave 1） | 現況缺「10:30 前取消不計違規」。行為面：讓會友安心取消、不硬佔車位害候補白等。可順帶補申請表「週五18:00截止」提示。 |
+| # | 想法 | surface | 規模 | 判定（Wave） | 備註（含兩輪審查修正） |
+|---|------|---------|------|------|------|
+| 1 | 換人「換碼」＋手動轉發文案 | admin/staff-pin | S | ✅（-1） | 重發＝新碼、舊 hash 立即失效。文案：「換人值班？重發即可，舊 PIN 立即失效。請將新 PIN 手動傳給本週值班同工。」 |
+| 2 | 顯示回同一組 PIN | admin/staff-pin | — | ❌ | scrypt 單向、明碼不落地；換人本就該撤舊碼。 |
+| 3 | PIN 自動發同工 LINE 群 | webhook/通知/cron | **M＋安全 design review** | ✅（4） | ⚠️ **cron retry 反覆旋轉 PIN＝最大風險**。明碼不落地→push 失敗**無法重送同碼**，只能撤舊碼產新碼。**service 邊界**：`issueAndSendToGroup(eventId)`（cron 唯一入口、一次性；內部 issue 回明碼→in-process 交 push，明碼不持久化）／`rotateAndSend(eventId)`（**admin 專用**，撤上一組再產新碼送）。**push 失敗＝不自動 retry、標記「派送失敗」**，管理者手動「重新發碼並再送」（＝旋轉）。每次旋轉寫 audit。groupId 走 **allowlist/啟用流程**，不 auto-trust webhook。需獨立 design review。 |
+| 4 | PIN 個別私訊值班人 | 通知＋綁定＋輪值表 | L | ✅ defer（4） | 需同工完成 OA 綁定；全自動需輪值表 model。 |
+| 5A | 名冊瀏覽（最小欄位、server 分頁） | admin/members | M | ✅（1） | server pagination；欄位僅姓名/遮罩電話/車牌摘要/狀態；**不匯出、不 bulk、不預載敏感事由**，點入才讀完整。可在 role 前上（現有 admin session gate）；明確接受「全名冊可見」姿態先於 role。 |
+| 5B | 名冊匯出/批次/敏感欄位權限 | admin/members | M | ✅（3） | **依賴 #19**：誰可看完整電話/匯出/批次/敏感資格。 |
+| 6A | Admin 憑車牌移車（第一版） | admin/members＋通知 | M | ✅（4） | 走通用通知目的地模型。含：憑車牌搜尋、車主解析、**未綁 LINE gating（明示無法通知不假送）**、二次確認、遮罩姓名+完整車牌核對、可選原因（擋出入口/車燈/施工/其他）、同車牌 5–10min 冷卻、reservation-independent dedupe、enqueue、**當次操作結果**、audit。送出後只顯示「通知已排入傳送，暫時無法送達會自動重試」。role：幹事可用、不看 ops 內部（#19 matrix）。 |
+| 6B | 移車通知歷史/狀態（polish） | admin/members | M | ✅ defer（後續） | 最近通知時間+狀態、重送入口/歷史。**避免第一版耦合完整 outbox 狀態 UI**（pending/processing/sent/retrying/failed）。 |
+| 7 | 移車/急件即時通知 | 通知/dispatcher | S–M | ✅（4） | **commit 後才 dispatch**：txn（業務寫入＋enqueue）→**commit**→回業務成功→**commit 後** best-effort「只 claim 這筆/dedupe key」bounded dispatch→LINE 失敗不回滾、cron 續 retry。（不可在 txn 未 commit 時觸發 dispatcher——另一連線看不到 row/讀到未完成狀態。）UI 三態文案：已排入／已送達／暫時失敗稍後重試。 |
+| 8 | 本週概覽（上指標下待辦） | admin/page | M | ✅（3） | 鎖管理日曆當週主日（非 `getActiveEvent`）；標本週階段。容量顯示用**「可分配/保留·停用」總數，不用「外賓」字樣**（對齊 #14A 單一 blocked）。 |
+| 9 | Sidebar 待辦徽章 | admin sidebar | S–M | ✅（3） | 與 #8 共用 **server-side query/service contract**（不硬 RPC）；business semantics 留 service；layout 一次取。先定義各 badge（P2 待審 status／牧養 open vs overdue／backlog pending vs 超時／系統健康**只系統管理員可見**）。 |
+| 10 | P2 寫入型覆核 | admin/members/[id]＋eligibility inline | M | ✅（**2B**） | ✅ 已驗證 `user_eligibility` 有 `p2_eligible boolean`＋`p2_reason`＋CHECK（[0001:46](../parking-system/supabase/migrations/0001_enums_core.sql#L46)）→ **避免雙重真相**：`review_status` 為權威、`p2_eligible` 改為衍生（`= review_status='approved' AND effective 期間有效`）。**v1 只做 `approved/revoked`＋`reviewed_by/at`、`review_note`、`effective_from/until`、`version`/`updated_at` 樂觀鎖**（兩 admin 併發）；`pending/needs_information/rejected` **綁到 #11**（目前無真 pending intake，全由已審 CSV 匯入）。「標記已覆核」≠「核准」。寫入放明細頁、eligibility 頁佇列＋inline 共用 service。**依賴 #15，不依賴 #19**。 |
+| 11 | P2 會友自助申請＋待審 inbox | member＋eligibility | L | ✅ defer（5） | #10 的完整五態 enum 在此補齊。 |
+| 12 | 資料最小化橫幅 | eligibility, members/[id] | S | ✅（1） | 明示「不索取/不顯示診斷證明」。 |
+| 13 | P1 同工名單＋「本週不停」自動釋出 | admin | M–L | 🕒 defer | auto-release 業務規則未定。 |
+| 14A | 車位容量設定（交付前） | admin＋weekly_events | M | ✅（**2B**） | 解決「幹事不用 SQL 改容量」。`total_capacity`／`blocked_spaces`（顯示「保留·停用」、**不拆外賓/維修**）／effective 預覽。**transactional guard**：已分配後 `effective_capacity >= approved_count` 由 **DB RPC 在 txn 內**檢查（不能只 UI 警告）。寫 audit。**依賴 #15，不依賴 #19**。 |
+| 14B | 申請開放 override（後續） | admin＋weekly_events | M | ✅ defer（3） | `application_override` enum（`automatic`/`forced_open`/`forced_closed`）。規則未定：與時間視窗互動、關閉後既有申請、分配後重開——先不做，不卡 14A。 |
+| 15 | 稽核記錄（Audit Log） — 地基 | 橫切＋唯讀頁 | L | ✅（**2A**） | ✅ 表已存在（[0003_infra.sql:49](../parking-system/supabase/migrations/0003_infra.sql#L49)）**無 insert path**→補 insert substrate。**actor 模型：`actor_type` enum（admin/staff_session/member/job/system）＋`actor_id` nullable＋`actor_role_snapshot` nullable**（不要四個 nullable FK；`actor_id` 為 snapshot ref、不做通用 FK）。**存 ID 不存姓名**，顯示時 join；刪除者顯示「已刪除會友（ID 尾碼 xxxx）」→ 故 **admin 帳號 soft-disable 不 hard-delete**（現況已 disabled_at）。其餘欄：action/entity_type/entity_id/event_id/request_id/result/metadata_redacted(allowlist)/created_at。**DB append-only**：app role 只 INSERT/SELECT、單一 RPC、**永不寫 PII/token/LINE ID**、retention 用受限 maintenance function。記錄：role change/帳號停用/容量修改/P2 覆核/PIN rotation/群組設定/會員車牌 CRUD。 |
+| 16 | 停車樣態分析（先聚合） | admin＋歷史 | L | ✅（5） | 開放 P3 決策支援；價值隨營運週數累積；不列具名 No-show 排名。 |
+| 17 | 營運狀態頁 B＋C | admin/ops＋sidebar | M | ✅（3） | B 摺疊技術細節；C（有 #19）完整 ops 只給系統管理員。UTC→台北、改名、移 sidebar 最下。 |
+| 18 | 側欄 IA 兩區 | admin sidebar | S–M | ✅（3） | 日常/系統維運，分區線＝#19 角色邊界。 |
+| 19 | Admin 角色分級（兩級）＋新增管理者 | admin/accounts＋橫切 | M–L（地基） | ✅（**2C**） | 系統管理員/幹事；`role` enum（預留唯讀）。**session：敏感操作每 request 從 DB 讀 active+role**（既有 session 已重查 `disabled_at` [adminAuth.ts:36](../parking-system/server/http/adminAuth.ts#L36)，role 沿同路、不塞 cookie）；role 變更/停用 bump `session_version` 或刪 sessions；sidebar 隱藏只 UX。guardrails：不停用/降級最後一位系統管理員、不自我升權、禁自我降/停、CLI bootstrap=系統管理員、UI 預設幹事、重設密碼撤 sessions。role matrix 明確定義。 |
+| 20 | 匯入中文 header＋reason 對照 | lib/memberImport | S | ✅（0） | ✅ reason 值已驗證＝現有 canonical（[DB enum p2_reason 0001:7](../parking-system/supabase/migrations/0001_enums_core.sql#L7)、TS `P2Reason`）：`mobility_long/mobility_short/pregnancy/elderly_companion/child_companion`（1–4 只是 CSV 輸入碼）。做法：**中文→canonical 集中在單一 `REASON_ALIASES` constant**，實作前對照 `memberImport.ts`/DB enum，別讓 parser/UI/DB 各一套。**未知→preview 錯誤要人工選、不 silently map、不解析模糊備註判敏感資格**。 |
+| 21 | 簡易全體會友匯入 | admin/import＋service | M | ✅（0） | **重用既有 `memberImportService` 的 dry-run preview／`phoneNameConflicts`/`plateConflicts`/`reviewRequired`／apply**（非重建）。測試兩模式共存（P2 完整 vs 一般名冊）。 |
+| 22 | 匯入手機容錯 | lib/memberImport `normalizePhone` | S | ✅（0） | 去非數字後：10 碼合 `^09\d{8}$` 接受／**9 碼合 `^9\d{8}$` 前置補一個 `0`（非字串「09」）再驗**／**科學記號（如 `9.12346E+8`）拒絕並提示「將 Excel 欄設文字後重匯」，不嘗試還原**（Excel 已捨入不可靠）／`+886`·`886` 是否支援另定。測試涵蓋全部。 |
+| 23 | 點名備援清單搬 admin | /staff/print→admin | S–M | ✅（1） | 新增 `/admin/print`（gate `getAdminSession`，event 用管理日曆當週主日）；**`/staff/print` 移除或回 staff 首頁、不 redirect 到 /admin**（跨 auth domain 混亂）；**更新測試確認 staff PIN 不再能取列印資料**。資料源/`lib/staffRow`/`PrintButton` 全重用，保留 Staff-safe 最小內容。 |
+| 24 | staff footer 精簡 | /staff StaffCheckIn | S | ✅（1，於 #23 後） | footer 只留「＋登記現場車輛」；結束鍵移 header 選單、保留二次確認。 |
+| 25 | 通知死指令修正 | templates.ts | S | ✅ **必修（-1）** | 「回覆正在路上/請回覆確認」被 webhook ignored。全 template copy audit（≥2 則同類）。短期改寫指向 LIFF；正解=#26。 |
+| 26 | 通知 LIFF deep-link 按鈕 | 通知模板＋LIFF | M | ✅（4） | 確認保留/放棄、正在路上、回會員頁點擊即開 LIFF。 |
+| 27 | 通知內容 enrich | 通知模板＋payload | S–M | ✅（1） | 日期＋車牌＋粗體期限＋換行；producer 補 plate/date 到 payload。 |
+| 28 | 管理我的車牌（全自助） | app/member＋新 routes | M | ✅（5） | 新增/刪除/設預設＋暱稱。**刪除擋所有未結束關聯**（upcoming open/waiting/approved/temp-approved·offer/未 finalized 已釋出/未來多週）；**soft delete（`active=false`）保留歷史 FK**。normalize＋unique on normalized plate；collision 訊息不洩他人姓名；set default transactional；至少留一台或明確允許零台。**增刪寫 audit**。濫用治理＝輕護欄（plate 唯一性＋audit＋一人一週一位天花板）＋社群處理（勸導→停用）。 |
+| 29 | member 顯示候補序號 | app/member | S | ✅（1） | 「目前候補第 N 位」＋「順序可能因取消、資格與分配狀態而變動」（動態非固定號碼）。 |
+| 30 | 取消加「不計違規」reassurance | app/member CancelButton | S | ✅（1） | 「10:30 前取消不計違規」，讓會友安心取消。可順帶補申請表「週五18:00截止」。 |
 
 ---
 
 ## 審查後的關鍵設計決策（跨切地基）
 
-動工時一次做、多功能共用。這些決策已納入上表對應列：
-
-- **通用通知目的地模型**（取代「把 FK 改 nullable」）→ #3/#6/#7 共用。明確欄位：`recipient_kind`（member / line_group）、`context_kind`（reservation / weekly_event / vehicle / system）、`recipient_user_id` nullable、`recipient_line_target`（受控）、`weekly_event_id`/`reservation_id`/`vehicle_id` nullable，並加 **DB CHECK constraint** 確保每種組合的必要欄位（member+vehicle=移車、line_group+weekly_event=PIN 群、member+reservation=核准/取消/遞補）。`groupId` 屬 LINE 群識別資訊：不顯示於一般 Admin UI、不進 log/錯誤訊息、不被 webhook 任意覆寫，走 **allowlist/啟用確認**。
-- **稽核 substrate**（既有 `audit_logs` 表補 insert）→ #10/#14/#19/#28/所有寫入吐稽核。存 ID 不存姓名、actor 多型、DB 層 append-only。詳見 #15。
-- **待辦計數 service contract**（不硬 RPC）→ #8/#9。repository 聚合、service 定 badge 語意、layout 一次取。
-- **P2 寫入 service（含 review_status 狀態機＋optimistic lock）** → #10。
-- **Admin 角色 enum ＋ session 撤銷/版本** → #17-C/#18/#19/#5B/#6 role matrix。一條角色線同時定義「誰能看/操作」與側欄分區。
-
----
-
-## 建議動工順序（rev.2 — delivery-first）
-
-> 背景：prod 已完成 walkthrough 並清回 baseline；**正式教會資料、正式 OA、文案 sign-off 尚未完成**。排序以「交付價值」優先，大型地基延後至真正需要時。
-> 每刀走 plan mode＋外部審查。**每刀 prompt 固定加**：修改 Next.js route/server action/cookie/layout/middleware/caching/navigation 前，先讀 `node_modules/next/dist/docs/` 對應文件，不靠記憶（見 `parking-system/AGENTS.md`）。
-
-**Wave -1：文件與通知 correctness**
-- 更新 `current_handoff.md`（現況嚴重過期，仍寫 Phase 3/4）
-- 建立 `pre-delivery-polish-backlog.md`；指定 source of truth（現況=handoff／prod 操作=runbook／功能=polish backlog）
-- **#25** 通知死指令＋全 template copy audit
-- **#1** 換碼＋手動轉發文案
-- 明列「PIN 自動派送（#3/#4）不在本次交付範圍，交付初期幹事手動轉發」
-
-**Wave 0：正式資料匯入**
-- **#20** 中文 header＋reason 對照
-- **#21** 簡易會友匯入（重用既有 dry-run/conflict pipeline）
-- **#22** 補前導零
-- 測試 P2 完整匯入與一般名冊匯入共存
-
-**Wave 1：低風險交付 UX**
-- **#23** 列印搬 Admin → **#24** Staff footer
-- **#30** 取消 reassurance、**#29** 候補序號、**#12** 隱私橫幅、**#27** 通知 enrich
-- **#5A** 最小欄位、分頁式全體名冊
-
-**Wave 2：治理地基**
-- **#15** Audit Log substrate
-- **#19** Admin roles ＋ session 撤銷 ＋ role matrix
-
-**Wave 3：管理功能**
-- **#10** P2 寫入覆核、**#14** 單一 `blocked_spaces` 車位設定
-- **#8** 概覽（用「保留/停用」總數）、**#9** 徽章
-- **#17/#18** Ops 與 sidebar 分層、**#5B** 匯出/批次/敏感欄位權限
-
-**Wave 4：通知便利性**
-- 通用 notification destination model → **#7** 即時 dispatch → **#6** 任意車牌移車 → **#3** PIN 發群（最後，語意最敏感）→ **#4** 個別私訊
-
-**Wave 5：會員自助與長期分析**
-- **#28** 管理車牌、**#11** P2 自助申請、**#16** 聚合分析、**#13** P1 名單/auto-release
-
-**Deferred/不做**：#2 ❌。
+- **通用通知目的地模型** → #3/#6/#7。`recipient_kind`(member/line_group)＋`context_kind`(reservation/weekly_event/vehicle/system)＋nullable `recipient_user_id`/`weekly_event_id`/`reservation_id`/`vehicle_id`＋受控 `recipient_line_target`，加 **DB CHECK constraint** 保證每組合必要欄位。`groupId` 不顯示於一般 UI、不進 log/錯誤、不被 webhook 覆寫，走 allowlist/啟用確認。
+- **稽核 substrate**（既有 `audit_logs` 補 insert）→ #10/#14A/#19/#28/所有寫入。`actor_type`＋`actor_id`＋`actor_role_snapshot`（非多個 nullable FK）；存 ID、DB 層 append-only。詳見 #15。
+- **待辦計數 service contract**（不硬 RPC）→ #8/#9。
+- **P2 寫入 service（review_status 權威、p2_eligible 衍生、樂觀鎖）** → #10。
+- **Admin 角色 enum＋session 撤銷** → #17-C/#18/#19/#5B/#6 matrix。
+- **依賴關係（rev.3 釐清）**：`#10 需 #15、不需 #19`；`#14A 需 #15、不需 #19`；`#5B/#17/#18 需 #19`。→ Audit 與角色兩地基**可分離**，讓 #10/#14A 先於角色交付。
 
 ---
 
-## 交付分級（避免 polish 膨脹成新 Phase）
+## 建議動工順序（rev.3 — delivery-first）
+
+> prod 已 walkthrough 並清回 baseline；正式資料/OA/文案未完成。排序以交付價值優先。
+> **每刀 prompt 固定加**：改 Next.js route/server action/cookie/layout/middleware/caching/navigation 前，先讀 `node_modules/next/dist/docs/` 對應文件，不靠記憶（`parking-system/AGENTS.md`）。
+
+**Wave -1：文件與通知 correctness** — 更新 `current_handoff.md`（嚴重過期）／建 `pre-delivery-polish-backlog.md`／#25／#1／明列 PIN 自動派送 deferred
+**Wave 0：正式資料匯入** — #20／#21（重用既有 preview/conflict）／#22（科學記號拒絕）／測試兩模式共存
+**Wave 1：低風險交付 UX** — #23→#24／#30／#29／#12／#27／#5A
+**Wave 2A：寫入治理地基** — #15 Audit substrate
+**Wave 2B：關鍵 Admin 寫入**（需 #15、不需 #19）— #10 P2 覆核／#14A 車位容量
+**Wave 2C：角色地基** — #19 Admin roles＋session 撤銷＋role matrix
+**Wave 3：其餘管理功能** — #8／#9／#17／#18／#5B／#14B override
+**Wave 4：通知便利性** — 通用 destination model→#7→#6A（#6B 後續）→#3（最後，語意最敏感）→#4／#26
+**Wave 5：會員自助與分析** — #28／#11／#16／#13
+**Deferred/不做**：#2 ❌
+
+---
+
+## 交付分級
 
 **交付前必修**：文件同步、#25、#20、#21、#22、#23、#24、#27、#30
-**強烈建議交付前**：#5A、#10、#14、#12
-> 原因：資格維護與車位容量目前仍需 CSV/SQL，不符「教會幹事可自行操作」的交付目標。
-
-**可交付後迭代**：#3、#4、#8、#9、#11、#16、#17、#18、#28、#5B
-> #3 雖方便，但人工 Admin 重發 PIN 已能運作；反而 #10/#14 仍碰 SQL 的交付風險更高。
+**強烈建議交付前**：#5A、**#15→#10、#14A**（因資格/容量目前仍需 CSV/SQL，不符「幹事自行操作」目標；此三者不需 #19 角色，只需 #15 Audit）、#12
+**可交付後迭代**：#3、#4、#6、#8、#9、#11、#14B、#16、#17、#18、#19、#28、#5B
+> #3 雖方便但人工重發 PIN 已能運作；反而 #10/#14A 仍碰 SQL 的交付風險更高。角色分級（#19）可留交付後。
