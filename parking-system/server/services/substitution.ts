@@ -6,6 +6,7 @@ import type {
   ParkingRepository,
   SubstitutePayload,
 } from '@/server/repositories/parkingRepository'
+import { withNotificationContext } from './notification/context'
 
 const MAX_OFFER_ATTEMPTS = 50
 
@@ -51,6 +52,8 @@ function dedupeKey(template: string, reservationId: string | null, nowIso: strin
 // when a chosen candidate is taken by a concurrent op. `excluded` MUST already contain
 // any just-resolved offer id (it reverts to `waiting` and must not be re-offered) plus
 // every candidate already attempted. Returns the offered reservation id, or null.
+// `sundayDate` is only used to stamp the offer notification (the week it is for); every caller
+// already derived `deadlines`/`sundayMidnight` from the same event, so it costs no extra read.
 export async function offerNextSpot(
   repo: ParkingRepository,
   eventId: string,
@@ -58,6 +61,7 @@ export async function offerNextSpot(
   sundayMidnight: Date,
   deadlines: ReleaseDeadlines,
   excluded: Set<string>,
+  sundayDate: string,
 ): Promise<string | null> {
   for (let i = 0; i < MAX_OFFER_ATTEMPTS; i++) {
     const waiting = await repo.getWaitingForSubstitution(eventId)
@@ -66,7 +70,8 @@ export async function offerNextSpot(
     if (!sub) return null
 
     excluded.add(sub.reservation.id)
-    const { payload, outbox } = buildSubstitutePayloadAndOutbox(sub, now, deadlines)
+    const { payload, outbox: rawOutbox } = buildSubstitutePayloadAndOutbox(sub, now, deadlines)
+    const outbox = await withNotificationContext(rawOutbox, { sundayDate, repo })
     const res = await repo.applyOffer(eventId, payload, outbox)
     if (res.offered > 0) return sub.reservation.id
     // lost the race for this candidate → loop; it's now excluded

@@ -3,6 +3,7 @@ import {
   type OutboxRow,
   type ParkingRepository,
 } from '@/server/repositories/parkingRepository'
+import { withNotificationContext } from './notification/context'
 
 export interface P2ReminderSummary {
   enqueued: number
@@ -20,13 +21,19 @@ export async function sendArrivalReminders(
   const event = await repo.getWeeklyEvent(eventId)
   const targets = await repo.getP2ArrivalReminderTargets(eventId)
 
-  const rows: OutboxRow[] = targets.map(t => ({
-    dedupe_key: `p2_reminder:${t.id}:${event.sunday_date}`,
-    template_key: 'p2_arrival_reminder',
-    user_id: t.user_id,
-    reservation_id: t.id,
-    payload: { sunday_date: event.sunday_date },
-  }))
+  // sunday_date now comes from withNotificationContext (which also adds the plate), not from a
+  // hand-written payload. The dedupe key still uses event.sunday_date directly — one reminder per
+  // P2 per Sunday — and is deliberately untouched, so this change re-sends nothing.
+  const rows: OutboxRow[] = await withNotificationContext(
+    targets.map(t => ({
+      dedupe_key: `p2_reminder:${t.id}:${event.sunday_date}`,
+      template_key: 'p2_arrival_reminder' as const,
+      user_id: t.user_id,
+      reservation_id: t.id,
+      payload: {},
+    })),
+    { sundayDate: event.sunday_date, repo },
+  )
 
   const enqueued = await repo.enqueueOutbox(eventId, rows)
   return { enqueued }

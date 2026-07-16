@@ -88,4 +88,25 @@ describe('autoApproveTemp', () => {
     expect(summary.approved).toBe(0)
     expect(repo.applyOfferResolution).not.toHaveBeenCalled()
   })
+
+  // Wave 1d (#27): the sweep enriches the whole batch once, then does its per-row RPCs — each
+  // member must still get their OWN plate, and the sweep must not issue a lookup per row.
+  it('gives each member their own plate from a single batched lookup', async () => {
+    const a = tempOffer()
+    const b = tempOffer()
+    const repo = makeMockRepo({
+      getTempApproved: vi_fn([a, b]),
+      applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 0, outbox_enqueued: 1, expired_blocked: false })),
+      getPlatesForReservations: vi.fn(async () => new Map([[a.id, 'AAA-1'], [b.id, 'BBB-2']])),
+    })
+    await autoApproveTemp({ eventId: EVENT, now: NOW_POST }, asRepo(repo))
+
+    expect(repo.getPlatesForReservations).toHaveBeenCalledOnce()
+    const first = repo.applyOfferResolution.mock.calls[0][0]
+    const second = repo.applyOfferResolution.mock.calls[1][0]
+    expect(first.outbox[0].reservation_id).toBe(a.id)
+    expect(first.outbox[0].payload).toEqual({ sunday_date: '2026-06-21', license_plate: 'AAA-1' })
+    expect(second.outbox[0].reservation_id).toBe(b.id)
+    expect(second.outbox[0].payload).toEqual({ sunday_date: '2026-06-21', license_plate: 'BBB-2' })
+  })
 })

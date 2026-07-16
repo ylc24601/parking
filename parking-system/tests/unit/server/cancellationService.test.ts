@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { cancelReservation } from '@/server/services/cancellationService'
+import { renderTemplate } from '@/server/services/notification/templates'
 import { buildReleaseDeadlines } from '@/lib/allocation/release'
 import { asRepo, makeMockRepo } from './mockRepo'
 import { makeReservation } from '../allocation/helpers'
@@ -129,5 +130,74 @@ describe('cancelReservation', () => {
     expect(summary.substituteOffered).toBe(false)
     expect(summary.confirmationEnqueued).toBe(false)   // no RPC → no confirmation
     expect(repo.applyCancellation).not.toHaveBeenCalled()
+  })
+
+  // ── Wave 1d (#27): the notice's date must never be able to block the cancel ────────────────
+  describe('notification context', () => {
+    it('stamps the week and no plate onto the cancel notice', async () => {
+      const r = makeReservation({ status: 'pending', weekly_event_id: EVENT })
+      const repo = makeMockRepo({
+        getReservation: vi_fn(r),
+        getPlatesForReservations: vi.fn(async () => new Map([[r.id, 'ABC-1234']])),
+      })
+      await cancelReservation({ reservationId: r.id, now: NOW_PRE }, asRepo(repo))
+
+      const notice = repo.applyCancellation.mock.calls[0][0].cancelNotice
+      expect(notice[0].payload.sunday_date).toBe('2026-06-21')
+      // the member just pressed cancel — the plate adds nothing, so it is not even persisted
+      expect(notice[0].payload).not.toHaveProperty('license_plate')
+    })
+
+    it('still cancels when the decorative date lookup fails (pending/waiting path)', async () => {
+      // A pending/waiting cancel reads no event for its own logic. If a weekly_events blip could
+      // throw here, a member would be unable to cancel — purely because a message wanted a date.
+      const r = makeReservation({ status: 'waiting', weekly_event_id: EVENT })
+      const repo = makeMockRepo({
+        getReservation: vi_fn(r),
+        getWeeklyEvent: vi.fn(async () => {
+          throw new Error('db down')
+        }),
+      })
+      const summary = await cancelReservation({ reservationId: r.id, now: NOW_PRE }, asRepo(repo))
+
+      expect(summary.cancelled).toBe(true)
+      expect(summary.cancelStatus).toBe('cancelled_by_user')
+      expect(summary.confirmationEnqueued).toBe(true)
+
+      const notice = repo.applyCancellation.mock.calls[0][0].cancelNotice
+      expect(notice).toHaveLength(1)
+      expect(notice[0].payload).not.toHaveProperty('sunday_date')
+      // …and the member reads the vaguer, still-correct wording
+      expect(renderTemplate('reservation_cancelled', notice[0].payload)).toContain('本週')
+    })
+
+    it('still cancels when the plate lookup fails', async () => {
+      const r = makeReservation({ status: 'pending', weekly_event_id: EVENT })
+      const repo = makeMockRepo({
+        getReservation: vi_fn(r),
+        getPlatesForReservations: vi.fn(async () => {
+          throw new Error('db down')
+        }),
+      })
+      const summary = await cancelReservation({ reservationId: r.id, now: NOW_PRE }, asRepo(repo))
+      expect(summary.cancelled).toBe(true)
+      expect(summary.confirmationEnqueued).toBe(true)
+    })
+
+    it('an APPROVED cancel still throws if the event read fails — that read is core', async () => {
+      // The approved path derives the substitution offer's deadlines from the event. That is not
+      // decoration, so it must not be swallowed the way the notification lookups are.
+      const r = approved()
+      const repo = makeMockRepo({
+        getReservation: vi_fn(r),
+        getWeeklyEvent: vi.fn(async () => {
+          throw new Error('db down')
+        }),
+      })
+      await expect(
+        cancelReservation({ reservationId: r.id, now: NOW_PRE }, asRepo(repo)),
+      ).rejects.toThrow(/db down/)
+      expect(repo.applyCancellation).not.toHaveBeenCalled()
+    })
   })
 })

@@ -49,7 +49,12 @@ describe('runRelease', () => {
     expect(ownerNotices[0].user_id).toBe(p3.user_id)
     expect(ownerNotices[0].template_key).toBe('reservation_released')
     expect(ownerNotices[0].dedupe_key).toBe(`released_owner:${p3.id}`)
-    expect(ownerNotices[0].payload).toEqual({ released_at: T.SUN_1031.toISOString() })
+    // released_at is the producer's; sunday_date is stamped by withNotificationContext (#27).
+    // No plate here: this mock repo resolves none, and a missing plate simply drops the line.
+    expect(ownerNotices[0].payload).toEqual({
+      released_at: T.SUN_1031.toISOString(),
+      sunday_date: '2026-06-21',
+    })
   })
 
   it('honours the P2 10:55 grace: a P2 on-the-way is not released at 10:50 → no broadcast, no owner notice', async () => {
@@ -104,5 +109,62 @@ describe('runRelease', () => {
     ]
     expect(broadcast).toHaveLength(0)
     expect(ownerNotices).toHaveLength(0)
+  })
+
+  // ── Wave 1d (#27) ─────────────────────────────────────────────────────────────────────────
+  describe('notification context', () => {
+    const setup = (overrides = {}) => {
+      const p3 = approvedP3()
+      const w = waiting()
+      const repo = makeMockRepo({
+        getReservationsForRelease: vi.fn(async () => [p3, w]),
+        applyRelease: vi.fn(
+          async (): Promise<ReleaseResult> => ({ released: 1, outbox_enqueued: 1, owner_notices_enqueued: 1 }),
+        ),
+        getPlatesForReservations: vi.fn(async () => new Map([[p3.id, 'ABC-1234']])),
+        ...overrides,
+      })
+      return { repo, p3, w }
+    }
+    const outboxOf = (repo: ReturnType<typeof makeMockRepo>) =>
+      repo.applyRelease.mock.calls[0] as unknown as [string, string, OutboxRow[], OutboxRow[]]
+
+    it('names the week in both notices and keeps neither payload per-member', async () => {
+      const { repo } = setup()
+      await runRelease({ eventId: EVENT, now: T.SUN_1031 }, asRepo(repo))
+      const [, , broadcast, ownerNotices] = outboxOf(repo)
+
+      expect(ownerNotices[0].payload.sunday_date).toBe('2026-06-21')
+      expect(broadcast[0].payload.sunday_date).toBe('2026-06-21')
+      // Neither carries a plate. The broadcast is about capacity someone else freed; the owner
+      // notice's payload is aggregate-safe by the Phase 4 Slice D rule that
+      // tests/integration/release-owner-notice.db.test.ts enforces.
+      expect(ownerNotices[0].payload).not.toHaveProperty('license_plate')
+      expect(broadcast[0].payload).not.toHaveProperty('license_plate')
+    })
+
+    it('never even looks a plate up during a release', async () => {
+      const { repo } = setup()
+      await runRelease({ eventId: EVENT, now: T.SUN_1031 }, asRepo(repo))
+      expect(repo.getPlatesForReservations).not.toHaveBeenCalled()
+    })
+
+    it('releases as normal when the decorative date lookup fails', async () => {
+      // The release needs no event — each row carries its own deadline. The event read exists only
+      // for the message's date, so a failure must cost a word, not the Sunday release.
+      const { repo } = setup({
+        getWeeklyEvent: vi.fn(async () => {
+          throw new Error('db down')
+        }),
+      })
+      const summary = await runRelease({ eventId: EVENT, now: T.SUN_1031 }, asRepo(repo))
+
+      expect(summary.released).toBe(1)
+      const [, , broadcast, ownerNotices] = outboxOf(repo)
+      expect(broadcast).toHaveLength(1)
+      expect(ownerNotices).toHaveLength(1)
+      expect(ownerNotices[0].payload).not.toHaveProperty('sunday_date')
+    })
+
   })
 })

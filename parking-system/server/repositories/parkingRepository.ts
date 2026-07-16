@@ -321,6 +321,9 @@ export interface MoveCarTarget {
 
 const parseDate = (v: string | null | undefined): Date | null => (v ? new Date(v) : null)
 
+// Max ids per .in() lookup — see getPlatesForReservations.
+const PLATE_LOOKUP_CHUNK = 100
+
 // Reservation statuses surfaced on the Staff on-site check-in list (Phase 3).
 export const STAFF_CHECKIN_STATUSES: ReservationStatus[] = [
   'approved',
@@ -462,6 +465,12 @@ export interface ParkingRepository {
   // Slice 2
   getReservation(id: string): Promise<Reservation | null>
   getWaitingForSubstitution(eventId: string): Promise<Reservation[]>
+  // Wave 1d (#27) — plates for a set of reservations, keyed by reservation id, for the
+  // notification payload. Walk-ins and reservations whose vehicle is gone are simply absent
+  // from the map (they get no notification / no plate line). Decoration only: the CALLER
+  // (server/services/notification/context) decides that a failure here must not fail the
+  // operation being announced, so this still throws like every other read.
+  getPlatesForReservations(ids: string[]): Promise<Map<string, string>>
   // genuine 2-hour expiries: due (offer_expires_at <= now) AND strictly before the
   // Sunday-midnight cap (rows capped at midnight belong to the auto-approve sweep).
   getExpiredOffers(eventId: string, nowIso: string, sundayMidnightIso: string): Promise<Reservation[]>
@@ -960,6 +969,33 @@ export function createParkingRepository(
       const { data, error } = await client.from('reservations').select('*').eq('id', id).maybeSingle()
       if (error) throw new Error(`getReservation failed: ${error.message}`)
       return data ? rowToReservation(data) : null
+    },
+
+    async getPlatesForReservations(ids) {
+      const out = new Map<string, string>()
+      if (ids.length === 0) return out
+      // Chunked: a Friday allocation can enqueue hundreds of rows, and .in() serializes every
+      // uuid into the query string (~37 chars each) — a few hundred would push the URL past
+      // the request-line limit and 414. 100 is the batch size listMembers already proves.
+      for (let i = 0; i < ids.length; i += PLATE_LOOKUP_CHUNK) {
+        const chunk = ids.slice(i, i + PLATE_LOOKUP_CHUNK)
+        const { data, error } = await client
+          .from('reservations')
+          .select('id, vehicles(license_plate)')
+          .in('id', chunk)
+        if (error) throw new Error(`getPlatesForReservations failed: ${error.message}`)
+        for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+          // The composite FK (vehicle_id, user_id) → vehicles(id, user_id) can surface the embed
+          // as an object or a one-element array; getMoveCarTarget handles both the same way.
+          const v = row.vehicles as
+            | { license_plate: string | null }
+            | Array<{ license_plate: string | null }>
+            | null
+          const plate = (Array.isArray(v) ? v[0] : v)?.license_plate
+          if (plate) out.set(row.id as string, plate)
+        }
+      }
+      return out
     },
 
     async getWaitingForSubstitution(eventId) {

@@ -122,9 +122,32 @@ describe.skipIf(!RUN)('friday allocation — local DB integration', () => {
 
     // outbox: one per reservation, dedupe keys present
     const { data: outbox } = await sb.from('notification_outbox')
-      .select('dedupe_key,reservation_id').eq('weekly_event_id', eventId)
+      .select('dedupe_key,reservation_id,template_key,payload_json').eq('weekly_event_id', eventId)
     expect(outbox).toHaveLength(3)
     expect(new Set((outbox ?? []).map(o => o.dedupe_key)).size).toBe(3)
+
+    // Wave 1d (#27) — the week and the car reach the PERSISTED payload. This is the only test
+    // that exercises the real reservations→vehicles embed: the FK is composite
+    // ((vehicle_id, user_id) → vehicles(id, user_id)), so only live PostgREST can prove it
+    // resolves. Everything else in this slice runs against a mock repo.
+    const plateByReservation: Record<string, string> = {
+      [r1]: 'ABC-1234',   // M1 / V1
+      [r3]: 'GHI-9012',   // M3 / V3
+      [r4]: 'JKL-3456',   // M4 / V4
+    }
+    for (const o of outbox ?? []) {
+      const payload = o.payload_json as Record<string, unknown>
+      expect(payload.sunday_date).toBe(SUNDAY)
+      expect(payload.license_plate).toBe(plateByReservation[o.reservation_id as string])
+    }
+
+    // …and the member actually reads them: prose date, their own plate, no ISO string.
+    const { renderTemplate } = await import('@/server/services/notification/templates')
+    const m1Notice = (outbox ?? []).find(o => o.reservation_id === r1)!
+    const text = renderTemplate(m1Notice.template_key as string, m1Notice.payload_json as Record<string, unknown>)
+    expect(text).toContain('1月4日 主日')
+    expect(text).toContain('車牌：ABC-1234')
+    expect(text).not.toContain(SUNDAY)
 
     // job_runs success
     const { data: job } = await sb.from('job_runs')

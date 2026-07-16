@@ -52,8 +52,12 @@
 - [x] #24 staff footer 精簡 — **Wave 1a 完成**
   - Gate：footer 只留「＋登記現場車輛」；結束當週點名移入 header ⋯ 選單（**真 `<button disabled>`**，disabled 時不可開確認 sheet；先關選單再開 sheet；Escape／點外只關閉不觸發），既有二次確認 sheet 未動。
   - Source：feature-triage.md #24
-- [ ] #27 通知內容 enrich
-  - Gate：日期＋車牌＋粗體期限＋換行；producer 補 plate/date 到 payload
+- [x] #27 通知內容 enrich — **Wave 1d 完成**
+  - ⚠️ **triage 的「粗體期限」經讀碼推翻、未採用**：`lineTransport` 送 `{type:'text'}`，**LINE 純文字沒有粗體／markdown**。真粗體＝改 Flex Message＝`renderTemplate` 契約與 9 個 renderer 全改（通知層改版，另開刀）。**改以換行＋`⏰` 期限獨立成行**達成強調。
+  - Gate（實際交付）：8 個會員模板走「抬頭／日期＋主旨／車牌／⏰ 期限／行動」分段（`joinSections` 只串非空段，無空白區塊）；日期一律 `memberSundayLabel`（**含真實日曆驗證**，非僅 regex）；`p2_arrival_reminder` 的 10:45／10:55 改由 **`RELEASE_TIMES` 導出**、不再寫死；順手修掉「**ISO 日期直接印給會友**」的現存 bug。
+  - producer 補 payload 走共用 `notification/context.ts`（renderer 維持純函式＝enqueue 當下快照）。**車牌只給 5 個「講的就是那台車」的模板**，其餘 helper **主動剝除** `license_plate`（minimization 也成立在 persistence 層）。
+  - **`reservation_released` 不給車牌**：Phase 4 Slice D `e83451e` 已定該 payload 為 **aggregate-safe（無 per-member 欄位）**——釋出掃描是唯一 fan-out 給大量會友的批次路徑。原計畫要給、被既有測試擋下 → 尊重舊規則（`sunday_date` 屬 event 層級故通過，禁止清單原封不動）。
+  - **裝飾不得阻擋核心**：只為訊息新增的讀取（車牌與日期）一律 fail-soft（週五分配是**先 claim job 才讀**，plain cancel／release 原本不讀 event）；**核心用途的 event 讀取仍 throw**。dedupe_key 全數不動 ⇒ 不重送既有通知。
   - Source：feature-triage.md #27
 - [x] #30 取消 reassurance — **Wave 1b 完成**
   - ⚠️ **triage 原訂文案「10:30 前取消不計違規」經讀碼推翻、未採用**：(a) 違規只來自 `released_late → no_show`，取消**從不**計違規；(b) 過了截止根本**不能**取消（`cancellationService` 對其他狀態 throw）；(c) 截止**每人不同**（P3 10:30／P2 10:45／P2 正在路上 10:55）——寫死 10:30 對 P2 是錯的。
