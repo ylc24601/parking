@@ -1,11 +1,24 @@
-// Phase 6 — pure helpers for the member-import CLI (P2 application CSV → schema). No I/O
-// (CSV parsing here operates on an in-memory string); unit-tested. See
-// docs/delivery-model-and-roadmap.md for the CSV→schema mapping.
+// Phase 6 / Wave 0 — pure helpers for the member-import CLI + Admin UI. No I/O (CSV parsing
+// here operates on an in-memory string); unit-tested. See docs/delivery-model-and-roadmap.md.
+// Client-safe constants/types (aliases, profiles, reason labels) live in lib/memberImportSchema.ts.
 
 import { parse } from 'csv-parse/sync'
+import { taipeiToday } from '@/lib/taipeiDate'
+import {
+  canonicalizeHeader,
+  detectProfile,
+  PROFILE_REQUIRED_HEADERS,
+  REASON_ALIASES,
+  type CsvImportErrorCode,
+  type ImportProfile,
+  type P2Reason,
+  type RosterPriority,
+} from '@/lib/memberImportSchema'
+
+// Single entry point: re-export the schema types so existing '@/lib/memberImport' imports work.
+export type { P2Reason, ImportProfile, RosterPriority, CsvImportErrorCode } from '@/lib/memberImportSchema'
 
 export type ReasonType = 1 | 2 | 3 | 4
-export type P2Reason = 'mobility_long' | 'mobility_short' | 'pregnancy' | 'elderly_companion' | 'child_companion'
 export type DependentKind = 'impaired' | 'child' | 'elder'
 export interface Dependent {
   kind: DependentKind
@@ -22,6 +35,31 @@ export function normalizePhone(raw: string | undefined | null): string {
 // Guards the phone identity key so junk like "1" / landline-style numbers can't reach users_phone_key.
 export function isValidTaiwanMobilePhone(phone: string): boolean {
   return /^09\d{8}$/.test(phone)
+}
+
+// Excel scientific notation (e.g. "9.12346E+8"): Excel already ROUNDED the value, so the original
+// digits are unrecoverable. Strict single regex (not a loose "contains E+") so odd strings aren't
+// mis-flagged. Detected → rejected, never reconstructed.
+const SCIENTIFIC_NOTATION = /^[+-]?\d+(?:\.\d+)?[eE][+-]?\d+$/
+
+export type MobilePhoneParse =
+  | { ok: true; phone: string }
+  | { ok: false; code: 'missing' | 'scientific_notation' | 'invalid' }
+
+// Parse a raw phone cell into the canonical Taiwan-mobile identity key (09XXXXXXXX), tolerating
+// two common Excel artifacts (#22):
+//   * a 9-digit "9XXXXXXXX" (Excel dropped the leading 0) → prepend a single '0' char
+//   * scientific notation → REJECTED with a typed code (rounded, not recoverable)
+// +886 / 886 are deliberately NOT supported yet (backlog): after stripping non-digits they read as
+// "886…" and fail the FULL-format check below (length alone is not enough to accept them).
+export function parseMobilePhone(raw: string | undefined | null): MobilePhoneParse {
+  const trimmed = (raw ?? '').trim()
+  if (!trimmed) return { ok: false, code: 'missing' }
+  if (SCIENTIFIC_NOTATION.test(trimmed)) return { ok: false, code: 'scientific_notation' }
+  let digits = trimmed.replace(/\D/g, '')
+  if (/^9\d{8}$/.test(digits)) digits = '0' + digits // restore the Excel-dropped leading zero
+  if (isValidTaiwanMobilePhone(digits)) return { ok: true, phone: digits }
+  return { ok: false, code: 'invalid' }
 }
 
 // Accept YYYY-MM-DD or YYYY/MM/DD (the form mixes both) → ISO YYYY-MM-DD, else null.
@@ -100,6 +138,19 @@ export function computeEligibility(input: EligibilityInput): EligibilityResult {
   return { p2_reason, valid_until: until, review_date: until, reviewRequired: false }
 }
 
+// Roster import (#21) carries no application date or dependents, so a P2 member's eligibility is
+// determined by the reason ALONE: the two permanent reasons take effect immediately; the three
+// windowed reasons (mobility_short / pregnancy / child_companion) can't get a real end date
+// without evidence, so they are flagged review-required (a P2 summary awaiting a human) — we do
+// NOT guess a 6-month / age-5 date. `now` is passed in (never new Date() here) so preview/apply
+// and unit tests are stable; the review date is the Taipei calendar day of the APPLY.
+export function deriveRosterEligibility(p2Reason: P2Reason, now: Date): EligibilityResult {
+  if (p2Reason === 'mobility_long' || p2Reason === 'elderly_companion') {
+    return { p2_reason: p2Reason, valid_until: null, review_date: null, reviewRequired: false }
+  }
+  return { p2_reason: p2Reason, valid_until: null, review_date: taipeiToday(now), reviewRequired: true }
+}
+
 // Raw CSV row keyed by the form's field_name headers.
 export type RawRow = Record<string, string>
 
@@ -122,20 +173,56 @@ export function collectDependents(row: RawRow, reasonType: ReasonType): Dependen
 }
 
 // Row-level validation → human-readable errors (operator-facing; the operator runs on the PII file
-// locally). Non-fatal: the batch continues and reports.
-export function validateRow(row: RawRow): { reasonType: ReasonType | null; errors: string[] } {
-  const errors: string[] = []
-  if (!(row.applicant_name ?? '').trim()) errors.push('missing applicant_name')
-  const phone = normalizePhone(row.mobile_phone)
-  if (!phone) errors.push('missing mobile_phone')
-  else if (!isValidTaiwanMobilePhone(phone)) errors.push(`invalid mobile_phone "${row.mobile_phone}" (expect Taiwan mobile 09XXXXXXXX)`)
-  if (!(row.license_plate ?? '').trim()) errors.push('missing license_plate')
+// locally). Non-fatal: the batch continues and reports. Profile-aware: the P2 application form
+// carries a numeric reason_type + dependents; the roster carries a priority + optional 事由.
+export type RowValidation =
+  | { ok: false; errors: string[] }
+  | { ok: true; profile: 'p2_application'; phone: string; reasonType: ReasonType }
+  | { ok: true; profile: 'roster'; phone: string; priority: RosterPriority; reason: P2Reason | null }
 
+// Shared name / phone / plate checks. Returns the canonical phone (09XXXXXXXX) or null on error.
+function validateIdentity(row: RawRow, errors: string[]): string | null {
+  if (!(row.applicant_name ?? '').trim()) errors.push('missing applicant_name')
+  if (!(row.license_plate ?? '').trim()) errors.push('missing license_plate')
+  const res = parseMobilePhone(row.mobile_phone)
+  if (res.ok) return res.phone
+  if (res.code === 'missing') errors.push('missing mobile_phone')
+  else if (res.code === 'scientific_notation')
+    errors.push('mobile_phone is scientific notation (Excel rounded it); set that column to text format and re-export')
+  else errors.push(`invalid mobile_phone "${row.mobile_phone ?? ''}" (expect Taiwan mobile 09XXXXXXXX)`)
+  return null
+}
+
+export function validateRow(row: RawRow, profile: ImportProfile): RowValidation {
+  const errors: string[] = []
+  const phone = validateIdentity(row, errors)
+  return profile === 'roster'
+    ? validateRosterRow(row, phone, errors)
+    : validateP2ApplicationRow(row, phone, errors)
+}
+
+function validateRosterRow(row: RawRow, phone: string | null, errors: string[]): RowValidation {
+  const raw = (row.priority ?? '').trim().toUpperCase()
+  const priority = (raw === 'P1' || raw === 'P2' || raw === 'P3' ? raw : null) as RosterPriority | null
+  if (priority === null) errors.push(`invalid priority "${row.priority ?? ''}" (expect P1/P2/P3)`)
+
+  // Only P2 reads 事由; P1/P3 ignore it. Unknown label → error (never silently mapped).
+  let reason: P2Reason | null = null
+  if (priority === 'P2') {
+    reason = REASON_ALIASES[(row.reason_label ?? '').trim()] ?? null
+    if (reason === null) errors.push(`P2 requires a valid P2事由 (got "${row.reason_label ?? ''}")`)
+  }
+
+  if (errors.length > 0 || phone === null || priority === null) return { ok: false, errors }
+  return { ok: true, profile: 'roster', phone, priority, reason }
+}
+
+function validateP2ApplicationRow(row: RawRow, phone: string | null, errors: string[]): RowValidation {
   const rt = Number(row.reason_type)
   const reasonType = (rt === 1 || rt === 2 || rt === 3 || rt === 4 ? rt : null) as ReasonType | null
   if (reasonType === null) {
-    errors.push(`invalid reason_type "${row.reason_type}"`)
-    return { reasonType, errors }
+    errors.push(`invalid reason_type "${row.reason_type ?? ''}"`)
+    return { ok: false, errors }
   }
   if ((reasonType === 1 || reasonType === 2) && !(row.impaired_person_name ?? '').trim()) {
     errors.push('reason_type 1/2 requires impaired_person_name')
@@ -147,30 +234,24 @@ export function validateRow(row: RawRow): { reasonType: ReasonType | null; error
   if (reasonType === 3 && !isPregnancy(row.remarks) && !(row.child_1_name ?? '').trim()) {
     errors.push('reason_type 3 requires child_1_name or a pregnancy remark')
   }
-  return { reasonType, errors }
+  if (errors.length > 0 || phone === null) return { ok: false, errors }
+  return { ok: true, profile: 'p2_application', phone, reasonType }
 }
 
-// ── CSV structural parsing + limits (Phase 8 Slice 5) ────────────────────────
+// ── CSV structural parsing + limits (Phase 8 Slice 5 / Wave 0) ───────────────
 // The upload surface must bound work before touching the DB. These caps apply to
 // BOTH the CLI (via importMembersFromCsv) and the Admin UI upload — fail fast on a
 // malformed / oversized file with a typed code instead of a giant per-row report.
-
-// The header names the pipeline actually reads; a file missing any of these is
-// rejected outright rather than producing an all-rows-invalid report.
-export const REQUIRED_HEADERS = ['applicant_name', 'mobile_phone', 'license_plate', 'reason_type'] as const
+// Required headers are per-profile (PROFILE_REQUIRED_HEADERS in memberImportSchema),
+// checked after aliasing + profile detection.
 export const MAX_CSV_BYTES = 2 * 1024 * 1024 // 2 MiB — the upload byte cap (church-scale files are tens of KB)
 export const MAX_ROWS = 5000
 export const MAX_CELL_CODEPOINTS = 500
 export const MAX_REPORT_ITEMS = 500
 
-export type CsvImportErrorCode =
-  | 'invalid_csv'
-  | 'missing_headers'
-  | 'duplicate_headers'
-  | 'too_many_rows'
-
 // Typed structural failure. The message is intentionally generic (no parser output /
 // row content) so a route can surface the code without leaking PII fragments.
+// CsvImportErrorCode is defined in lib/memberImportSchema.ts (and re-exported above).
 export class CsvImportError extends Error {
   constructor(readonly code: CsvImportErrorCode) {
     super(code)
@@ -178,25 +259,26 @@ export class CsvImportError extends Error {
   }
 }
 
-// Parse the CSV text into header-keyed rows, enforcing structure limits. Throws
-// CsvImportError on any structural problem; row-level content validation stays in
-// validateRow (non-fatal, reported per row).
-export function parseCsv(csvText: string): RawRow[] {
+// Parse the CSV text into header-keyed rows + the detected profile, enforcing structure
+// limits. Headers are canonicalized (Chinese → field_name) BEFORE duplicate detection, so
+// a file mixing 姓名 and applicant_name is a duplicate. Throws CsvImportError on any
+// structural problem; row-level content validation stays in validateRow (per-row, non-fatal).
+export function parseCsv(csvText: string): { rows: RawRow[]; profile: ImportProfile } {
   let headerIssue: CsvImportErrorCode | null = null
+  const canonicalHeaders: string[] = []
   let records: RawRow[]
   try {
     records = parse(csvText, {
       bom: true,
       columns: (firstRow: string[]) => {
         const seen = new Set<string>()
-        for (const h of firstRow) {
+        const canonical = firstRow.map(canonicalizeHeader)
+        for (const h of canonical) {
           if (seen.has(h)) headerIssue ??= 'duplicate_headers'
           seen.add(h)
+          canonicalHeaders.push(h)
         }
-        for (const req of REQUIRED_HEADERS) {
-          if (!seen.has(req)) headerIssue ??= 'missing_headers'
-        }
-        return firstRow
+        return canonical // RawRow keys are the canonical field_names
       },
       skip_empty_lines: true,
       trim: true,
@@ -208,8 +290,15 @@ export function parseCsv(csvText: string): RawRow[] {
     throw new CsvImportError('invalid_csv')
   }
   if (headerIssue) throw new CsvImportError(headerIssue)
+
+  const detected = detectProfile(canonicalHeaders)
+  if (!detected.ok) throw new CsvImportError(detected.code)
+  for (const req of PROFILE_REQUIRED_HEADERS[detected.profile]) {
+    if (!canonicalHeaders.includes(req)) throw new CsvImportError('missing_headers')
+  }
+
   if (records.length > MAX_ROWS) throw new CsvImportError('too_many_rows')
-  return records
+  return { rows: records, profile: detected.profile }
 }
 
 // The longest cell (by code points) across a row's values — used to reject a row
