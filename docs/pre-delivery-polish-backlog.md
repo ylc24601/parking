@@ -113,6 +113,11 @@
   - 現況：點外面關閉選單時，該次點擊會穿透觸發下層按鈕（如點名列）。目前由既有 5 秒 undo 視窗兜底；settle 在確認 sheet 後、無法被此路徑觸發。
   - Gate：決定是否吞掉關閉當次的點擊（dismiss-only），或維持穿透。
   - Source：Wave 1a code-review finding
+- [ ] **`StaffPinManager.tsx` 從 server service 模組 import 型別**（與 Wave 1c 的處置不一致）
+  - 現況：`app/admin/staff-pin/StaffPinManager.tsx:5` 是 client component，卻 `import type { StaffPinCardStatus } from '@/server/services/staffPinAdminService'`。**既有問題、非本 branch 造成**（Wave -1 只改了該檔文案）。實測 client chunks **無 service-role key 外洩**（`import type` 會被抹除）。
+  - 但這正是 Wave 1c 為 `MemberTable` 建 `lib/memberAdminTypes.ts` 的理由：`lib/supabase/server.ts` **只有註解防護、無 `server-only` 套件**，哪天有人把 `import type` 改成 value import 就會靜默打包進 client。
+  - Gate：比照 1c 把 DTO 移到 client-safe 模組；或（更根本）導入 `server-only` 套件讓這類 import 直接 build 失敗 —— 後者可一次解決全部同類風險，值得優先評估。
+  - Source：Wave 1 PR diff review（#37）
 - [ ] **`docs/ui-mockups/screen-state-map.md` 首頁描述過期**
   - 現況：仍寫「首頁導覽（8 卡）／8 個 `Link` 到子頁」，但 `AdminHome.tsx` 自 Slice 3.5 起已改為純歡迎頁（導覽移到 sidebar）。**既有過期、與 Wave 1a 無關**（該刀只更新列印那列）。
   - Gate：更正為 sidebar 導覽現況。
