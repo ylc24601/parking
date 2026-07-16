@@ -130,6 +130,7 @@ export interface MemberWeekReservationRow {
   id: string
   status: ReservationStatus
   effective_priority: number
+  allocation_order: number | null // frozen Friday sort index; server-only (drives getWaitingRank)
   license_plate: string | null
   applied_at: Date
   attended_at: Date | null
@@ -713,6 +714,12 @@ export interface ParkingRepository {
   // The member's own reservation for one event; the live row wins over cancelled
   // ones (the one-active-per-member index allows cancelled siblings).
   getMemberWeekReservation(userId: string, eventId: string): Promise<MemberWeekReservationRow | null>
+  // Wave 1b (#29) — a waiting member's LIVE 1-based queue position: how many still-waiting
+  // rows sit ahead of allocationOrder, +1. Counts ONLY 'waiting' — someone holding an offer
+  // (temp_approved) is not queueing right now, but failOffer returns them to waiting with
+  // their original allocation_order, so a rank can go UP. The UI says so; it is not a ticket
+  // number. Returns a count only — never another member's identity.
+  getWaitingRank(eventId: string, allocationOrder: number): Promise<number>
   // Phase 7 Slice 3 — member apply/cancel.
   getMemberVehicles(userId: string): Promise<MemberVehicleRow[]>
   // Sensitive: eligibility stays server-side; only derived bits (priority, companion
@@ -1756,7 +1763,7 @@ export function createParkingRepository(
       const { data, error } = await client
         .from('reservations')
         .select(
-          'id, status, effective_priority, applied_at, attended_at, release_deadline_at, offer_expires_at, p2_on_the_way, vehicles(license_plate)',
+          'id, status, effective_priority, allocation_order, applied_at, attended_at, release_deadline_at, offer_expires_at, p2_on_the_way, vehicles(license_plate)',
         )
         .eq('weekly_event_id', eventId)
         .eq('user_id', userId)
@@ -1778,6 +1785,7 @@ export function createParkingRepository(
         id: row.id as string,
         status: row.status as ReservationStatus,
         effective_priority: row.effective_priority as number,
+        allocation_order: (row.allocation_order as number | null) ?? null,
         license_plate: vehicle?.license_plate ?? null,
         applied_at: new Date(row.applied_at as string),
         attended_at: parseDate(row.attended_at as string | null),
@@ -1785,6 +1793,20 @@ export function createParkingRepository(
         offer_expires_at: parseDate(row.offer_expires_at as string | null),
         p2_on_the_way: (row.p2_on_the_way as boolean | null) ?? false,
       }
+    },
+
+    async getWaitingRank(eventId, allocationOrder) {
+      const { error, count } = await client
+        .from('reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('weekly_event_id', eventId)
+        .eq('status', 'waiting')
+        .lt('allocation_order', allocationOrder)
+      if (error) throw new Error(`getWaitingRank failed: ${error.message}`)
+      // A missing count is an anomaly, not "nobody ahead": defaulting to 0 would show a
+      // confident "第 1 位" that may be false. Fail loud like every other repo read.
+      if (count === null) throw new Error('getWaitingRank failed: count unavailable')
+      return count + 1
     },
 
     async getMemberVehicles(userId) {

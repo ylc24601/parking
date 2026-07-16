@@ -193,3 +193,102 @@ describe.skipIf(!RUN)('member apply/cancel (Phase 7 Slice 3) — local DB integr
     expect((await ownRow(m.id))!.status).toBe('temp_approved')
   })
 })
+
+// Wave 1b (#29) — the live waiting rank. Its own event + members: the suite above mutates
+// eventId1's rows, and a stray 'waiting' there would silently shift these counts.
+// Owns Sundays 2099-09-13 / 2099-09-20 — weekly_events.sunday_date is UNIQUE, so every
+// integration file must claim dates no other file uses (2099-05-03 is staff-pin's,
+// 2099-05-10 is event-finalize's).
+describe.skipIf(!RUN)('getWaitingRank (Wave 1b #29) — local DB integration', () => {
+  let sb: Sb
+  let repo: import('@/server/repositories/parkingRepository').ParkingRepository
+
+  const eventId = randomUUID()
+  const otherEventId = randomUUID()
+  const users: string[] = []
+  const phoneBase = 97000000 + randomInt(1000000)
+
+  // Claim the index synchronously: concurrent mkUser() calls would otherwise all read the same
+  // users.length and collide on users_phone_key.
+  let seq = 0
+  const mkUser = async () => {
+    const n = seq++
+    const id = randomUUID()
+    const vehicleId = randomUUID()
+    await sb.from('users').insert({
+      id, display_name: `Rank ${T} ${n}`, phone_number: `09${phoneBase + n}`,
+    }).throwOnError()
+    users.push(id)
+    await sb.from('vehicles')
+      .insert({ id: vehicleId, user_id: id, license_plate: `RNK-${T.slice(0, 3)}${n}` })
+      .throwOnError()
+    return { id, vehicleId }
+  }
+
+  const mkReservation = async (o: {
+    user: { id: string; vehicleId: string }
+    status: string
+    allocationOrder: number | null
+    eventId?: string
+  }) => {
+    await sb.from('reservations').insert({
+      id: randomUUID(),
+      weekly_event_id: o.eventId ?? eventId,
+      user_id: o.user.id,
+      vehicle_id: o.user.vehicleId,
+      status: o.status,
+      effective_priority: 3,
+      allocation_order: o.allocationOrder,
+      applied_at: '2099-09-11T00:00:00Z',
+      // only 'approved' carries a NOT NULL deadline constraint
+      ...(o.status === 'approved' ? { release_deadline_at: '2099-09-13T02:30:00Z' } : {}),
+    }).throwOnError()
+  }
+
+  beforeAll(async () => {
+    sb = (await import('@/lib/supabase/server')).getServiceClient()
+    repo = (await import('@/server/repositories/parkingRepository')).createParkingRepository(sb)
+    await sb.from('weekly_events').insert([
+      { id: eventId, sunday_date: '2099-09-13', total_capacity: 23, status: 'open' },
+      { id: otherEventId, sunday_date: '2099-09-20', total_capacity: 23, status: 'open' },
+    ]).throwOnError()
+  })
+
+  afterAll(async () => {
+    if (!RUN) return
+    await sb.from('reservations').delete().in('weekly_event_id', [eventId, otherEventId])
+    await sb.from('weekly_events').delete().in('id', [eventId, otherEventId])
+    for (const id of users) {
+      await sb.from('vehicles').delete().eq('user_id', id)
+      await sb.from('users').delete().eq('id', id)
+    }
+  })
+
+  it('counts only the waiting rows ahead in this event: 1-based, ignoring approved / temp_approved / null order / other weeks', async () => {
+    const [w10, w20, w30, approved5, offer15, nullOrder] = await Promise.all([
+      mkUser(), mkUser(), mkUser(), mkUser(), mkUser(), mkUser(),
+    ])
+    await mkReservation({ user: w10, status: 'waiting', allocationOrder: 10 })
+    await mkReservation({ user: w20, status: 'waiting', allocationOrder: 20 })
+    await mkReservation({ user: w30, status: 'waiting', allocationOrder: 30 })
+    // ahead in allocation_order, but must NOT count:
+    await mkReservation({ user: approved5, status: 'approved', allocationOrder: 5 })   // has a spot
+    await mkReservation({ user: offer15, status: 'temp_approved', allocationOrder: 15 }) // holding an offer
+    await mkReservation({ user: nullOrder, status: 'waiting', allocationOrder: null })  // anomaly
+    // a waiting row in ANOTHER week must not shift this week's queue
+    await mkReservation({ user: w10, status: 'waiting', allocationOrder: 1, eventId: otherEventId })
+
+    expect(await repo.getWaitingRank(eventId, 10)).toBe(1) // nobody waiting ahead
+    expect(await repo.getWaitingRank(eventId, 20)).toBe(2) // only w10
+    expect(await repo.getWaitingRank(eventId, 30)).toBe(3) // w10 + w20 (not approved5/offer15/null)
+  })
+
+  it('is live: when someone ahead cancels, the rank drops', async () => {
+    const before = await repo.getWaitingRank(eventId, 30)
+    await sb.from('reservations')
+      .update({ status: 'cancelled_by_user', cancelled_at: '2099-09-12T00:00:00Z' })
+      .eq('weekly_event_id', eventId).eq('allocation_order', 10).throwOnError()
+
+    expect(await repo.getWaitingRank(eventId, 30)).toBe(before - 1)
+  })
+})

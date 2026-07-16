@@ -55,9 +55,14 @@
 - [ ] #27 通知內容 enrich
   - Gate：日期＋車牌＋粗體期限＋換行；producer 補 plate/date 到 payload
   - Source：feature-triage.md #27
-- [ ] #30 取消加「不計違規」reassurance
-  - Gate：「10:30 前取消不計違規」文案
+- [x] #30 取消 reassurance — **Wave 1b 完成**
+  - ⚠️ **triage 原訂文案「10:30 前取消不計違規」經讀碼推翻、未採用**：(a) 違規只來自 `released_late → no_show`，取消**從不**計違規；(b) 過了截止根本**不能**取消（`cancellationService` 對其他狀態 throw）；(c) 截止**每人不同**（P3 10:30／P2 10:45／P2 正在路上 10:55）——寫死 10:30 對 P2 是錯的。
+  - Gate（實際交付）：**無條件、不綁時間**且避開「違規」一詞 →「主動取消不會被記為未到場；已核准但未取消且未到場，才會列入未到場紀錄。」對 P1/P2/P3 皆正確，且不隨 `RELEASE_TIMES` 腐化。
+  - 順帶：申請區塊寫「車位預計於週五 18:00 分配」——**刻意不寫「截止」**（該區塊由 `hasFridayAllocationRun` 而非時鐘把關；cron 延遲時仍開放，宣稱截止會與表單自相矛盾）。
   - Source：feature-triage.md #30
+- [x] #29 member 顯示候補序號 — **Wave 1b 完成**（Wave 1 項目，非交付 blocker，一併做掉）
+  - Gate：`repo.getWaitingRank` ＝同 event、仍 `waiting`、`allocation_order` 較小者 count+1；**只數 `waiting`**（持 offer 者退回時會帶原序插回前面 → 序號可能變大），UI 明示「順序可能因取消、資格與分配狀態而變動」；rank 不明回退舊文案；count error/null ⇒ throw，不顯示假的「第 1 位」。
+  - Source：feature-triage.md #29
 
 ---
 
