@@ -93,6 +93,9 @@ export default function StaffPinManager({
         <p className="mt-1 text-sm text-muted">
           主日現場頁的共用 6 位數 PIN（每主日一組）。PIN 由系統隨機產生、只顯示一次；有效至該主日結束。
         </p>
+        <p className="mt-2 text-sm text-muted">
+          換人值班？重發即可，舊 PIN 立即失效。請將新 PIN 手動傳給本週值班同工。
+        </p>
       </header>
 
       {error && <p className="rounded-xl border border-danger-fg/30 bg-danger-bg px-5 py-3 text-sm text-danger-fg">{error}</p>}

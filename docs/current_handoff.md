@@ -1,8 +1,8 @@
 # 教會主日停車管理系統 — 開發交接文件（Current Handoff）
 
-> 最後更新：2026-07-04 ｜ **Phase 3 已結案；Phase 4 進行中（Slice A + B + C + D + E + F 完成）** ｜ 範圍：Phase 0、Phase 1、Phase 2 Slice 1–4、Phase 3 Slice 1 + v2 全部切片（walk-in / 穩定度 / 紙本備援 / 結束當週點名 / 真 PIN session / weekly_events finalize / auto-finalize fallback）+ **Phase 4 Slice A — LINE notification dispatcher** + **Phase 4 Slice B — Staff「請車主移車」** + **Phase 4 Slice C — dispatcher ops hardening（排程綁定 + dryRun 預覽 + outbox 健康度可視 + production transport guard）** + **Phase 4 Slice D — 釋出時通知被釋出成員本人（`reservation_released`）** + **Phase 4 Slice E — 取消確認通知（`reservation_cancelled`）** + **Phase 4 Slice F — dispatcher autonomy（健康度告警 + dead-letter requeue + 外部排程 runbook）** 全數完成
+> 最後更新：2026-07-16 ｜ **Phase 9 已收官；production demo walkthrough 完成並清回 baseline；尚未匯入正式教會會員資料** ｜ 範圍：Phase 0–2 全部、Phase 3（Staff 現場頁 + v2 全切片）、Phase 4（notification dispatcher A–F）、Phase 5/5B（LINE webhook + binding 擷取/審核/CLI）、Phase 6（會友資料匯入）、Phase 7（會員 LIFF：登入/綁定/申請/取消/遞補確認/正在路上）、Phase 8（Admin UI Slice 1–8）、Phase 9（production deploy + prod demo-complete 收官）全數完成——詳見 §6.13–§6.36。
 >
-> **本階段：Phase 4 — Notification & LINE Integration**。**Slice A（dispatcher）+ B（移車請求）+ C（ops hardening）+ D（釋出通知本人）+ E（取消確認）+ F（告警/requeue）已完成**（見 §6.13 / §6.14 / §6.15 / §6.16 / §6.17 / §6.18）。**下一步（go-live 前置，ops 軌）：真實 OA channel token + 移車/釋出/取消文案定稿 + per-member `line_id` 綁定流程；正式排程由外部排程器掛載（cron-job.org / crontab，見 [dispatcher-ops.md](dispatcher-ops.md)；不 commit live scheduler artifact）。** 見 [v2-backlog.md](v2-backlog.md) §2 與 §9 Deferred。
+> **現況：開發全部完成、prod 已站起並跑完完整 demo（見 §6.36）。剩交付後 ops（非開發軌）**：升 Supabase Pro、換教會正式 OA/channel token、匯入真會友 CSV、通知文案 sign-off、通知 LIFF deep-link（#26）；整理於 [prod-deploy-runbook.md](prod-deploy-runbook.md) §8/§13。功能 backlog 見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
 > 程式碼根目錄：`parking-system/`（`@/*` alias 指向該目錄）
 
@@ -32,18 +32,19 @@
 | **Phase 4 Slice D** | **釋出時通知被釋出成員本人**：主日釋出 sweep 將 `approved`→`released_late` 時，除對候補者廣播外，另發一則 `reservation_released` 給被釋出的車主（一次性 `released_owner:<id>` dedupe；資訊性、無罰責、`已於 {time} 釋出` 非期限）；migration `0015` 4-arg `apply_release`（+ 3-arg 相容 wrapper），owner notice 僅由本 sweep `released` CTE 產生並三重再驗證（reservation_id/user_id/template）；**結算 pre-sweep 靜默**（`notifyReleasedOwners:false`）| ✅ 完成 |
 | **Phase 4 Slice E** | **取消確認通知**：會友取消預約時，除既有「遞補 offer 給下一位候補」外，另發一則 `reservation_cancelled` 給**取消者本人**（一次性 `cancel_notice:<id>` dedupe；`cancelled_late`/`cancelled_by_user` 兩種措辭、無罰責、指回報名系統）；migration `0016` 8-arg `apply_cancellation`（+ 7-arg 相容 wrapper），confirmation 僅由本次 `cancelled` CTE 產生、三重再驗證，且 `cancel_status` **由 RPC 轉態後狀態權威決定**（非 TS payload）；**限會友自行取消**，未來 admin/staff 取消需另立模板 | ✅ 完成 |
 | **Phase 4 Slice F** | **Dispatcher autonomy**：健康度**告警**（`GET /outbox-alert` + `job:outbox-alert`，健康=200／不健康=503 讓外部 monitor 無整合即可告警；門檻 env，pilot 預設 `0/0/15`；backlog 訊號用新的 `outbox_health.oldest_due_at` 只看 due 列）+ **dead-letter requeue**（`POST /requeue-failed` + `job:requeue-failed`，**dryRun 預設**、僅 `failed→pending`、預設 max 50/硬上限 500、可選 sanitized `errorCode`、**手動限定不排程**）；migration `0017`（`outbox_health` 加 `oldest_due_at` + `requeue_failed_outbox` RPC）；排程走**外部排程器（cron-job.org / crontab）文件化，不 commit live artifact** | ✅ 完成 |
+| **Phase 5 / 5B** | **LINE webhook + binding**：webhook 驗簽 capture-only（`0018` `pending_binding`）+ binding 審核 RPC（`0019`）+ CLI（issue/approve/reject） | ✅ 完成（§6.19–6.21） |
+| **Phase 6** | **會友資料匯入**（P2 申請表 CSV，CLI 資料基礎；`line_id` 不動） | ✅ 完成（§6.22） |
+| **Phase 7** | **會員 LIFF**：登入 + 唯讀本週狀態 + 綁定申請 + 預約申請/自助取消 + 遞補確認/放棄 + 正在路上（真機冒煙 PASS 2026-07-11） | ✅ 完成（§6.23–6.26、§6.28） |
+| **Phase 8** | **Admin UI**（Slice 1–8）：登入/骨架/綁定審核、會友查詢/明細/發碼、admin 帳號管理、P2 資格審查、CSV 匯入上傳、營運狀態、PII retention job、牧養 alert 處理 + 現場 PIN 管理 UI | ✅ 完成（§6.27、§6.29–6.35；migrations 0025–0028） |
+| **Phase 9** | **Production deploy + prod demo-complete（收官）**：`ensure-weekly-event` + eventId 自解析、雲端 bootstrap、LINE/LIFF 接線 + 11 cron、三端 UI polish；prod 上跑完整 demo（business-chain PASS），A1 清理回 baseline | ✅ 收官（§6.36，2026-07-15） |
 
 **主日完整生命週期（分配 → 取消/遞補 → 釋出/出席 → 結算）已全部落地，並補上 Staff 現場頁
 （點名/補點名/walk-in 登記/誤點復原/離線只讀/紙本備援清單/結束當週點名/真 PIN session/結束整週 finalize/auto-finalize fallback）。
-Phase 3（Staff 現場頁 + v2 全部切片）至此結案。** 下一階段為 **Phase 4 — Notification & LINE Integration**
-（LINE notification dispatcher + 移車通知、Member/Admin UI），見 [v2-backlog.md](v2-backlog.md) 與 §9 Deferred。
+Phase 3（Staff 現場頁 + v2 全部切片）至此結案。** 其後 Phase 4–9 亦全數落地（通知 dispatcher、LINE
+webhook/binding、會友匯入、會員 LIFF、Admin UI、production deploy），**Phase 9 已收官**；剩交付後 ops（非開發），見
+header 與 §6.36。歷史 v2 規劃見 [v2-backlog.md](v2-backlog.md)、後續功能 backlog 見 [feature-triage.md](feature-triage.md)。
 
-**目前測試狀態（Phase 4 Slice F 本回合實跑）：** `tsc --noEmit` ✅、`eslint` ✅、`next build` ✅（新 `/api/internal/jobs/outbox-alert`、`/api/internal/jobs/requeue-failed` ƒ dynamic）、
-`npm test`（不接 DB）**399 passed / 47 skipped**（+ `evaluateOutboxAlert`/thresholds、alert route 200/503、`requeueFailed` dryRun/bounds/filter、requeue route dryRun 預設/400）、
-`RUN_DB_TESTS=1 npm test`（接本機 Supabase）**451 passed**（新增 `outbox-requeue.db.test.ts`：`oldest_due_at` 只看 due、requeue 只 `failed→pending` 且不動其他四狀態、errorCode/max、重跑 0、leak-scan）、`npm run db:verify` **22/22 PASS**（新增斷言 22：`requeue_failed_outbox` + service_role execute）。
-Slice F 已完成**實機 E2E**（route handler + mock transport）：無 secret → **401**；2 筆 failed → `GET /outbox-alert` **503** `breaches:['failed_over_max']`；`requeue-failed` dryRun `wouldRequeue:2`（不異動）→ apply（`errorCode:http_500`）`requeued:2`；`dispatch` **sent 2**；再查 `/outbox-alert` → **200 healthy**。
-排程/告警/requeue/rollback runbook 見 [dispatcher-ops.md](dispatcher-ops.md)。**排程為外部排程器文件化，不 commit live artifact；requeue 手動限定不排程。**
-**本機 Supabase stack 本回合啟動並實跑，驗證後可停止。**
+**測試與驗證狀態**：分「最新完整里程碑快照（Phase 9 收官）」與「Current HEAD 最近驗證」兩層，詳見 §8（避免混時間語意）。
 
 **架構分層（Slice 1–4 一致）：** thin route（`/api/internal/*`，job-secret 驗證）→ service（商業邏輯，呼叫 Phase 0 純函式）
 → repository（supabase-js）→ 原子 plpgsql RPC 或 status-guarded 單句寫入。商業邏輯留在 TypeScript，SQL 只負責原子套用。
@@ -936,18 +937,32 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 ---
 
-## 8. 測試結果
+## 8. 測試與驗證狀態
+
+分兩層記錄，避免混時間語意：**里程碑快照**＝歷史證據（日後每刀不覆寫）；**Current HEAD**＝最近一刀實測。
+
+### 最新完整里程碑快照：Phase 9 收官（2026-07-15）
+
+| 項目 | 結果 |
+|------|------|
+| migrations | `0001–0028` |
+| `npm run db:verify` | ✅ **33/33** schema 斷言 PASS |
+| `npm test`（不接 DB） | ✅ **904 passed**（§6.36 記載） |
+| production demo walkthrough | ✅ PASS（限制見 §6.36） |
+
+> 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
+
+### Current HEAD 最近驗證：Wave -1（文件與通知 correctness）
 
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `npm test`（不接 DB） | ✅ **399 passed / 47 skipped**（本回合實跑；`*.db.test.ts` 被 gate 跳過） |
-| `npm run db:reset` | ✅ 套用 `0001–0017` + seed |
-| `npm run db:verify` | ✅ **22/22** schema 斷言 PASS |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **451 passed** |
+| `npm test`（不接 DB） | ✅ **906 passed / 172 skipped**（＝Phase 9 的 904 + 本刀 2 個 guard test 案例） |
+| `npm run build` | ✅ 全 route 編譯（`/admin/staff-pin`、`/member`、`/staff` 等 ƒ dynamic） |
+| DB tests | 本刀未執行——無 schema / DB logic 變更 |
 
-> 上表全為 **Phase 4 Slice F（dispatcher autonomy）本回合實測**（含 `db:reset 0001–0017`、`db:verify` 22/22、`RUN_DB_TESTS=1` 451）。下方 Slice 4 專屬涵蓋為當時紀錄。
+> Wave -1 僅改通知文案（#25）+ guard test + staff-pin 換班文案（#1）+ docs（本檔除鏽、新增 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)）；不動 schema/migration/route/PIN 邏輯。數字於外部審查後、最終重跑才填。
 
 **測試檔：** 純函式 `tests/unit/allocation/*`（含 `scenario.test.ts` 全週情境）；服務 `tests/unit/server/*`（mock repo）；
 整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch,move-car,outbox-health,release-owner-notice,cancel-confirm-notice,outbox-requeue}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。
@@ -967,13 +982,14 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 > v2 優先序與會議定案見 [v2-backlog.md](v2-backlog.md)（2026-06-29 同工會議）：
 > **walk-in（§6.6）、穩定度（§6.7）、紙本備援清單（§6.8）、結束當週點名（§6.9）、真 PIN session（§6.10）、weekly_events finalize（§6.11）、Auto-finalize fallback（§6.12）皆已完成 → Phase 3 結案。**
-> **下一階段：Phase 4 — Notification & LINE Integration** —— LINE notification dispatcher（outbox 已寫入、尚無實際送出）+「移車通知」新模板 + OA 串接（卡點＝會友 OA 加入率）/ Member·Admin UI。
+> **Phase 4–9 皆已完成、Phase 9 已收官**（詳見 §6.13–§6.36）；本節下表為仍未做的 deferred 項目。剩交付後 ops（非開發軌）見 header 與 [prod-deploy-runbook.md](prod-deploy-runbook.md) §8/§13。
 > 定案：⭐ 保留、**不在畫面加個資**，聯絡需求改走教會 LINE OA 代發。
 
 | 項目 | 預定時機 | 備註 |
 |------|----------|------|
 | ~~真 Staff PIN session（`staff_sessions` 雜湊 / 失敗鎖定 / 過期 / 綁 event）~~ | ✅ **完成（v2，§6.10）** | scrypt PIN + 5 次鎖 15 分 + 12h TTL + cookie session id + event 綁定（取代 getActiveEvent stub） |
 | ~~Staff PIN 管理 UI~~ | ✅ **完成（§6.35）** | `/admin/staff-pin`：隨機 PIN 顯示一次、expiry 撐到主日結束、解鎖/替換分離；CLI `staff:set-pin` 降為緊急備援（legacy now+ttl 契約）。真 per-device session（單裝置撤銷）/ PIN 輪替仍後續 |
+| **PIN 自動派送**：自動發同工 LINE 群（triage #3）/ 個別私訊值班人（#4） | **deferred**（交付後，需獨立安全 design review） | cron retry 反覆旋轉 PIN＝最大風險（明碼不落地→push 失敗無法重送同碼）；**人工重發已可運作**（`/admin/staff-pin` 重發＝新碼、舊碼立即失效、手動轉交）；理由詳見 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md) |
 | ~~Staff walk-in 現場登記~~ | ✅ **完成（v2 P1，§6.6）** | — |
 | ~~Staff 結束當週點名（settle）route + UI~~ | ✅ **完成（v2，§6.9）** | `/api/staff/settle` 回嚴格 Staff-safe DTO `{ ok, settled, releasedNow }`（不暴露 penalty/牧養）；UI 二次確認 sheet |
 | ~~`weekly_events` 事件 finalize（結束整週）~~ | ✅ **完成（v2，§6.11）** | settle 後標 `finalized`、擋 Staff 寫入（app-layer guard）；DTO 加 `finalized` 旗標 |
@@ -1006,7 +1022,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 ## 10. 本機開發備忘（重點，詳見 development_plan §12）
 
-- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0014` + seed）/ `db:verify` / `db:stop`。
+- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0028` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
 - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**；**`MEMBER_AUTH_MODE`（`mock`|`liff`；本機用 `mock`，`liff` 另需 `LINE_LOGIN_CHANNEL_ID` + `NEXT_PUBLIC_LIFF_ID`，見 [member-liff-setup.md](member-liff-setup.md)）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**（`NEXT_PUBLIC_LIFF_ID` 例外，非機密）；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。

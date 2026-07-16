@@ -7,6 +7,12 @@ import type { NotificationTemplate } from '@/lib/types'
 // Covers the keys actually enqueued today (allocate / substitute / release / p2 reminder).
 // An unknown key throws → the dispatcher marks that one row failed (render_error), it does
 // not crash the batch. Settlement deliberately enqueues nothing (pastoral notify deferred).
+//
+// COPY RULE (triage #25): member-facing templates must NOT ask the member to "回覆" (reply) to
+// act — the LINE webhook is capture-only (§6.19) and silently drops replies, so any reply
+// instruction is a dead command. Route every member action to the member page instead
+// (offer confirm / on-the-way live in app/member/MemberStatus.tsx). A live tappable deep-link
+// back to that page is the proper fix (#26); this file only carries the interim text pointer.
 
 type Payload = Record<string, unknown>
 
@@ -35,8 +41,8 @@ const RENDERERS: Record<NotificationTemplate, (p: Payload) => string> = {
 
   offer_2hr_confirm: p => {
     const at = taipeiTime(p.expires_at)
-    const tail = at ? `（請於 ${at} 前回覆）` : '（請於 2 小時內回覆）'
-    return `【教會停車】您好 🙏 有一個停車名額釋出給您！請回覆確認是否使用${tail}。逾時未回覆將順延給下一位，謝謝您。`
+    const tail = at ? `（請於 ${at} 前確認）` : '（請於 2 小時內確認）'
+    return `【教會停車】您好 🙏 有一個停車名額釋出給您！請開啟會員頁面（LINE 選單）點選『確認保留車位』${tail}。逾時未確認將順延給下一位，謝謝您。`
   },
 
   offer_auto_approved: () =>
@@ -67,7 +73,7 @@ const RENDERERS: Record<NotificationTemplate, (p: Payload) => string> = {
 
   p2_arrival_reminder: p => {
     const label = typeof p.sunday_date === 'string' ? p.sunday_date : '本主日'
-    return `【教會停車】您好 🙏 提醒您 ${label} 的車位保留至 10:45。若您正在路上，請回覆「正在路上」，我們會為您保留至 10:55，謝謝您。`
+    return `【教會停車】您好 🙏 提醒您 ${label} 的車位保留至 10:45。若您正在路上，請開啟會員頁面點選『我正在路上』，我們會為您保留至 10:55，謝謝您。`
   },
 
   // Staff-initiated: ask a specific car's owner to move it (OA push, no personal contact shown).
