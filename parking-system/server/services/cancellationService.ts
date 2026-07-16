@@ -5,6 +5,7 @@ import {
   type OutboxRow,
   type ParkingRepository,
 } from '@/server/repositories/parkingRepository'
+import { getSundayDateForNotification, withNotificationContext } from './notification/context'
 import { buildSubstitutePayloadAndOutbox, offerNextSpot } from './substitution'
 
 export interface CancelSummary {
@@ -48,7 +49,7 @@ export async function cancelReservation(
   // Member self-cancellation confirmation to the cancelling member. Once-per-reservation dedupe
   // (a reservation is cancelled once). The stored cancel_status is authoritative from the RPC's
   // `cancelled` CTE, so the payload here is empty; the RPC only enqueues it if the cancel fires.
-  const cancelNotice: OutboxRow[] = r.user_id
+  const baseCancelNotice: OutboxRow[] = r.user_id
     ? [{
         dedupe_key: `cancel_notice:${r.id}`,
         template_key: 'reservation_cancelled',
@@ -60,6 +61,11 @@ export async function cancelReservation(
 
   // No spot freed → plain cancel.
   if (!needsSubstitution) {
+    // A pending/waiting cancel needs no event at all — only the notice's date does. So the lookup
+    // is fail-soft: a blip on weekly_events must not be able to stop a member cancelling. Without
+    // a date the copy just says「本週」.
+    const sundayDate = await getSundayDateForNotification(r.weekly_event_id, repo)
+    const cancelNotice = await withNotificationContext(baseCancelNotice, { sundayDate, repo })
     const res = await repo.applyCancellation({
       eventId: r.weekly_event_id,
       cancelId: r.id,
@@ -76,10 +82,15 @@ export async function cancelReservation(
     }
   }
 
-  // approved → cancel + offer the freed spot.
+  // approved → cancel + offer the freed spot. This event read is CORE, not decoration — the
+  // substitution offer's deadlines are derived from it — so it must keep throwing.
   const event = await repo.getWeeklyEvent(r.weekly_event_id)
   const sundayMidnight = buildSundayMidnight(event.sunday_date)
   const deadlines = buildReleaseDeadlines(event.sunday_date)
+  const cancelNotice = await withNotificationContext(baseCancelNotice, {
+    sundayDate: event.sunday_date,
+    repo,
+  })
   const excluded = new Set<string>()
 
   const waiting = await repo.getWaitingForSubstitution(r.weekly_event_id)
@@ -99,7 +110,8 @@ export async function cancelReservation(
 
   // Atomic cancel + first offer.
   excluded.add(firstSub.reservation.id)
-  const { payload, outbox } = buildSubstitutePayloadAndOutbox(firstSub, now, deadlines)
+  const { payload, outbox: rawOutbox } = buildSubstitutePayloadAndOutbox(firstSub, now, deadlines)
+  const outbox = await withNotificationContext(rawOutbox, { sundayDate: event.sunday_date, repo })
   const res = await repo.applyCancellation({
     eventId: r.weekly_event_id, cancelId: r.id, cancelStatus, expectStatus: 'approved',
     nowIso: now.toISOString(), substitute: payload, outbox, cancelNotice,
@@ -122,7 +134,9 @@ export async function cancelReservation(
   }
 
   // Race: chosen candidate was taken; cancel already committed → offer-only retry.
-  const offeredId = await offerNextSpot(repo, r.weekly_event_id, now, sundayMidnight, deadlines, excluded)
+  const offeredId = await offerNextSpot(
+    repo, r.weekly_event_id, now, sundayMidnight, deadlines, excluded, event.sunday_date,
+  )
   return {
     cancelStatus, cancelled: true, substituteOffered: !!offeredId,
     substituteReservationId: offeredId, confirmationEnqueued,

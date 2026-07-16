@@ -11,6 +11,9 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     getWeeklyEventBySunday: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
     getWaitingRank: vi.fn(async () => 1),
     listMembers: vi.fn(async () => ({ rows: [], total: 0 })),
+    // Wave 1d (#27) — notification plate lookup. Empty by default: a payload with no plate is
+    // the graceful case, so tests that don't care about it stay unaffected.
+    getPlatesForReservations: vi.fn(async () => new Map<string, string>()),
     // Phase 9 Slice 1 — scheduler-facing upcoming event + idempotent ensure
     getUpcomingScheduledEvent: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
     ensureWeeklyEvent: vi.fn(async () => ({

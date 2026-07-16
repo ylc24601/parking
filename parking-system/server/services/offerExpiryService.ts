@@ -6,6 +6,7 @@ import {
   type ParkingRepository,
   type SubstitutePayload,
 } from '@/server/repositories/parkingRepository'
+import { withNotificationContext } from './notification/context'
 import { buildSubstitutePayloadAndOutbox, offerNextSpot } from './substitution'
 
 export interface ExpireOffersSummary {
@@ -40,7 +41,7 @@ export async function expireOffers(
       excluded.add(sub.reservation.id)
       const built = buildSubstitutePayloadAndOutbox(sub, now, deadlines)
       next = built.payload
-      nextOutbox = built.outbox
+      nextOutbox = await withNotificationContext(built.outbox, { sundayDate: event.sunday_date, repo })
     }
 
     const res = await repo.applyOfferResolution({
@@ -58,7 +59,9 @@ export async function expireOffers(
     if (sub && res.next_applied > 0) {
       offeredCount++
     } else if (sub && res.next_applied === 0) {
-      const offeredId = await offerNextSpot(repo, eventId, now, sundayMidnight, deadlines, excluded)
+      const offeredId = await offerNextSpot(
+        repo, eventId, now, sundayMidnight, deadlines, excluded, event.sunday_date,
+      )
       if (offeredId) offeredCount++
     }
   }

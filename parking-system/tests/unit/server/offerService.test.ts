@@ -118,4 +118,42 @@ describe('resolveOffer — enforceExpiry (member path)', () => {
     await resolveOffer({ reservationId: r.id, action: 'confirm', now: NOW }, asRepo(repo))
     expect(repo.applyOfferResolution.mock.calls[0][0].expiryGuard).toBe(false)
   })
+
+  // ── Wave 1d (#27) ─────────────────────────────────────────────────────────────────────────
+  // Each producer wires the helper itself, so each needs its own proof: the wiring is one line,
+  // which is exactly how a call site gets missed.
+  describe('notification context', () => {
+    it('confirm → the approval notice carries the week and the plate', async () => {
+      const r = offer(2)
+      const repo = makeMockRepo({
+        getReservation: vi_fn(r),
+        getPlatesForReservations: vi.fn(async () => new Map([[r.id, 'ABC-1234']])),
+      })
+      await resolveOffer({ reservationId: r.id, action: 'confirm', now: NOW }, asRepo(repo))
+
+      const outbox = repo.applyOfferResolution.mock.calls[0][0].outbox
+      expect(outbox[0].template_key).toBe('reservation_approved')
+      expect(outbox[0].payload).toEqual({ sunday_date: '2026-06-21', license_plate: 'ABC-1234' })
+    })
+
+    it('decline → the next candidate’s offer carries their OWN plate, not the decliner’s', async () => {
+      const r = offer()
+      const next = waiting(1)
+      const repo = makeMockRepo({
+        getReservation: vi_fn(r),
+        getWaitingForSubstitution: vi_fn([next]),
+        applyOfferResolution: vi.fn(async () => ({ resolved: 1, next_applied: 1, outbox_enqueued: 1, expired_blocked: false })),
+        getPlatesForReservations: vi.fn(async () => new Map([[r.id, 'DECLINER-1'], [next.id, 'NEXT-2']])),
+      })
+      await resolveOffer({ reservationId: r.id, action: 'decline', now: NOW }, asRepo(repo))
+
+      const outbox = repo.applyOfferResolution.mock.calls[0][0].outbox
+      expect(outbox[0].template_key).toBe('offer_2hr_confirm')
+      expect(outbox[0].reservation_id).toBe(next.id)
+      expect(outbox[0].payload.license_plate).toBe('NEXT-2')
+      expect(outbox[0].payload.sunday_date).toBe('2026-06-21')
+      // the offer window the producer computed is untouched by the enrichment
+      expect(outbox[0].payload.expires_at).toBeDefined()
+    })
+  })
 })

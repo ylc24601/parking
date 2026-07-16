@@ -954,18 +954,30 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 1c（Admin #12／#5A）
+### Current HEAD 最近驗證：Wave 1d（通知 #27）
 
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1179 passed**（114 檔全過） |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1285 passed**（116 檔全過） |
 | `npm run build` | ✅ |
-| 手動實跑（真 admin session、53 位播種名冊） | 「共 53 位／第 1／3 頁」、每頁 25 列、遮罩電話（**完整號碼零外洩**）；`?page=999` → **307 → `?page=3`**；page1∩page2 **0 重疊**；`1.5`/`1e3`/`-1`/`abc`/`Infinity`/超 safe-int 一律 **200**（回第 1 頁不炸）；兩頁橫幅到位；驗證 seed＋臨時 admin **已全數清除**（0 leftover） |
+| 手動實跑（`NOTIFICATION_TRANSPORT=mock`，逐則印出 render 後字串） | 12 種 payload 組合（含全缺、缺車牌、缺期限）逐則校對換行後實際樣子；無雙重空行、無 ISO 日期外漏 |
 | DB schema | 本刀無 migration（仍 `0001–0029`） |
 
-> **Wave 1c（#12／#5A）**：
+> **Wave 1d（#27 通知內容 enrich）**：
+> - **⚠️ triage 的「粗體期限」不可行、未採用**：`lineTransport.ts:86` 送 `{ type: 'text' }`，**LINE 純文字沒有粗體／markdown**（全 repo 無 Flex）。真粗體＝改 Flex Message＝`renderTemplate` 從回傳 string 變訊息物件、transport 契約與 9 個 renderer 全改，屬通知層改版、不屬 Wave 1。**改以換行＋`⏰` 期限獨立成行**強調。
+> - **順手修掉一個現存 bug**：`p2_arrival_reminder` 原本把 **ISO 日期直接印給會友**（「提醒您 2026-07-19 的…」）。日期一律走 `memberSundayLabel` → 「7月19日 主日」。
+> - **開頭改成「【教會停車】＋換行＋您好，…」**：`【教會停車】` 是**寄件者標籤**（台灣簡訊慣例「【中華電信】您的帳單…」），不是稱謂。分段後「【教會停車】您好」自成一行 ⇒ 中文讀起來變成「跟教會停車問好」。標籤獨立一行後，`您好，` 回到它所屬的句子、對象是會友；手機不管在哪換行都不會再湊出那一行。同時拿掉開頭的 🙏（少了它當分隔，`您好` 改接逗號；`reservation_released`／`reservation_cancelled` 的主旨原以「您」開頭，會變成「您好，您…」疊字 → 拿掉該「您」，收件者本來就是本人）。測試釘住 `【教會停車】\n您好，` 開頭且不得出現 `【教會停車】您好`。
+> - **enrich 在 producer、不在 dispatcher**：維持 `renderTemplate` 只讀 row 上已持久化的 payload（純函式）＝訊息是 enqueue 當下的**快照**（會友事後換車，已排隊的通知仍顯示當初申請的車牌）。共用 helper `server/services/notification/context.ts`。
+> - **「裝飾不得阻擋核心」**：`runFridayAllocation` 是**先 claim job 才讀 pending**，plain cancel／release 原本**根本不讀 event** —— 只為了訊息而新增的讀取（車牌**與**日期）一律 **fail-soft**（失敗 ⇒ 少一行／回退「本週」），核心照跑。但**核心用途的 event 讀取仍 throw**（approved cancellation 要算遞補期限），不誤吞。
+> - **車牌只給「講的就是那台車」的 5 個模板**；`broadcast_release`（別人釋出的位子）、`reservation_cancelled`（自己剛按的取消）不給，且 helper **主動剝除** `license_plate` —— minimization 同時成立在 **persistence 層**（`payload_json` 長期留存、retention 未實作）與 render 層。
+> - **`reservation_released` 不給車牌**：Phase 4 Slice D（`e83451e`）已把該 payload 定為 **aggregate-safe（無 per-member 欄位）**——釋出掃描是唯一一次 fan-out 給大量會友的批次路徑，保持 payload 無個資是對「批次配錯對象」的縱深防禦。原計畫要給車牌，被該測試擋下 → 尊重舊規則。`sunday_date` 是 event 層級、非 per-member，故通過且該測試的禁止清單原封不動。
+> - `memberSundayLabel` 做**真實日曆驗證**（`2026-02-31` 這類會被 regex 放行）；`p2_arrival_reminder` 的 10:45／10:55 改由 **`RELEASE_TIMES` 導出**，不再寫死（Wave 1b 的同一課）。
+> - 車牌走 `vehicles(license_plate)` embed（**複合 FK**，由 friday-allocation DB 測試在真 PostgREST 上證明）、`.in()` **分批 100**（數百個 UUID 會把 URL 撐爆成 414）。**dedupe_key 全數不動 ⇒ 本刀不重送任何既有通知。**
+> - **`move_car_request` 暫不套用 Wave 1d 的 sender-label 格式**（維持原本單行、無日期、無分段），因其為**已核准的獨立 OA 即時通知文案**（`docs/oa-onboarding-and-move-car-copy.md §二 A`）：它是現場即時請求、不是排程通知。代價是 OA 語氣有一則與其他 8 則不一致 —— **後續若要統一，需連同該 sign-off 文件一起審查**。renderer 旁已留「不要順手正規化」的例外註解。
+
+> 前一刀 **Wave 1c（#12／#5A）**（全套 1179／114 檔）：
 > - **#12 資料最小化橫幅**（`app/admin/DataMinimizationNotice.tsx`）掛在 `/admin/eligibility` 與 `/admin/members/[id]`，**在事由/眷屬出現之前**。系統本就只存「事由分類＋效期」、從不索取診斷證明，但這份克制原本只寫在程式註解裡。文案刻意寫「**請勿詢問或登錄診斷細節**」——初稿的「如需確認請當面了解」反而會招來當面問診，已棄用。
 > - **#5A 名冊瀏覽**：`/admin/members` 預設 SSR 第一頁（搜尋仍在上方）。`repo.listMembers` **在 DB 排序** `(display_name, id)` 再 `range` —— 全序才可 offset 分頁（`searchMembers` 是抓完在 JS 排序，無法分頁）。因此頁面現在會 SSR 遮罩 PII ⇒ **加上 `force-dynamic`/`revalidate=0`**（比照另兩個含 PII 的頁）。搜尋維持 POST（query 不進 URL）；名冊只有 `?page=N`，**URL 零 PII**。
 > - **`?page=` 是公開輸入**：`parsePage` 只收 plain positive **safe** integer（擋 `1.5`／`1e3`／`Infinity`／超大數／`?page=1&page=2` 的 `string[]`），service 再自我防禦、`offset` 亦驗 safe（不安全時 page/offset **成對**退回第 1 頁，不謊報頁碼）。
@@ -973,7 +985,7 @@ business-chain（ops 正式路徑驅動）逐步結果：
 > - 兩份清單（搜尋結果／名冊）欄位相同 → 抽共用 `MemberTable`；其 DTO `MemberSearchItem` 放 **client-safe 的 `lib/memberAdminTypes.ts`**（`lib/supabase/server.ts` 只有註解防護、無 `server-only` 套件，client 元件不該有理由 import 到 service 模組）。
 > - 不匯出、不 bulk、不預載敏感事由（P2 事由只在明細頁讀）；role 分級仍待 #19。
 
-> 前幾刀：Wave 1b 全套 1137；Wave 1a 全套 1135、`/staff/print`→404；Wave 0.1 全套 1131；Wave 0（#20/#21/#22＋migration `0029`）全套 1118／`db:verify` PASS；Wave -1 非 DB 906。
+> 更前幾刀：Wave 1b 全套 1137；Wave 1a 全套 1135、`/staff/print`→404；Wave 0.1 全套 1131；Wave 0（#20/#21/#22＋migration `0029`）全套 1118／`db:verify` PASS；Wave -1 非 DB 906。
 
 > **Wave 1b（#29／#30）**：
 > - **#29 候補序號**：新 `repo.getWaitingRank(eventId, allocationOrder)`＝同 event、仍 `waiting`、`allocation_order` 較小者 count **+1**（1-based）。**只數 `waiting`**——持 offer（`temp_approved`）者當下不佔候補位，但 `failOffer` 會讓他帶**原 `allocation_order`** 退回 waiting、**插回前面**，故序號可能**變大**；UI 明示「順序可能因取消、資格與分配狀態而變動」，這不是號碼牌。`allocation_order` 為 server-only，只有衍生的 `waitingRank` 進 DTO；rank 不明時回退既有文案，不編造序號。count 查詢 error 或 `count === null` 一律 **throw**（絕不默默顯示假的「第 1 位」）。

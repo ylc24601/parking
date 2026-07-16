@@ -10,6 +10,7 @@ import {
   type ParkingRepository,
   type SubstitutePayload,
 } from '@/server/repositories/parkingRepository'
+import { withNotificationContext } from './notification/context'
 import { buildSubstitutePayloadAndOutbox, offerNextSpot } from './substitution'
 
 export interface ResolveOfferSummary {
@@ -46,15 +47,18 @@ export async function resolveOffer(
 
   if (action === 'confirm') {
     const releaseDeadline = computeReleaseDeadline(r, deadlines)
-    const outbox: OutboxRow[] = [
-      {
-        dedupe_key: `confirmed:${r.id}`,
-        template_key: 'reservation_approved',
-        user_id: r.user_id,
-        reservation_id: r.id,
-        payload: {},
-      },
-    ]
+    const outbox: OutboxRow[] = await withNotificationContext(
+      [
+        {
+          dedupe_key: `confirmed:${r.id}`,
+          template_key: 'reservation_approved',
+          user_id: r.user_id,
+          reservation_id: r.id,
+          payload: {},
+        },
+      ],
+      { sundayDate: event.sunday_date, repo },
+    )
     const res = await repo.applyOfferResolution({
       eventId: r.weekly_event_id,
       offerId: r.id,
@@ -85,7 +89,7 @@ export async function resolveOffer(
     excluded.add(sub.reservation.id)
     const built = buildSubstitutePayloadAndOutbox(sub, now, deadlines)
     next = built.payload
-    nextOutbox = built.outbox
+    nextOutbox = await withNotificationContext(built.outbox, { sundayDate: event.sunday_date, repo })
   }
 
   const res = await repo.applyOfferResolution({
@@ -112,7 +116,9 @@ export async function resolveOffer(
   let offeredId: string | null = sub && res.next_applied > 0 ? sub.reservation.id : null
   if (sub && res.next_applied === 0) {
     // race: chosen next was taken; the decline already committed → offer-only retry
-    offeredId = await offerNextSpot(repo, r.weekly_event_id, now, sundayMidnight, deadlines, excluded)
+    offeredId = await offerNextSpot(
+      repo, r.weekly_event_id, now, sundayMidnight, deadlines, excluded, event.sunday_date,
+    )
   }
   return {
     outcome: 'declined',

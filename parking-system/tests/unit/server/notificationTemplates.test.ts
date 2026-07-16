@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { RELEASE_TIMES } from '@/lib/allocation/rules'
+import { releaseTimeLabel } from '@/lib/memberLabels'
 import { renderTemplate } from '@/server/services/notification/templates'
 
 // Rendering reads ONLY the payload persisted on the row. Each enqueued key must render a
@@ -40,7 +42,11 @@ describe('renderTemplate', () => {
   })
 
   it('includes the Sunday label in the P2 reminder', () => {
-    expect(renderTemplate('p2_arrival_reminder', { sunday_date: '2026-06-21' })).toContain('2026-06-21')
+    // Was 'toContain(2026-06-21)' — this template used to print the raw ISO date at members
+    // (triage #27). The label is now member-voice prose, and the ISO string must never appear.
+    const text = renderTemplate('p2_arrival_reminder', { sunday_date: '2026-06-21' })
+    expect(text).toContain('6月21日 主日')
+    expect(text).not.toContain('2026-06-21')
   })
 
   it('renders move_car_request with the plate', () => {
@@ -104,5 +110,96 @@ describe('renderTemplate', () => {
 
   it('throws on an unknown template_key', () => {
     expect(() => renderTemplate('totally_unknown_key', {})).toThrow(/unknown template_key/)
+  })
+
+  // ── triage #27: the week, the car, and a legible deadline ──────────────────────────────────
+  // The payload's sunday_date / license_plate are stamped at enqueue time by
+  // server/services/notification/context (see notificationContext.test.ts for which keys get what).
+
+  const DATE_KEYS: Array<[string, Record<string, unknown>]> = [
+    ['reservation_approved', {}],
+    ['reservation_waiting', { rank: 3 }],
+    ['offer_2hr_confirm', { expires_at: '2026-07-19T02:00:00Z' }],
+    ['offer_auto_approved', {}],
+    ['broadcast_release', { released_count: 2 }],
+    ['reservation_released', { released_at: '2026-07-19T02:45:00Z' }],
+    ['reservation_cancelled', { cancel_status: 'cancelled_late' }],
+    ['p2_arrival_reminder', {}],
+  ]
+
+  it.each(DATE_KEYS)('%s names the Sunday in prose, never as an ISO date', (key, payload) => {
+    const text = renderTemplate(key, { ...payload, sunday_date: '2026-07-19' })
+    expect(text).toContain('7月19日 主日')
+    expect(text).not.toContain('2026-07-19')
+  })
+
+  it.each(DATE_KEYS)('%s falls back to 本週 when the payload has no usable date', (key, payload) => {
+    // An unparseable date must degrade to the vaguer wording, never print itself or throw.
+    for (const bad of [{}, { sunday_date: '2026-02-31' }, { sunday_date: 'nope' }]) {
+      const text = renderTemplate(key, { ...payload, ...bad })
+      expect(text).toContain('本週')
+      expect(text).not.toContain('2026-02-31')
+    }
+  })
+
+  const PLATE_KEYS: Array<[string, Record<string, unknown>]> = [
+    ['reservation_approved', {}],
+    ['reservation_waiting', { rank: 3 }],
+    ['offer_2hr_confirm', { expires_at: '2026-07-19T02:00:00Z' }],
+    ['offer_auto_approved', {}],
+    ['p2_arrival_reminder', {}],
+  ]
+
+  it.each(PLATE_KEYS)('%s shows which car the message is about', (key, payload) => {
+    expect(renderTemplate(key, { ...payload, license_plate: 'ABC-1234' })).toContain('車牌：ABC-1234')
+  })
+
+  it.each(PLATE_KEYS)('%s omits the plate line entirely when no plate is known', (key, payload) => {
+    // Here the plate is supplementary, so a missing one drops the line rather than announcing
+    // 「（車牌未提供）」 — that fallback belongs only to move_car_request, whose subject IS the car.
+    expect(renderTemplate(key, payload)).not.toContain('車牌')
+  })
+
+  // The payload-level guarantee lives in context.ts (it strips the key); this is the second line
+  // of defence — even handed a plate, these renderers must not print one.
+  // reservation_released is on this list because Phase 4 Slice D fixed its payload as
+  // aggregate-safe; tests/integration/release-owner-notice.db.test.ts is that rule's authority.
+  it.each([
+    ['broadcast_release', { released_count: 2 }],
+    ['reservation_cancelled', { cancel_status: 'cancelled_late' }],
+    ['reservation_released', { released_at: '2026-07-19T02:45:00Z' }],
+  ])('%s never renders a plate, even if the payload carries one', (key, payload) => {
+    expect(renderTemplate(key, { ...payload, license_plate: 'ABC-1234' })).not.toContain('ABC-1234')
+  })
+
+  it('puts the offer deadline on its own ⏰ line', () => {
+    // triage asked for bold; LINE text messages have no bold, so emphasis is position + whitespace.
+    const text = renderTemplate('offer_2hr_confirm', { expires_at: '2026-07-19T02:00:00Z' })
+    expect(text).toContain('\n\n⏰ 請於 10:00 前確認\n\n')
+    expect(renderTemplate('offer_2hr_confirm', {})).toContain('⏰ 請於 2 小時內確認')
+  })
+
+  it('derives the P2 reminder deadlines from RELEASE_TIMES, not hard-coded copy', () => {
+    const text = renderTemplate('p2_arrival_reminder', { sunday_date: '2026-07-19' })
+    expect(text).toContain(`⏰ 車位保留至 ${releaseTimeLabel(RELEASE_TIMES.p2)}`)
+    expect(text).toContain(`保留至 ${releaseTimeLabel(RELEASE_TIMES.p2Grace)}`)
+  })
+
+  it.each(DATE_KEYS)('%s keeps the 【教會停車】 sender label on its own line', (key, payload) => {
+    // The label is a sender tag (the 【中華電信】… convention), not someone being addressed:
+    // 「【教會停車】您好」 on one line reads as greeting the parking system rather than the member.
+    const text = renderTemplate(key, { ...payload, sunday_date: '2026-07-19' })
+    expect(text.startsWith('【教會停車】\n您好，')).toBe(true)
+    expect(text).not.toContain('【教會停車】您好')
+  })
+
+  it('never renders a blank section gap', () => {
+    // joinSections skips absent sections; a fixed skeleton would leave a hole where a template
+    // has no plate and no deadline.
+    for (const [key, payload] of [...DATE_KEYS, ['move_car_request', { license_plate: 'A-1' }] as const]) {
+      const text = renderTemplate(key, { ...payload, sunday_date: '2026-07-19' })
+      expect(text, key).not.toMatch(/\n{3}/)
+      expect(text, key).not.toMatch(/^\s|\s$/)
+    }
   })
 })

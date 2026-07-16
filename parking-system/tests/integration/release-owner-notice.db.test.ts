@@ -97,11 +97,19 @@ describe.skipIf(!RUN)('release owner notice — local DB integration', () => {
     expect(ownerResIds).not.toContain(wM1)
   })
 
-  it('payload is aggregate-safe: only released_at, no per-member fields', async () => {
+  // This is the authority for the rule: the release sweep is the one path that fans out to many
+  // members in a single batch, so its payload stays free of per-member data — defence in depth
+  // against a batch ever pairing the wrong row with the wrong member.
+  //
+  // Wave 1d (#27) added `sunday_date`, which is event-level, not per-member, and is the same
+  // value for every row in the sweep — the rule is unchanged and the prohibition below is
+  // untouched. It is why reservation_released is excluded from PLATE_TEMPLATES in
+  // server/services/notification/context.ts while five other member templates carry a plate.
+  it('payload is aggregate-safe: no per-member fields', async () => {
     const owner = (await outbox()).filter(r => r.template_key === 'reservation_released')
     for (const o of owner) {
       const payload = o.payload_json as Record<string, unknown>
-      expect(Object.keys(payload)).toEqual(['released_at'])
+      expect(Object.keys(payload).sort()).toEqual(['released_at', 'sunday_date'])
       const json = JSON.stringify(payload)
       for (const k of ['license_plate', 'plate', 'name', 'phone', 'penalty', 'line_id', 'user_id']) {
         expect(json).not.toContain(k)

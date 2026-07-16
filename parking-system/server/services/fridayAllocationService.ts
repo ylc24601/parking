@@ -6,6 +6,7 @@ import {
   type ParkingRepository,
   type ReservationUpdate,
 } from '@/server/repositories/parkingRepository'
+import { withNotificationContext } from './notification/context'
 
 export const FRIDAY_ALLOCATION_JOB = 'friday_allocation'
 
@@ -63,13 +64,19 @@ export async function runFridayAllocation(
         r.status === 'approved' ? computeReleaseDeadline(r, deadlines).toISOString() : null,
     }))
 
-    const outboxRows: OutboxRow[] = outbox.map(o => ({
-      dedupe_key: `friday_allocation:${o.reservation_id}`,
-      template_key: o.template_key,
-      user_id: o.user_id,
-      reservation_id: o.reservation_id,
-      payload: o.payload,
-    }))
+    // event.sunday_date is already in hand from the core read above — no extra lookup. The plate
+    // lookup inside is fail-soft: this runs AFTER the job claim, so a throw here would land in the
+    // catch below and mark the whole week's allocation failed for the sake of a message detail.
+    const outboxRows: OutboxRow[] = await withNotificationContext(
+      outbox.map(o => ({
+        dedupe_key: `friday_allocation:${o.reservation_id}`,
+        template_key: o.template_key,
+        user_id: o.user_id,
+        reservation_id: o.reservation_id,
+        payload: o.payload,
+      })),
+      { sundayDate: event.sunday_date, repo },
+    )
 
     const result = await repo.applyFridayAllocation(
       eventId,

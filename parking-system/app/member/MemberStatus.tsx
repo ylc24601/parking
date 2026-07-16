@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Badge, { type BadgeTone } from '../ui/Badge'
+import { memberSundayLabel } from '@/lib/memberLabels'
 
 // Member-safe week status DTO, built by the server page from repo rows. Own data
 // only — no penalty, no other members, no ids. Dates are ISO strings (client
@@ -40,9 +41,10 @@ const TAIPEI_TIME = new Intl.DateTimeFormat('zh-TW', {
   hour12: false,
 })
 
+// Shared with the LINE notifications (lib/memberLabels): the page and the message must name
+// the same Sunday the same way. Falls back to the raw date rather than blanking the heading.
 function sundayLabel(sundayDate: string): string {
-  const [, m, d] = sundayDate.split('-')
-  return `${Number(m)}月${Number(d)}日 主日`
+  return memberSundayLabel(sundayDate) ?? sundayDate
 }
 
 function timeLabel(iso: string | null): string | null {

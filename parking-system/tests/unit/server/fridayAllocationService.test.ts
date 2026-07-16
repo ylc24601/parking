@@ -20,6 +20,8 @@ function makeRepo(opts: {
   pending: ReservationForAllocation[]
   applyResult?: ApplyResult
   applyThrows?: Error
+  plates?: Map<string, string>
+  platesThrow?: Error
 }): {
   repo: ParkingRepository
   applySpy: ReturnType<typeof vi.fn>
@@ -47,6 +49,11 @@ function makeRepo(opts: {
       ...opts.capacity,
     }),
     getPendingForAllocation: async () => opts.pending,
+    // Wave 1d (#27) — plates for the approved/waiting notices. Decoration only, hence fail-soft.
+    getPlatesForReservations: async () => {
+      if (opts.platesThrow) throw opts.platesThrow
+      return opts.plates ?? new Map<string, string>()
+    },
     applyFridayAllocation: applySpy as ParkingRepository['applyFridayAllocation'],
     markJobFailed: markFailedSpy as ParkingRepository['markJobFailed'],
   } as unknown as ParkingRepository
@@ -153,5 +160,52 @@ describe('runFridayAllocation (mocked repo)', () => {
     expect(markFailedSpy).toHaveBeenCalledOnce()
     expect(markFailedSpy.mock.calls[0][0]).toBe(EVENT_ID)
     expect(markFailedSpy.mock.calls[0][1]).toBe('friday_allocation')
+  })
+
+  // ── Wave 1d (#27) ─────────────────────────────────────────────────────────────────────────
+  describe('notification context', () => {
+    it('stamps the week and each member’s plate onto the approved/waiting notices', async () => {
+      const pending = pendingMix()
+      const plates = new Map(pending.map((r, i) => [r.id, `TEST-${i + 1}`]))
+      const { repo, applySpy } = makeRepo({ capacity: { total_capacity: 2 }, pending, plates })
+
+      await runFridayAllocation({ eventId: EVENT_ID, now: new Date('2026-06-19T10:00:00Z') }, repo)
+
+      const outbox = applySpy.mock.calls[0][3] as OutboxRow[]
+      expect(outbox).toHaveLength(3)
+      for (const row of outbox) {
+        expect(row.payload.sunday_date).toBe(SUNDAY)
+        expect(row.payload.license_plate).toBe(plates.get(row.reservation_id as string))
+      }
+      // the waiting notice keeps its rank alongside the new context
+      const waiting = outbox.find(o => o.template_key === 'reservation_waiting')
+      expect(waiting?.payload.rank).toBe(1)
+    })
+
+    it('allocates the week as normal when the plate lookup fails', async () => {
+      // The plate read happens AFTER the job is claimed, so a throw would land in the catch above
+      // and mark the whole week failed. A message detail must never cost the allocation.
+      const pending = pendingMix()
+      const { repo, applySpy, markFailedSpy } = makeRepo({
+        capacity: { total_capacity: 2 },
+        pending,
+        platesThrow: new Error('db down'),
+      })
+
+      const summary = await runFridayAllocation(
+        { eventId: EVENT_ID, now: new Date('2026-06-19T10:00:00Z') },
+        repo,
+      )
+
+      expect(summary.jobStatus).toBe('success')
+      expect(summary.plannedApproved).toBe(2)
+      expect(markFailedSpy).not.toHaveBeenCalled()
+      const outbox = applySpy.mock.calls[0][3] as OutboxRow[]
+      expect(outbox).toHaveLength(3)
+      for (const row of outbox) {
+        expect(row.payload.sunday_date).toBe(SUNDAY)
+        expect(row.payload).not.toHaveProperty('license_plate')
+      }
+    })
   })
 })
