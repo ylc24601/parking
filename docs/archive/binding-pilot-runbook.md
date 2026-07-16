@@ -1,5 +1,9 @@
 # Binding-CLI pilot runbook（測試 OA，端到端，無送出）
 
+> 🗄️ **已歸檔（ARCHIVED）**：此 pilot 已於 **2026-07-05** 在開發者自有測試 OA 端到端跑完（Phase 5B），
+> 5B 綁定審核之後已包進 Admin UI（`/admin/bindings`，見 handoff §6.27/§6.29）。保留此文件僅作歷史紀錄，
+> **不需再執行**。教會**正式** OA 的 capture dry-run 為另一件事、仍屬交付後 ops（見 [../oa-dry-run-tunnel-runbook.md](../oa-dry-run-tunnel-runbook.md)）。
+
 > 目的：在**開發者自有的測試 OA**上，把 5A 擷取 + 5B binding CLI **端到端跑一次**
 > （`issue → 會友送碼 → capture → 預覽 → 核准 → 寫 users.line_id → reject`），
 > 驗證 operator 工作流與 CLI，**完全不需要教會協調、不對外送任何訊息**。
@@ -8,7 +12,7 @@
 > （per-Provider，在教會正式 OA 無效）；本流程寫入的 `users.line_id` 為**測試資料**，收尾要清掉。
 > 全程 `NOTIFICATION_TRANSPORT=mock`、`LINE_SEND_ENABLED=false`、**不設 access token**、**不送出**。
 >
-> 搭配 [oa-dry-run-tunnel-runbook.md](oa-dry-run-tunnel-runbook.md)（擷取端）、[binding-ops.md](binding-ops.md)（CLI 參考）、[go-live-readiness.md](go-live-readiness.md)。
+> 搭配 [oa-dry-run-tunnel-runbook.md](../oa-dry-run-tunnel-runbook.md)（擷取端）、[binding-ops.md](../binding-ops.md)（CLI 參考）、[go-live-readiness.md](../go-live-readiness.md)。
 > 這步**不取代**教會正式 OA capture dry-run（仍為 go-live 前置）。
 
 ---
@@ -116,4 +120,4 @@ psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -c \
 
 ---
 
-**通過後：** operator 綁定工作流已驗證 → 下一步進行**教會正式 OA capture dry-run**（見 [oa-dry-run-tunnel-runbook.md](oa-dry-run-tunnel-runbook.md)），那步才驗證教會 OA channel secret / webhook 設定 / 正式會友 userId 擷取。
+**通過後：** operator 綁定工作流已驗證 → 下一步進行**教會正式 OA capture dry-run**（見 [oa-dry-run-tunnel-runbook.md](../oa-dry-run-tunnel-runbook.md)），那步才驗證教會 OA channel secret / webhook 設定 / 正式會友 userId 擷取。
