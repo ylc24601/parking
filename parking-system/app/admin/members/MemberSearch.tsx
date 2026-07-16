@@ -1,32 +1,22 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import Badge from '../../ui/Badge'
+import type { MemberSearchItem } from '@/lib/memberAdminTypes'
+import MemberTable from './MemberTable'
 
 // Admin member search. Results show a MASKED phone; the full number is only on the
 // session-gated detail page. The query is POSTed (never a URL/query string).
-
-interface SearchItem {
-  id: string
-  displayName: string
-  phoneMasked: string
-  plateSummary: string
-  role: string
-  bound: boolean
-}
-
-const ROLE_LABEL: Record<string, string> = {
-  user: '會友',
-  full_time_staff: '全職同工',
-  staff: '同工',
-  admin: '管理員',
-}
+// The result table itself is shared with the roster browse (MemberTable) so the two
+// lists can't drift; the search-specific states (idle / loading / error / no results /
+// hasMore) stay here.
+// Renders a <section>: the page owns the <main> and the heading, since the roster browse
+// is a second section of the same page.
 
 export default function MemberSearch() {
-  const router = useRouter()
   const [query, setQuery] = useState('')
-  const [items, setItems] = useState<SearchItem[] | null>(null)
+  // The shared DTO, not a local copy: a structurally-identical duplicate is exactly the drift
+  // MemberTable exists to prevent.
+  const [items, setItems] = useState<MemberSearchItem[] | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +35,7 @@ export default function MemberSearch() {
       })
       const data = await res.json().catch(() => null)
       if (res.ok && data?.ok) {
-        setItems(data.items as SearchItem[])
+        setItems(data.items as MemberSearchItem[])
         setHasMore(Boolean(data.hasMore))
       } else {
         setItems(null)
@@ -60,11 +50,7 @@ export default function MemberSearch() {
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">會友管理</h1>
-      </header>
-
+    <section className="flex flex-col gap-3">
       <form onSubmit={submit} className="flex gap-3">
         <input
           type="text"
@@ -100,49 +86,10 @@ export default function MemberSearch() {
                 結果過多，僅顯示前 {items.length} 筆——請縮小關鍵字。
               </p>
             )}
-            <div className="w-full overflow-x-auto rounded-xl border border-border">
-              <table className="w-full min-w-[640px] text-left text-sm">
-                <thead className="bg-surface text-muted">
-                  <tr>
-                    <th className="px-4 py-3 font-normal">姓名</th>
-                    <th className="whitespace-nowrap px-4 py-3 font-normal">電話</th>
-                    <th className="whitespace-nowrap px-4 py-3 font-normal">車牌</th>
-                    <th className="whitespace-nowrap px-4 py-3 font-normal">角色</th>
-                    <th className="whitespace-nowrap px-4 py-3 font-normal">綁定</th>
-                    <th className="px-4 py-3 font-normal"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {items.map(m => (
-                    <tr key={m.id} className="bg-surface">
-                      <td className="px-4 py-3 text-ink">{m.displayName}</td>
-                      <td className="whitespace-nowrap px-4 py-3 font-mono text-muted">{m.phoneMasked}</td>
-                      <td className="whitespace-nowrap px-4 py-3 font-mono text-ink">{m.plateSummary || '—'}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-muted">{ROLE_LABEL[m.role] ?? m.role}</td>
-                      <td className="whitespace-nowrap px-4 py-3">
-                        {m.bound ? (
-                          <Badge variant="outline" tone="success">已綁定</Badge>
-                        ) : (
-                          <Badge variant="outline" tone="neutral">未綁定</Badge>
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3">
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/admin/members/${m.id}`)}
-                          className="inline-flex min-h-11 items-center rounded-lg bg-primary px-3 text-sm font-medium text-white transition-colors hover:bg-primary-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-                        >
-                          明細
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <MemberTable items={items} />
           </>
         )
       )}
-    </main>
+    </section>
   )
 }

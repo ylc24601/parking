@@ -7,6 +7,7 @@ import {
   type EligibilityReviewItem,
   type ReviewListStatus,
 } from '@/server/services/eligibilityReviewService'
+import DataMinimizationNotice from '../DataMinimizationNotice'
 
 export const metadata: Metadata = {
   title: '資格審查 · 管理後台',
@@ -43,6 +44,9 @@ export default async function AdminEligibilityPage() {
           已過期 {counts.expired} · 待覆核 {counts.review_due} · 60 天內 {counts.upcoming}
         </p>
       </header>
+
+      {/* Stated before the reasons below are visible (#12). */}
+      <DataMinimizationNotice />
 
       {hasMore && (
         <p className="rounded-xl border border-warning-fg/30 bg-warning-bg px-4 py-3 text-sm text-warning-fg">

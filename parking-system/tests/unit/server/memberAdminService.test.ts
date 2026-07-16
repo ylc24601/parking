@@ -3,6 +3,7 @@ import { makeMockRepo, asRepo, type MockRepo } from './mockRepo'
 import {
   getMemberDetail,
   issueMemberBindingCode,
+  listMembersPage,
   searchMembers,
 } from '@/server/services/memberAdminService'
 import type { MemberSearchRow, MemberAdminDetailRow } from '@/server/repositories/parkingRepository'
@@ -218,5 +219,84 @@ describe('issueMemberBindingCode', () => {
         .rejects.toThrow(/ttlDays/)
     }
     expect(repo.getMemberAdminDetail).not.toHaveBeenCalled()
+  })
+})
+
+// Wave 1c (#5A) — roster browse. `page` comes from a public query param, so the offset maths and
+// the masking are the whole point of these tests.
+describe('listMembersPage — paging maths + masking', () => {
+  const listing = (rows: MemberSearchRow[], total: number) =>
+    run({ listMembers: vi.fn(async () => ({ rows, total })) })
+
+  it.each([
+    ['page 1', 1, 0],
+    ['page 3', 3, 50],
+    ['undefined → 1', undefined, 0],
+    ['0 → 1', 0, 0],
+    ['-3 → 1', -3, 0],
+    ['NaN → 1', NaN, 0],
+    ['1.5 → 1', 1.5, 0],
+    ['beyond safe integer → 1', Number.MAX_SAFE_INTEGER + 1, 0],
+  ])('%s asks the repo for the right offset', async (_label, page, offset) => {
+    const { repo, r } = listing([], 0)
+    await listMembersPage({ page: page as number | undefined }, r)
+    expect(repo.listMembers).toHaveBeenCalledWith({ limit: 25, offset })
+  })
+
+  it('falls back to page 1 as a pair when the offset would leave the safe range', async () => {
+    const { repo, r } = listing([], 0)
+    // a safe page, but page * limit is not
+    const res = await listMembersPage({ page: Number.MAX_SAFE_INTEGER, limit: 100 }, r)
+    expect(repo.listMembers).toHaveBeenCalledWith({ limit: 100, offset: 0 })
+    expect(res.page).toBe(1) // never report page N while showing page 1's rows
+  })
+
+  it.each([
+    ['over MAX_LIMIT', 500, 100],
+    ['under 1', 0, 1],
+    ['default', undefined, 25],
+  ])('clamps limit (%s)', async (_label, limit, expected) => {
+    const { repo, r } = listing([], 0)
+    await listMembersPage({ limit: limit as number | undefined }, r)
+    expect(repo.listMembers).toHaveBeenCalledWith({ limit: expected, offset: 0 })
+  })
+
+  it.each([
+    ['exactly one full page', 25, 1],
+    ['one over a page', 26, 2],
+    ['empty roster is one page, never zero', 0, 1],
+    ['two full pages', 50, 2],
+  ])('totalPages: %s', async (_label, total, expected) => {
+    const { r } = listing([], total)
+    expect((await listMembersPage({}, r)).totalPages).toBe(expected)
+  })
+
+  it('masks the phone and never leaks a full number or line_id', async () => {
+    const { r } = listing([
+      memberRow({ phone_number: '0912345678', line_id: 'U-real-line-id' }),
+      memberRow({ id: 'x', phone_number: null, plates: [] }),
+    ], 2)
+    const res = await listMembersPage({}, r)
+
+    expect(res.items[0].phoneMasked).not.toBe('0912345678')
+    expect(res.items[0].bound).toBe(true)
+    expect(res.items[1].phoneMasked).toBe('—') // no phone at all
+    const json = JSON.stringify(res)
+    expect(json).not.toContain('0912345678')
+    expect(json).not.toContain('U-real-line-id')
+  })
+
+  it.each([
+    ['no plates', [], ''],
+    ['one plate', ['ABC-1234'], 'ABC-1234'],
+    ['several plates', ['ABC-1234', 'DEF-5678', 'GHI-9012'], 'ABC-1234 ＋2'],
+  ])('plateSummary: %s', async (_label, plates, expected) => {
+    const { r } = listing([memberRow({ plates: plates as string[] })], 1)
+    expect((await listMembersPage({}, r)).items[0].plateSummary).toBe(expected)
+  })
+
+  it('an empty roster returns an empty page without throwing', async () => {
+    const { r } = listing([], 0)
+    expect(await listMembersPage({ page: 999 }, r)).toMatchObject({ items: [], totalPages: 1, total: 0 })
   })
 })

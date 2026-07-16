@@ -1,4 +1,5 @@
 import { maskPhone } from '@/lib/binding'
+import type { MemberSearchItem } from '@/lib/memberAdminTypes'
 import { issueBindingCode } from '@/server/services/bindingAdminService'
 import { createParkingRepository, type ParkingRepository } from '@/server/repositories/parkingRepository'
 
@@ -20,14 +21,10 @@ const MIN_NAME = 1
 const MIN_PHONE_DIGITS = 3
 const MIN_PLATE_ALNUM = 2
 
-export interface MemberSearchItem {
-  id: string
-  displayName: string
-  phoneMasked: string
-  plateSummary: string   // '' when no active plate; 'ABC-1234'; 'ABC-1234 ＋2'
-  role: string
-  bound: boolean
-}
+// Defined in lib/memberAdminTypes (client-safe) so the UI never imports this module — which
+// reaches lib/supabase/server and its service-role client. Re-exported so existing importers of
+// '@/server/services/memberAdminService' keep working.
+export type { MemberSearchItem } from '@/lib/memberAdminTypes'
 
 export async function searchMembers(
   params: { query: string; limit?: number },
@@ -70,6 +67,42 @@ export async function searchMembers(
     bound: r.line_id !== null,
   }))
   return { items, hasMore }
+}
+
+// Wave 1c (#5A) — browse the whole roster, no query. Same masked item shape as search, so the two
+// lists can never disagree about what an admin may see.
+//
+// `page` is driven by a public query param, so it is validated here too rather than trusted from
+// the caller: a non-safe integer would produce a fractional/overflowing offset and a broken range.
+// Out-of-range pages are NOT rewritten here — the page component redirects to the canonical last
+// page, which keeps this a single repository call and keeps that behaviour visible/testable.
+export async function listMembersPage(
+  params: { page?: number; limit?: number } = {},
+  repo: ParkingRepository = createParkingRepository(),
+): Promise<{ items: MemberSearchItem[]; page: number; totalPages: number; total: number }> {
+  const limit = Math.min(Math.max(Math.trunc(params.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT)
+  const requested =
+    Number.isSafeInteger(params.page) && (params.page as number) >= 1 ? (params.page as number) : 1
+
+  // `requested` is a safe integer, but (requested - 1) * limit can still leave the safe range.
+  // Fall back to page 1 as a PAIR — returning page N with page-1's rows would be a lie.
+  const rawOffset = (requested - 1) * limit
+  const usable = Number.isSafeInteger(rawOffset)
+  const page = usable ? requested : 1
+  const offset = usable ? rawOffset : 0
+
+  const { rows, total } = await repo.listMembers({ limit, offset })
+  const items = rows.map(r => ({
+    id: r.id,
+    displayName: r.display_name,
+    phoneMasked: r.phone_number === null ? '—' : maskPhone(r.phone_number),
+    plateSummary: summarizePlates(r.plates),
+    role: r.role,
+    bound: r.line_id !== null,
+  }))
+  // An empty roster is one empty page, not zero pages — the UI never renders "第 1／0 頁".
+  const totalPages = total === 0 ? 1 : Math.ceil(total / limit)
+  return { items, page, totalPages, total }
 }
 
 function summarizePlates(plates: string[]): string {

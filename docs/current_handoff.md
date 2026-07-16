@@ -954,16 +954,26 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 1b（Member UX #29／#30）
+### Current HEAD 最近驗證：Wave 1c（Admin #12／#5A）
 
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1137 passed**（113 檔全過） |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1179 passed**（114 檔全過） |
 | `npm run build` | ✅ |
-| 手動實跑（mock 會員、真頁面） | waiting 會友 → **「目前候補第 2 位」**＋caveat（前方 `approved`/`temp_approved` 正確**未計入**）；申請區塊 → 「車位預計於週五 18:00 分配」、**零個**「18:00 截止」；驗證用 seed 已全數清除（0 leftover） |
+| 手動實跑（真 admin session、53 位播種名冊） | 「共 53 位／第 1／3 頁」、每頁 25 列、遮罩電話（**完整號碼零外洩**）；`?page=999` → **307 → `?page=3`**；page1∩page2 **0 重疊**；`1.5`/`1e3`/`-1`/`abc`/`Infinity`/超 safe-int 一律 **200**（回第 1 頁不炸）；兩頁橫幅到位；驗證 seed＋臨時 admin **已全數清除**（0 leftover） |
 | DB schema | 本刀無 migration（仍 `0001–0029`） |
+
+> **Wave 1c（#12／#5A）**：
+> - **#12 資料最小化橫幅**（`app/admin/DataMinimizationNotice.tsx`）掛在 `/admin/eligibility` 與 `/admin/members/[id]`，**在事由/眷屬出現之前**。系統本就只存「事由分類＋效期」、從不索取診斷證明，但這份克制原本只寫在程式註解裡。文案刻意寫「**請勿詢問或登錄診斷細節**」——初稿的「如需確認請當面了解」反而會招來當面問診，已棄用。
+> - **#5A 名冊瀏覽**：`/admin/members` 預設 SSR 第一頁（搜尋仍在上方）。`repo.listMembers` **在 DB 排序** `(display_name, id)` 再 `range` —— 全序才可 offset 分頁（`searchMembers` 是抓完在 JS 排序，無法分頁）。因此頁面現在會 SSR 遮罩 PII ⇒ **加上 `force-dynamic`/`revalidate=0`**（比照另兩個含 PII 的頁）。搜尋維持 POST（query 不進 URL）；名冊只有 `?page=N`，**URL 零 PII**。
+> - **`?page=` 是公開輸入**：`parsePage` 只收 plain positive **safe** integer（擋 `1.5`／`1e3`／`Infinity`／超大數／`?page=1&page=2` 的 `string[]`），service 再自我防禦、`offset` 亦驗 safe（不安全時 page/offset **成對**退回第 1 頁，不謊報頁碼）。
+> - **⚠️ 實作中發現的真 bug**：PostgREST 對超出範圍的 offset 回 **416/`PGRST103`**（`count` 為 null）——`?page=999` 原本會 **500**，讓「redirect 到最後一頁」永遠跑不到。`listMembers` 現在把 `PGRST103` 視為**空頁**、另查 count 後回 `{rows: [], total}`，頁面才得以 redirect。
+> - 兩份清單（搜尋結果／名冊）欄位相同 → 抽共用 `MemberTable`；其 DTO `MemberSearchItem` 放 **client-safe 的 `lib/memberAdminTypes.ts`**（`lib/supabase/server.ts` 只有註解防護、無 `server-only` 套件，client 元件不該有理由 import 到 service 模組）。
+> - 不匯出、不 bulk、不預載敏感事由（P2 事由只在明細頁讀）；role 分級仍待 #19。
+
+> 前幾刀：Wave 1b 全套 1137；Wave 1a 全套 1135、`/staff/print`→404；Wave 0.1 全套 1131；Wave 0（#20/#21/#22＋migration `0029`）全套 1118／`db:verify` PASS；Wave -1 非 DB 906。
 
 > **Wave 1b（#29／#30）**：
 > - **#29 候補序號**：新 `repo.getWaitingRank(eventId, allocationOrder)`＝同 event、仍 `waiting`、`allocation_order` 較小者 count **+1**（1-based）。**只數 `waiting`**——持 offer（`temp_approved`）者當下不佔候補位，但 `failOffer` 會讓他帶**原 `allocation_order`** 退回 waiting、**插回前面**，故序號可能**變大**；UI 明示「順序可能因取消、資格與分配狀態而變動」，這不是號碼牌。`allocation_order` 為 server-only，只有衍生的 `waitingRank` 進 DTO；rank 不明時回退既有文案，不編造序號。count 查詢 error 或 `count === null` 一律 **throw**（絕不默默顯示假的「第 1 位」）。

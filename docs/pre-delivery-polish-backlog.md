@@ -70,8 +70,11 @@
 
 > 三者**只需 #15 Audit、不需 #19 角色**，可先於角色交付。
 
-- [ ] #5A 名冊瀏覽（最小欄位、server 分頁）
-  - Gate：server pagination；不匯出/不 bulk/不預載敏感事由；點入才讀完整
+- [x] #5A 名冊瀏覽（最小欄位、server 分頁）— **Wave 1c 完成**
+  - Gate：`/admin/members` 預設 SSR 第一頁；`repo.listMembers` **在 DB 排序 `(display_name, id)` 再 range**（全序才能 offset 分頁）；欄位僅姓名/遮罩電話/車牌摘要/角色/綁定；**不匯出、不 bulk、不預載敏感事由**（P2 事由只在明細頁）；頁面加 `force-dynamic`/`revalidate=0`（現在 SSR 遮罩 PII）；搜尋維持 POST、名冊 URL 只有 `?page=N`。
+  - `?page=` 只收 plain positive **safe** integer（擋 `1.5`/`1e3`/`Infinity`/超大數/`string[]`）；超界 **redirect 到 canonical 最後一頁**。
+  - **實作發現的真 bug**：PostgREST 對超界 offset 回 416/`PGRST103` ⇒ `?page=999` 原會 500、redirect 永遠跑不到；已改為視為空頁並另查 count。
+  - role 分級仍待 #19；**現階段全名冊對所有 admin 可見**（已明確接受）。
   - Source：feature-triage.md #5A
 - [ ] #15 稽核 substrate（Audit Log 地基）
   - Gate：既有 `audit_logs` 補 insert path；actor 模型（`actor_type`+`actor_id`+`actor_role_snapshot`）；DB append-only
@@ -82,8 +85,9 @@
 - [ ] #14A 車位容量設定（依賴 #15）
   - Gate：`total_capacity`/`blocked_spaces`（顯示「保留·停用」）；`effective_capacity >= approved_count` 由 **DB RPC 在 txn 內**檢查
   - Source：feature-triage.md #14A（Wave 2B）
-- [ ] #12 資料最小化橫幅
-  - Gate：明示「不索取/不顯示診斷證明」
+- [x] #12 資料最小化橫幅 — **Wave 1c 完成**
+  - Gate：`DataMinimizationNotice` 掛在 `/admin/eligibility` 與 `/admin/members/[id]`，**在事由/眷屬出現之前**；明示不索取/不儲存/不顯示診斷證明、病歷。
+  - 文案採「**請勿詢問或登錄診斷細節**」——初稿「如需確認請當面了解」會招來當面問診，已棄用。
   - Source：feature-triage.md #12
 
 ---
