@@ -6,6 +6,7 @@ import { deriveEligibilityStatus, type EligibilityStatus } from '@/lib/eligibili
 import { getAdminSession } from '@/server/http/adminAuth'
 import { getMemberDetail, type MemberDetail } from '@/server/services/memberAdminService'
 import Badge, { type BadgeTone } from '../../../ui/Badge'
+import DataMinimizationNotice from '../../DataMinimizationNotice'
 import IssueBindingCode from './IssueBindingCode'
 
 export const metadata: Metadata = {
@@ -48,7 +49,11 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
           查無此會友
         </p>
       ) : (
-        <DetailBody id={id} detail={detail} />
+        <>
+          {/* Stated before the reasons / dependents below become visible (#12). */}
+          <DataMinimizationNotice />
+          <DetailBody id={id} detail={detail} />
+        </>
       )}
     </main>
   )

@@ -740,6 +740,10 @@ export interface ParkingRepository {
     plateQuery: string | null
     candidateCap: number
   }): Promise<MemberSearchRow[]>
+  // Wave 1c (#5A) — one page of the whole roster, for browsing without a query. Ordered IN THE DB
+  // by (display_name, id): a total order is what makes offset paging correct — searchMembers sorts
+  // in JS after fetching, which cannot page. Masking happens in the service, same as search.
+  listMembers(args: { limit: number; offset: number }): Promise<{ rows: MemberSearchRow[]; total: number }>
   // Phase 8 Slice 2 — full admin member detail (raw PII). Null if the user doesn't exist.
   getMemberAdminDetail(userId: string): Promise<MemberAdminDetailRow | null>
   // Phase 8 Slice 4 — P2-eligible members due for review at/before cutoffDate. Runs TWO
@@ -1907,6 +1911,68 @@ export function createParkingRepository(
       // Stable order so hasMore (service slices limit+1) and pagination hints are deterministic.
       rows.sort((a, b) => a.display_name.localeCompare(b.display_name, 'zh-Hant') || a.id.localeCompare(b.id))
       return rows
+    },
+
+    async listMembers({ limit, offset }) {
+      // Order in the DB, not in JS: offset paging is only correct over a total order, and
+      // (display_name, id) is total because id is unique. Collation is Postgres's, so this
+      // ordering can differ slightly from searchMembers' localeCompare('zh-Hant') — within
+      // the roster it is consistent, which is what paging needs.
+      const { data, error, count } = await client
+        .from('users')
+        .select('id, display_name, phone_number, role, line_id', { count: 'exact' })
+        .order('display_name', { ascending: true })
+        .order('id', { ascending: true })
+        .range(offset, offset + limit - 1)
+      if (error) {
+        // PostgREST answers 416/PGRST103 for an offset past the end — a stale or hand-typed
+        // ?page=999. That is an EMPTY PAGE, not a failure: throwing here would 500 the page
+        // before it could redirect to the last real one. It returns no count, so fetch that
+        // separately (only on this rare path).
+        if (error.code !== 'PGRST103') throw new Error(`listMembers failed: ${error.message}`)
+        const { count: only, error: ce } = await client
+          .from('users')
+          .select('id', { count: 'exact', head: true })
+        if (ce) throw new Error(`listMembers count failed: ${ce.message}`)
+        if (only === null) throw new Error('listMembers failed: count unavailable')
+        return { rows: [], total: only }
+      }
+      if (count === null) throw new Error('listMembers failed: count unavailable')
+
+      const users = (data ?? []) as Array<{
+        id: string; display_name: string; phone_number: string | null; role: string; line_id: string | null
+      }>
+      // Past the last page: nothing to join. Skip the vehicles round trip rather than issue
+      // `.in('user_id', [])`, whose behaviour isn't consistent across clients.
+      if (users.length === 0) return { rows: [], total: count }
+
+      const idList = users.map(u => u.id)
+      const { data: plateRows, error: pe } = await client
+        .from('vehicles')
+        .select('user_id, license_plate')
+        .eq('is_active', true)
+        .in('user_id', idList)
+        // id breaks created_at ties so the plate shown first in 'ABC-1234 ＋2' is stable.
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+      if (pe) throw new Error(`listMembers plates fetch failed: ${pe.message}`)
+
+      const platesByUser = new Map<string, string[]>()
+      for (const r of (plateRows ?? []) as Array<{ user_id: string; license_plate: string }>) {
+        const arr = platesByUser.get(r.user_id) ?? []
+        arr.push(r.license_plate)
+        platesByUser.set(r.user_id, arr)
+      }
+
+      const rows = users.map(u => ({
+        id: u.id,
+        display_name: u.display_name,
+        phone_number: u.phone_number,
+        role: u.role,
+        line_id: u.line_id,
+        plates: platesByUser.get(u.id) ?? [],
+      }))
+      return { rows, total: count }
     },
 
     async getMemberAdminDetail(userId) {
