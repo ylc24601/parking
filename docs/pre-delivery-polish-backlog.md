@@ -45,11 +45,12 @@
   - 定案規則：`reason_type` 須全列一致；`remarks` **只需導出的 `isPregnancy()` 旗標一致**（逐字可不同——remarks 只經 `isPregnancy()` 生效、且只在 reason 3）；`application_date` 正規化後**忽略空白、非空白須一致**；眷屬以 `(kind,name)` 合併、空白由唯一有效值補足、不同有效值 ⇒ 衝突。**任何非空白但無法解析的日期在 `validateRow` 即擋下**（→ row-completeness taint 整組），故填錯不會被誤讀成缺值。
   - 報表：`priorityConflicts` → `groupConflicts {phone, field, subject?, values}`（兩 profile 共用；`values` 一律 canonical，不含原始備註）；每人一次只報第一項，順序 `reason_type → pregnancy → application_date → dependent_birthdate`。
   - Source：Wave 0 code-review finding
-- [ ] #23 點名備援清單搬 admin
-  - Gate：新增 `/admin/print`（gate `getAdminSession`）；`/staff/print` 移除且測試確認 staff PIN 不再能取列印資料
+- [x] #23 點名備援清單搬 admin — **Wave 1a 完成**
+  - Gate：`/admin/print`（`getAdminSession` gate、event 用**台北日曆當週主日** `upcomingSundayISO`，非 `getActiveEvent`）；`/staff/print` **已刪除**（不做 redirect）；資料解析抽成可測的 `printSheetService`，測試釘住「日曆主日／未呼叫 `getActiveEvent`／只讀 Staff-safe view」。
+  - 註：「staff PIN 不再能取列印資料」是**結構性保證**（該能力只存在於那一頁，頁面已刪；`next build` route 清單確認），非用測試證明不存在——本 repo 無 page 測試框架。
   - Source：feature-triage.md #23
-- [ ] #24 staff footer 精簡
-  - Gate：footer 只留「＋登記現場車輛」；結束鍵移 header 選單、保留二次確認
+- [x] #24 staff footer 精簡 — **Wave 1a 完成**
+  - Gate：footer 只留「＋登記現場車輛」；結束當週點名移入 header ⋯ 選單（**真 `<button disabled>`**，disabled 時不可開確認 sheet；先關選單再開 sheet；Escape／點外只關閉不觸發），既有二次確認 sheet 未動。
   - Source：feature-triage.md #24
 - [ ] #27 通知內容 enrich
   - Gate：日期＋車牌＋粗體期限＋換行；producer 補 plate/date 到 payload

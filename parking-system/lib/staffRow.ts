@@ -2,8 +2,9 @@ import { normalizePlate } from '@/lib/plate'
 
 // Shared, framework-agnostic presentation helpers for the Staff on-site list.
 // Used by the live check-in screen (StaffCheckIn.tsx), its offline cache
-// (staffCache.ts), and the printable backup sheet (/staff/print). Keeping the
-// status text / name·plate resolution here prevents the two surfaces from drifting.
+// (staffCache.ts), and the printable backup sheet (/admin/print — an admin page
+// since Wave 1a, but still the same Staff-safe rows). Keeping the status text /
+// name·plate resolution here prevents the surfaces from drifting.
 //
 // NOTE: this is the CLIENT-serialized row shape — `attended_at` is an ISO string
 // (the server `StaffCheckInRow` in lib/types.ts carries a Date + weekly_event_id).

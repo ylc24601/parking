@@ -94,6 +94,7 @@ export default function StaffCheckIn({
   const [walkInBusy, setWalkInBusy] = useState(false)
   const [settleOpen, setSettleOpen] = useState(false)
   const [settleBusy, setSettleBusy] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [moveCarRow, setMoveCarRow] = useState<StaffRow | null>(null)
   const [moveCarBusy, setMoveCarBusy] = useState(false)
 
@@ -104,6 +105,9 @@ export default function StaffCheckIn({
     prevAttendedAt: string | null
   } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Header overflow menu (#24): the trigger keeps focus ownership so closing returns to it.
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null)
   // When the shown list was last confirmed (server fetch or cache). Rendered in the
   // offline banner → must be state. Initialized from props (only read post-mount).
   const [lastUpdated, setLastUpdated] = useState<string | null>(() =>
@@ -273,6 +277,26 @@ export default function StaffCheckIn({
       ),
     )
   }
+
+  // Header menu dismissal (#24). Closing is ALWAYS just closing — neither Escape nor an
+  // outside click may run the settlement; only the menu item itself opens the confirm sheet.
+  useEffect(() => {
+    if (!menuOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setMenuOpen(false)
+      menuTriggerRef.current?.focus()
+    }
+    const onPointer = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onPointer)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onPointer)
+    }
+  }, [menuOpen])
 
   // "Latest callback" refs so the timer / window listeners use current state.
   const commitRef = useRef(commitPending)
@@ -527,6 +551,41 @@ export default function StaffCheckIn({
             >
               🔄
             </button>
+            {/* Overflow menu (#24): holds the irreversible end-of-service settlement, away from
+                the thumb zone. The item is a real <button disabled> — when disabled it cannot open
+                the confirm sheet at all, not merely look inactive. */}
+            <div ref={menuRef} className="relative">
+              <button
+                ref={menuTriggerRef}
+                type="button"
+                onClick={() => setMenuOpen(o => !o)}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                aria-label="更多操作"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-lg text-white/90 transition-colors active:bg-black/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary-deep"
+              >
+                ⋯
+              </button>
+              {menuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-xl border border-border bg-surface py-1 shadow-lg"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!event || finalized || settleBusy || offline}
+                    onClick={() => {
+                      setMenuOpen(false) // close first, then hand over to the existing confirm sheet
+                      setSettleOpen(true)
+                    }}
+                    className="flex min-h-11 w-full items-center px-4 text-left text-sm font-medium text-danger-fg transition-colors active:bg-danger-bg disabled:cursor-not-allowed disabled:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                  >
+                    ✔ 結束當週點名
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               onClick={logout}
@@ -669,7 +728,10 @@ export default function StaffCheckIn({
         )}
       </section>
 
-      <footer className="space-y-2 border-t border-border bg-surface px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+      {/* Thumb zone holds ONLY the high-frequency action. Printing moved to /admin/print (#23);
+          the irreversible end-of-service settlement moved to the header menu (#24) so it can't be
+          hit by mistake while reaching for 登記現場車輛. */}
+      <footer className="border-t border-border bg-surface px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
         <button
           type="button"
           onClick={() => openWalkIn()}
@@ -677,24 +739,6 @@ export default function StaffCheckIn({
           className="h-12 w-full rounded-xl bg-info-fg text-base font-semibold text-white transition-colors active:bg-info-fg/90 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
         >
           ＋ 登記現場車輛
-        </button>
-        {/* Printable paper backup — prepared before service, while online. */}
-        <a
-          href="/staff/print"
-          target="_blank"
-          rel="noopener"
-          className="flex h-12 w-full items-center justify-center rounded-xl border border-border text-base text-ink transition-colors active:bg-border-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        >
-          🖨 列印備援清單
-        </a>
-        {/* End-of-service settlement: settles released-late no-shows (irreversible). */}
-        <button
-          type="button"
-          onClick={() => setSettleOpen(true)}
-          disabled={!event || finalized || settleBusy || offline}
-          className="h-12 w-full rounded-xl border border-danger-fg/40 text-base font-medium text-danger-fg transition-colors active:bg-danger-bg disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        >
-          ✔ 結束當週點名
         </button>
       </footer>
 

@@ -1,10 +1,9 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { getStaffSession } from '@/server/http/staffAuth'
-import { createParkingRepository } from '@/server/repositories/parkingRepository'
-import StaffLogin from '../StaffLogin'
+import { redirect } from 'next/navigation'
+import { getAdminSession } from '@/server/http/adminAuth'
+import { getAdminPrintSheet } from '@/server/services/printSheetService'
 import {
-  type StaffRow,
   rowName,
   rowPlate,
   isWalkIn,
@@ -15,8 +14,13 @@ import {
 import PrintButton from './PrintButton'
 
 export const metadata: Metadata = {
-  title: '點名備援清單 · 教會停車',
+  title: '列印點名表 · 管理後台',
 }
+
+// The Sunday comes from the Taipei calendar (see printSheetService) — never getActiveEvent().
+// Live, uncacheable: the roster changes right up to the moment it is printed.
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 const printTimeFmt = new Intl.DateTimeFormat('zh-TW', {
   year: 'numeric',
@@ -28,32 +32,20 @@ const printTimeFmt = new Intl.DateTimeFormat('zh-TW', {
   timeZone: 'Asia/Taipei',
 })
 
-// Printable paper backup for the on-site list. Same gate + same Staff-safe source
-// as app/staff/page.tsx (staff_checkin_view via getStaffCheckInList) — never reads
+// Printable paper backup for the on-site list (Wave 1a #23 — moved off the shared on-site PIN to an
+// admin account). Same Staff-safe source and same printed minimum as before: never reads
 // reservations / user_eligibility / user_penalties. Light theme, manual print only.
-export default async function StaffPrintPage() {
-  const session = await getStaffSession()
-  if (!session) return <StaffLogin />
+export default async function AdminPrintPage() {
+  if (!(await getAdminSession())) redirect('/admin')
 
-  const repo = createParkingRepository()
-  const event = await repo.getWeeklyEvent(session.eventId)
-  const rows: StaffRow[] = event
-    ? (await repo.getStaffCheckInList(event.id)).map(r => ({
-        reservation_id: r.reservation_id,
-        display_name: r.display_name,
-        license_plate: r.license_plate,
-        walk_in_name: r.walk_in_name,
-        walk_in_license_plate: r.walk_in_license_plate,
-        is_priority: r.is_priority,
-        status: r.status,
-        attended_at: r.attended_at ? r.attended_at.toISOString() : null,
-        owner_notifiable: r.owner_notifiable,
-      }))
-    : []
+  // One clock for the whole request: the same instant decides the Sunday and stamps the sheet, so a
+  // request straddling Taipei midnight can't resolve one week and print another week's timestamp.
+  const now = new Date()
+  const { event, rows } = await getAdminPrintSheet({ now })
 
   const sorted = sortRowsForPrint(rows)
   const priorityCount = rows.filter(r => r.is_priority).length
-  const generatedAt = printTimeFmt.format(new Date())
+  const generatedAt = printTimeFmt.format(now)
 
   return (
     <main className="mx-auto min-h-dvh w-full max-w-3xl bg-white px-6 py-6 text-black">
@@ -71,16 +63,20 @@ export default async function StaffPrintPage() {
         </div>
         <div className="flex shrink-0 items-center gap-2 print:hidden">
           <PrintButton />
-          <Link href="/staff" className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700">
+          <Link href="/admin" className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700">
             返回
           </Link>
         </div>
       </div>
 
+      {/* Two distinct empty states: "no weekly_event yet" is an operations problem to act on,
+          whereas an event with no rows is simply an empty roster. */}
       {!event ? (
-        <p className="py-16 text-center text-gray-500">尚未開放本週點名</p>
+        <p className="py-16 text-center text-gray-500">
+          尚未建立本週主日活動，請先確認每週活動排程或聯絡系統管理者。
+        </p>
       ) : rows.length === 0 ? (
-        <p className="py-16 text-center text-gray-500">尚無本週清單</p>
+        <p className="py-16 text-center text-gray-500">本週尚無可列印的點名資料。</p>
       ) : (
         <table className="w-full border-collapse text-sm">
           <thead>

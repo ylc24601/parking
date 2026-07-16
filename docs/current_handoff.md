@@ -21,7 +21,7 @@
 | Phase 3 Slice 1 | Staff 現場頁（行動版）：點名清單 + 車牌後四碼搜尋 + 一鍵點名 / 補點名 | ✅ 完成 |
 | Phase 3 v2 P1 | Staff walk-in 現場登記（搜尋無果入口 + 兩層去重 + Staff-safe） | ✅ 完成 |
 | Phase 3 v2 P2 | Staff 現場頁穩定度（誤點復原 undo 視窗 + 離線只讀快取） | ✅ 完成 |
-| Phase 3 v2 Stability Slice B | Staff 紙本備援清單（可列印 `/staff/print`，硬離線 fallback） | ✅ 完成 |
+| Phase 3 v2 Stability Slice B | Staff 紙本備援清單（硬離線 fallback）｜當時路徑 `/staff/print`，**Wave 1a 已搬至 `/admin/print`**（#23） | ✅ 完成 |
 | Phase 3 v2 結束當週點名 | Staff settle route + UI（Staff-safe DTO，包裝既有 Slice 4 結算服務） | ✅ 完成 |
 | Phase 3 v2 真 PIN session | per-event PIN（scrypt）+ 鎖定/過期 + cookie session + **event 綁定**（取代 getActiveEvent stub） | ✅ 完成 |
 | Phase 3 v2 weekly_events finalize | settle 後標 `finalized`，finalized event 擋所有 Staff 寫入（check-in/walk-in/settle）、讀取仍可 | ✅ 完成 |
@@ -259,6 +259,8 @@ Staff 按「結束當週點名」，把仍為 `released_late` 的預約結算為
 
 補 v2 P2 涵蓋不到的**硬離線**：只讀快取只救「頁面開著時斷線」，**冷啟動 / 完全沒網路**（地下室）需 service worker（較重，列 P2.5）。
 本刀先做最務實 fallback：**主日前印一張紙本**，網路全斷時人工勾點、回線後系統補登。**純前端、唯讀**，不動後端 / RPC / schema / 隱私邊界（`db:verify` 仍 13/13）。
+
+> ⚠️ **本節為當時（Phase 3 v2）的歷史紀錄，路徑已變更**：列印頁於 **Wave 1a（#23）搬到 `/admin/print`**（改 `getAdminSession` gate、event 改用台北日曆當週主日、資料解析抽成 `printSheetService`），`/staff/print` 已刪除、Staff footer 入口移除。以下敘述中的 `/staff/print` 僅代表當時路徑。
 
 - **共用呈現 helper — `lib/staffRow.ts`（新）：** 把原寫死在 `StaffCheckIn.tsx` 的 `rowName` / `rowPlate` / `isWalkIn` / `sundayLabel` / 狀態文字抽出集中，避免列印頁與現場頁文案漂移。
   - 新增 `statusLabel(status)`（集中狀態用語）、`sortRowsForPrint(rows)`（純函式：⭐ 優先在前，其餘依 `normalizePlate` 車牌序；缺車牌/姓名不拋錯）、`DONE_STATUSES`。
@@ -952,16 +954,22 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 0.1（P2 application group consistency）
+### Current HEAD 最近驗證：Wave 1a（Staff 現場頁 #23／#24）
 
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `npm test`（不接 DB） | ✅ **956 passed / 175 skipped** |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1131 passed**（112 檔全過） |
-| `npm run build` | ✅ 全 route 編譯 |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1135 passed**（113 檔全過） |
+| `npm run build` | ✅ route 清單出現 `ƒ /admin/print`、**不再有 `/staff/print`** |
+| 實跑路由 | `GET /staff/print` → **404**；未登入 `GET /admin/print` → **307 → /admin**；`/staff` → 200 |
 | DB schema | 本刀無 migration（仍 `0001–0029`） |
+
+> **Wave 1a（#23／#24）**：紙本點名備援清單由 `/staff/print` **搬到 `/admin/print`**——列印是主日前的辦公室準備動作，不該綁在全同工共用的現場 PIN。event 改用**台北日曆當週主日**（`upcomingSundayISO`），**非 `getActiveEvent`**（latest-non-finalized 會印出上週）；資料解析抽成可測的 `printSheetService`（測試釘住：日曆主日／未呼叫 `getActiveEvent`／只讀 Staff-safe view）。`/staff/print` 已刪除、**不做 redirect**（跨 auth domain 混亂）；sidebar 加入口並對整個 shell 上 `print:hidden`。
+> Staff footer 只留「＋登記現場車輛」；不可逆的「結束當週點名」移入 header ⋯ 選單（**真 `<button disabled>`**——disabled 時不可開確認 sheet；先關選單再開 sheet；Escape／點外只關閉、不觸發），既有二次確認 sheet 未動。
+> 註：`/staff/print` 在 §6.8／§6.10／§6.11 的敘述為**當時路徑**的歷史紀錄。
+
+> 前幾刀：Wave 0.1 非 DB 956／全套 1131；Wave 0（#20/#21/#22＋migration `0029`）非 DB 943／全套 1118／`db:verify` PASS；Wave -1 非 DB 906、無 DB 變更。
 
 > Wave 0.1＝`p2_application` 群組一致性：同手機多列不再由 `rows[0]` 靜默決定資格。規則——`reason_type` 須一致；`remarks` **只需導出的 `isPregnancy()` 旗標一致**（逐字可不同）；`application_date` 正規化後忽略空白、非空白須一致；眷屬以 `(kind,name)` 合併、空白由唯一有效值補足。**非空白但無法解析的日期在 `validateRow` 即擋下**（成為 row error → 由 Wave 0 的 row-completeness taint 整組），故「填錯日期」不會被誤讀成「沒提供日期→待覆核」。
 > 報表一般化：`priorityConflicts` → **`groupConflicts {phone, field, subject?, values}`**（涵蓋兩 profile，`values` 一律 canonical、不含原始備註）；每人一次只報第一項，順序 `reason_type → pregnancy → application_date → dependent_birthdate`。
@@ -1008,7 +1016,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 | Auto-finalize 的真實排程器綁定（cron / Vercel Cron）/ `dryRun` 預覽 / `closed` 狀態語意 | 後續 | §6.12 提供 route + CLI，實際排程掛載與只掃不寫預覽延後；本刀只掃 `'open'` |
 | Staff 截止時間/倒數、`p2_on_the_way` 顯示 | 後續 | Slice 1 刻意不顯示（沿用 view 9 欄、最貼近隱私投影） |
 | ~~Staff 誤點復原 + 離線只讀快取~~ | ✅ **完成（v2 P2，§6.7）** | undo 視窗（送出前可取消）+ localStorage 只讀快取 |
-| ~~Staff 紙本備援清單（列印）~~ | ✅ **完成（v2 Stability Slice B，§6.8）** | `/staff/print` 可列印當週清單紙本（同 Staff-safe 欄位）；補足「只讀快取」涵蓋不到的硬離線 |
+| ~~Staff 紙本備援清單（列印）~~ | ✅ **完成（v2 Stability Slice B，§6.8）** | 可列印當週清單紙本（同 Staff-safe 欄位）；補足「只讀快取」涵蓋不到的硬離線。**Wave 1a（#23）已由 `/staff/print` 搬至 `/admin/print`**（admin gate、台北日曆當週主日） |
 | Staff service worker / 冷啟動離線（PWA） | 後續（P2.5） | 真正離線冷啟需 SW；紙本備援（§6.8）為現階段務實 fallback |
 | 成員 / Admin 對外 API + UI（P2-first rollout） | 後續切片 | 第一版優先 P2 流程；P1 UI / P3 申請 / P3 penalty admin 以 feature flag / deferred 預留 |
 | ~~LINE notification dispatcher（outbox → LINE 實際送出）~~ | ✅ **完成（Phase 4 Slice A，§6.13）** | 原子 claim/lease 防並發重送 + 顯式 `NOTIFICATION_TRANSPORT` 模式（缺 token fail-fast、不靜默假送）+ 型別化失敗分類 + backoff 重試；`job:dispatch` CLI / 內部 route |
