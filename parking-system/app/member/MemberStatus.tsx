@@ -70,8 +70,8 @@ function statusView(r: NonNullable<MemberWeekStatus['reservation']>): {
         label: '候補遞補中',
         tone: 'info',
         detail: timeLabel(r.offerExpiresAt)
-          ? `已為您保留車位，請於 ${timeLabel(r.offerExpiresAt)} 前回覆`
-          : '已為您保留車位，請儘速回覆',
+          ? `已為您保留車位，請於 ${timeLabel(r.offerExpiresAt)} 前確認`
+          : '已為您保留車位，請儘速確認',
       }
     case 'waiting':
       return { label: '候補中', tone: 'warning', detail: '若有車位釋出將依序遞補並通知您' }
@@ -218,8 +218,8 @@ function OfferActions({ disabled }: { disabled: boolean }) {
       }
       setError(
         body.reason === 'offer_expired'
-          ? '回覆期限已過，車位已釋出給下一位候補'
-          : '目前沒有待回覆的遞補，請重新整理',
+          ? '確認期限已過，車位已釋出給下一位候補'
+          : '目前沒有待確認的遞補，請重新整理',
       )
       setArming(false)
     } catch {
