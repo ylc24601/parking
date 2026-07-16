@@ -90,6 +90,21 @@
 - **管理與治理**：#8、#9、#14B、#17、#18、**#19（角色地基，Wave 2C）**、#5B
 - **會員與分析**：#11、#16、#28
 
+### a11y／UI polish（Wave 1a code-review 發現，皆非 correctness）
+
+- [ ] **header popover/menu 的鍵盤語意一致性**
+  - 現況：`app/staff/StaffCheckIn.tsx` 的 ⋯ 選單用 `role="menu"`/`role="menuitem"`，宣告了方向鍵導覽語意但未實作（單一 action 下無害，Tab 即可達）。
+  - Gate：在 a11y slice 統一決定——要嘛補完整 menu keyboard behavior，要嘛降級成一般 popover 不宣告 menu role。與既有「modal focus-trap」同一主題，宜一併處理。
+  - Source：Wave 1a code-review finding
+- [ ] **選單 click-through 行為**
+  - 現況：點外面關閉選單時，該次點擊會穿透觸發下層按鈕（如點名列）。目前由既有 5 秒 undo 視窗兜底；settle 在確認 sheet 後、無法被此路徑觸發。
+  - Gate：決定是否吞掉關閉當次的點擊（dismiss-only），或維持穿透。
+  - Source：Wave 1a code-review finding
+- [ ] **`docs/ui-mockups/screen-state-map.md` 首頁描述過期**
+  - 現況：仍寫「首頁導覽（8 卡）／8 個 `Link` 到子頁」，但 `AdminHome.tsx` 自 Slice 3.5 起已改為純歡迎頁（導覽移到 sidebar）。**既有過期、與 Wave 1a 無關**（該刀只更新列印那列）。
+  - Gate：更正為 sidebar 導覽現況。
+  - Source：Wave 1a code-review finding（既有 doc drift）
+
 ---
 
 ## DEFERRED — PIN 自動派送（#3 群發 / #4 個別私訊）
