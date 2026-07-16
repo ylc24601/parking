@@ -20,16 +20,28 @@ interface ImportReport {
   dependentsAdded: number
   phoneNameConflicts: Array<{ phone: string; names: string[]; existingName?: string }>
   plateConflicts: Array<{ phone: string; plates: string[] }>
+  batchPlateConflicts: Array<{ plate: string; phones: string[] }>
+  priorityConflicts: Array<{ phone: string; priorities: string[]; reasons: string[] }>
   reviewRequired: Array<{ phone: string; reason: string }>
+  p2Retained: Array<{ phone: string }>
   validationErrors: Array<{ line: number; errors: string[] }>
   truncated: boolean
-  totals: { phoneNameConflicts: number; plateConflicts: number; reviewRequired: number; validationErrors: number }
+  totals: {
+    phoneNameConflicts: number
+    plateConflicts: number
+    batchPlateConflicts: number
+    priorityConflicts: number
+    reviewRequired: number
+    p2Retained: number
+    validationErrors: number
+  }
 }
 
 const REASON_MESSAGE: Record<string, string> = {
   invalid_csv: '無法解析 CSV，請確認格式（引號、逗號）正確',
-  missing_headers: '缺少必要欄位表頭（applicant_name / mobile_phone / license_plate / reason_type）',
-  duplicate_headers: 'CSV 表頭有重複欄位',
+  missing_headers: '缺少必要欄位表頭：姓名、手機、車牌，且需含「優先序」（全體名單）或「申請原因」（P2 申請表）其一',
+  ambiguous_profile: '同時含「優先序」與「申請原因」，無法判斷格式；請只用其中一種範本',
+  duplicate_headers: 'CSV 表頭有重複欄位（含中英對照後撞名，如「姓名」與 applicant_name）',
   too_many_rows: '資料列過多（上限 5000 列）',
   invalid_encoding: '檔案編碼不是 UTF-8，請另存為 UTF-8 後再上傳',
   payload_too_large: '檔案過大（上限 2 MB）',
@@ -145,13 +157,22 @@ export default function MemberImport() {
 
   const hasSkips =
     !!report &&
-    (report.totals.validationErrors > 0 || report.totals.phoneNameConflicts > 0 || report.totals.plateConflicts > 0)
+    (report.totals.validationErrors > 0 ||
+      report.totals.phoneNameConflicts > 0 ||
+      report.totals.plateConflicts > 0 ||
+      report.totals.batchPlateConflicts > 0 ||
+      report.totals.priorityConflicts > 0)
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
       <header>
         <h1 className="text-2xl font-bold tracking-tight">名單匯入</h1>
-        <p className="mt-1 text-sm text-muted">P2 申請表 CSV 上傳（UTF-8）。匯入只寫資料紀錄，不會變動 LINE 綁定。</p>
+        <p className="mt-1 text-sm text-muted">
+          支援兩種格式（依表頭自動辨識）：<strong>P2 申請表</strong>（含「申請原因」）或<strong>全體名單</strong>（含「優先序」）。CSV 用 UTF-8。匯入只寫資料紀錄，不會變動 LINE 綁定。
+        </p>
+        <p className="mt-1 text-xs text-muted">
+          全體名單的「優先序」P1（全職同工）僅建立一般會友與車牌，<strong>不會</strong>建立全職同工／本週 P1 身分（P1 輪值由其他功能管理）。
+        </p>
       </header>
 
       <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-6">
@@ -283,11 +304,29 @@ function ReportView({ report }: { report: ImportReport }) {
       </IssueList>
 
       <IssueList
-        title="車牌衝突（該車牌略過）" total={report.totals.plateConflicts}
+        title="車牌衝突（DB 已有他人此車牌，該車牌略過）" total={report.totals.plateConflicts}
         empty={report.plateConflicts.length === 0}
       >
         {report.plateConflicts.map((c, i) => (
           <li key={i}>{c.phone}：{c.plates.join('、')}</li>
+        ))}
+      </IssueList>
+
+      <IssueList
+        title="檔案內車牌重複（同車牌多人，整位略過）" total={report.totals.batchPlateConflicts}
+        empty={report.batchPlateConflicts.length === 0}
+      >
+        {report.batchPlateConflicts.map((c, i) => (
+          <li key={i}>{c.plate}：{c.phones.join('、')}</li>
+        ))}
+      </IssueList>
+
+      <IssueList
+        title="同手機資料不一致（優先序／事由，整位略過）" total={report.totals.priorityConflicts}
+        empty={report.priorityConflicts.length === 0}
+      >
+        {report.priorityConflicts.map((c, i) => (
+          <li key={i}>{c.phone}：優先序 {c.priorities.join('／')}{c.reasons.length ? `；事由 ${c.reasons.join('／')}` : ''}</li>
         ))}
       </IssueList>
 
@@ -298,6 +337,15 @@ function ReportView({ report }: { report: ImportReport }) {
       >
         {report.reviewRequired.map((r, i) => (
           <li key={i}>{r.phone}（{r.reason}）</li>
+        ))}
+      </IssueList>
+
+      <IssueList
+        title="已保留既有 P2 資格（本次標一般會友、未變更）" total={report.totals.p2Retained}
+        empty={report.p2Retained.length === 0}
+      >
+        {report.p2Retained.map((r, i) => (
+          <li key={i}>{r.phone}</li>
         ))}
       </IssueList>
     </section>

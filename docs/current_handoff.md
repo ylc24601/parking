@@ -952,17 +952,23 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave -1（文件與通知 correctness）
+### Current HEAD 最近驗證：Wave 0（正式資料匯入 #20／#21／#22）
 
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `npm test`（不接 DB） | ✅ **906 passed / 172 skipped**（＝Phase 9 的 904 + 本刀 2 個 guard test 案例） |
-| `npm run build` | ✅ 全 route 編譯（`/admin/staff-pin`、`/member`、`/staff` 等 ƒ dynamic） |
-| DB tests | 本刀未執行——無 schema / DB logic 變更 |
+| `npm test`（不接 DB） | ✅ **943 passed / 175 skipped** |
+| `npm run db:reset` | ✅ 套用 `0001–0029` + seed |
+| `npm run db:verify` | ✅ all assertions passed |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1118 passed**（112 檔全過） |
+| `npm run build` | ✅ 全 route 編譯 |
 
-> Wave -1 僅改通知文案（#25）+ guard test + staff-pin 換班文案（#1）+ docs（本檔除鏽、新增 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)）；不動 schema/migration/route/PIN 邏輯。數字於外部審查後、最終重跑才填。
+> Wave 0＝中文表頭對照＋兩格式自動辨識（`ambiguous_profile` fail-closed）＋一般名冊匯入（P1/P3 免資格）＋手機容錯。
+> **migration `0029`**：`import_member` 的 eligibility 改為 `p_reason IS NOT NULL` 才寫；P1/P3 只建 user+vehicles、**永不撤銷既有 P2**（回 `retained_p2` 供報表警示）。
+> 手動實跑：`docs/import-templates/` 兩份中文範本 CLI dry-run 皆正確（roster 4 位、孕婦→待覆核、長者同行→永久；P2 表 4 位、3 眷屬）；合成檔驗證科學記號拒絕、9 碼補 0、同檔車牌衝突整位擋下。
+
+> 前一刀（Wave -1，文件與通知 correctness）之驗證：`npm test`（不接 DB）906 passed / 172 skipped、tsc/eslint/build 全綠、無 DB 變更。
 
 **測試檔：** 純函式 `tests/unit/allocation/*`（含 `scenario.test.ts` 全週情境）；服務 `tests/unit/server/*`（mock repo）；
 整合 `tests/integration/{friday-allocation,cancellation-substitution,release-attendance,settlement,walk-in,staff-pin,event-finalize,auto-finalize-fallback,notification-dispatch,move-car,outbox-health,release-owner-notice,cancel-confirm-notice,outbox-requeue}.db.test.ts`（gated by `RUN_DB_TESTS=1`，各用獨立週日）。

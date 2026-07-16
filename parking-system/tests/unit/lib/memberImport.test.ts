@@ -3,6 +3,7 @@ import {
   collectDependents,
   computeEligibility,
   CsvImportError,
+  deriveRosterEligibility,
   isPregnancy,
   isValidTaiwanMobilePhone,
   longestCell,
@@ -10,9 +11,11 @@ import {
   normalizePhone,
   parseCsv,
   parseFormDate,
+  parseMobilePhone,
   validateRow,
   type RawRow,
 } from '@/lib/memberImport'
+import { canonicalizeHeader, detectProfile, REASON_ALIASES } from '@/lib/memberImportSchema'
 
 const NOW = new Date('2026-07-06T00:00:00Z')
 
@@ -112,25 +115,47 @@ describe('collectDependents', () => {
   })
 })
 
-describe('validateRow', () => {
+describe('validateRow — p2_application', () => {
+  const errs = (row: RawRow) => { const v = validateRow(row, 'p2_application'); return v.ok ? [] : v.errors }
   it('passes a well-formed elderly row', () => {
-    const { reasonType, errors } = validateRow({ applicant_name: '林先生', mobile_phone: '0912000003', license_plate: 'GHI-3003', reason_type: '4', elder_1_name: '林阿公', elder_1_birthdate: '1945/06/01' } as RawRow)
-    expect(reasonType).toBe(4)
-    expect(errors).toEqual([])
+    const v = validateRow({ applicant_name: '林先生', mobile_phone: '0912000003', license_plate: 'GHI-3003', reason_type: '4', elder_1_name: '林阿公', elder_1_birthdate: '1945/06/01' } as RawRow, 'p2_application')
+    expect(v).toMatchObject({ ok: true, profile: 'p2_application', reasonType: 4 })
   })
   it('flags missing conditional fields and bad reason_type', () => {
-    expect(validateRow({ applicant_name: 'x', mobile_phone: '0912345678', license_plate: 'A', reason_type: '9' } as RawRow).errors).toContain('invalid reason_type "9"')
-    expect(validateRow({ applicant_name: 'x', mobile_phone: '0912345678', license_plate: 'A', reason_type: '1' } as RawRow).errors).toContain('reason_type 1/2 requires impaired_person_name')
-    expect(validateRow({ applicant_name: 'x', mobile_phone: '0912345678', license_plate: 'A', reason_type: '3' } as RawRow).errors).toContain('reason_type 3 requires child_1_name or a pregnancy remark')
+    expect(errs({ applicant_name: 'x', mobile_phone: '0912345678', license_plate: 'A', reason_type: '9' } as RawRow)).toContain('invalid reason_type "9"')
+    expect(errs({ applicant_name: 'x', mobile_phone: '0912345678', license_plate: 'A', reason_type: '1' } as RawRow)).toContain('reason_type 1/2 requires impaired_person_name')
+    expect(errs({ applicant_name: 'x', mobile_phone: '0912345678', license_plate: 'A', reason_type: '3' } as RawRow)).toContain('reason_type 3 requires child_1_name or a pregnancy remark')
   })
 
   it('flags a missing or malformed mobile_phone (the identity key)', () => {
     const base = { applicant_name: 'x', license_plate: 'A', reason_type: '4', elder_1_name: 'e', elder_1_birthdate: '1945/01/01' }
-    expect(validateRow({ ...base, mobile_phone: '' } as RawRow).errors).toContain('missing mobile_phone')
-    expect(validateRow({ ...base, mobile_phone: '1' } as RawRow).errors.some(e => e.startsWith('invalid mobile_phone'))).toBe(true)
-    expect(validateRow({ ...base, mobile_phone: '123456789' } as RawRow).errors.some(e => e.startsWith('invalid mobile_phone'))).toBe(true)
+    expect(errs({ ...base, mobile_phone: '' } as RawRow)).toContain('missing mobile_phone')
+    expect(errs({ ...base, mobile_phone: '1' } as RawRow).some(e => e.startsWith('invalid mobile_phone'))).toBe(true)
+    expect(errs({ ...base, mobile_phone: '123456789' } as RawRow).some(e => e.startsWith('invalid mobile_phone'))).toBe(true)
     // a valid mobile passes (no phone error)
-    expect(validateRow({ ...base, mobile_phone: '0912-345-678' } as RawRow).errors).toEqual([])
+    expect(validateRow({ ...base, mobile_phone: '0912-345-678' } as RawRow, 'p2_application').ok).toBe(true)
+  })
+})
+
+describe('validateRow — roster', () => {
+  const roster = (row: Partial<RawRow>) => validateRow({ applicant_name: '王', mobile_phone: '0912345678', license_plate: 'ABC-1234', ...row } as RawRow, 'roster')
+  it('P3 needs no 事由', () => {
+    expect(roster({ priority: 'P3' })).toMatchObject({ ok: true, profile: 'roster', priority: 'P3', reason: null })
+  })
+  it('lowercase priority is accepted', () => {
+    expect(roster({ priority: 'p2', reason_label: '長者同行' })).toMatchObject({ ok: true, priority: 'P2', reason: 'elderly_companion' })
+  })
+  it('P2 maps a Chinese 事由 to canonical p2_reason', () => {
+    expect(roster({ priority: 'P2', reason_label: '孕婦' })).toMatchObject({ ok: true, reason: 'pregnancy' })
+  })
+  it('P2 with a missing/unknown 事由 → error (never silently mapped)', () => {
+    const v = roster({ priority: 'P2', reason_label: '亂寫' })
+    expect(v.ok).toBe(false)
+    expect(!v.ok && v.errors.some(e => e.includes('P2事由'))).toBe(true)
+  })
+  it('invalid priority → error', () => {
+    const v = roster({ priority: 'VIP' })
+    expect(!v.ok && v.errors.some(e => e.startsWith('invalid priority'))).toBe(true)
   })
 })
 
@@ -138,18 +163,19 @@ describe('parseCsv — structure + limits', () => {
   const HEADER = 'applicant_name,mobile_phone,license_plate,reason_type'
   const goodRow = '王小明,0912345678,ABC-1234,1'
 
-  it('parses header-keyed rows (BOM tolerated)', () => {
-    const rows = parseCsv(`﻿${HEADER}\n${goodRow}`)
+  it('parses header-keyed rows (BOM tolerated) + detects p2_application', () => {
+    const { rows, profile } = parseCsv(`﻿${HEADER}\n${goodRow}`)
+    expect(profile).toBe('p2_application')
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ applicant_name: '王小明', mobile_phone: '0912345678', reason_type: '1' })
   })
 
   it('header-only or empty-ish input → zero rows (not an error)', () => {
-    expect(parseCsv(HEADER)).toEqual([])
+    expect(parseCsv(HEADER).rows).toEqual([])
   })
 
   it('tolerates CRLF, quoted commas, and quoted newlines', () => {
-    const rows = parseCsv(`${HEADER},remarks\r\n王,0912345678,"AB,CD",1,"line1\nline2"\r\n`)
+    const { rows } = parseCsv(`${HEADER},remarks\r\n王,0912345678,"AB,CD",1,"line1\nline2"\r\n`)
     expect(rows).toHaveLength(1)
     expect(rows[0].license_plate).toBe('AB,CD')
     expect(rows[0].remarks).toBe('line1\nline2')
@@ -183,7 +209,7 @@ describe('parseCsv — structure + limits', () => {
 
   it('exactly MAX_ROWS rows is allowed', () => {
     const body = Array.from({ length: MAX_ROWS }, () => goodRow).join('\n')
-    expect(parseCsv(`${HEADER}\n${body}`)).toHaveLength(MAX_ROWS)
+    expect(parseCsv(`${HEADER}\n${body}`).rows).toHaveLength(MAX_ROWS)
   })
 })
 
@@ -191,5 +217,90 @@ describe('longestCell', () => {
   it('returns the max cell length by code points', () => {
     expect(longestCell({ a: 'xy', b: '王小明' } as RawRow)).toBe(3)
     expect(longestCell({ a: '', b: undefined as unknown as string } as RawRow)).toBe(0)
+  })
+})
+
+describe('canonicalizeHeader + duplicate detection (#20)', () => {
+  it('maps Chinese headers to canonical field_names', () => {
+    expect(canonicalizeHeader('姓名')).toBe('applicant_name')
+    expect(canonicalizeHeader(' 手機號碼 ')).toBe('mobile_phone')
+    expect(canonicalizeHeader('優先序')).toBe('priority')
+    expect(canonicalizeHeader('P2事由')).toBe('reason_label')
+  })
+  it('leaves an already-canonical / unknown header unchanged', () => {
+    expect(canonicalizeHeader('applicant_name')).toBe('applicant_name')
+    expect(canonicalizeHeader('unknown_col')).toBe('unknown_col')
+  })
+  it('a Chinese + English alias colliding on one canonical → duplicate_headers', () => {
+    expect(() => parseCsv('姓名,applicant_name,手機,車牌,優先序\n王,王,0912345678,ABC,P3'))
+      .toThrowError(expect.objectContaining({ code: 'duplicate_headers' }))
+  })
+})
+
+describe('detectProfile (#21)', () => {
+  it('優先序 only → roster', () => {
+    expect(detectProfile(['applicant_name', 'mobile_phone', 'license_plate', 'priority'])).toEqual({ ok: true, profile: 'roster' })
+  })
+  it('reason_type only → p2_application', () => {
+    expect(detectProfile(['applicant_name', 'mobile_phone', 'license_plate', 'reason_type'])).toEqual({ ok: true, profile: 'p2_application' })
+  })
+  it('both discriminators → ambiguous_profile (fail closed)', () => {
+    expect(detectProfile(['priority', 'reason_type'])).toEqual({ ok: false, code: 'ambiguous_profile' })
+  })
+  it('neither → missing_headers', () => {
+    expect(detectProfile(['applicant_name', 'mobile_phone'])).toEqual({ ok: false, code: 'missing_headers' })
+  })
+  it('parseCsv throws ambiguous_profile when a file has both discriminators', () => {
+    expect(() => parseCsv('applicant_name,mobile_phone,license_plate,priority,reason_type\n王,0912345678,ABC,P3,1'))
+      .toThrowError(expect.objectContaining({ code: 'ambiguous_profile' }))
+  })
+  it('parses a Chinese roster template → roster profile with canonical keys', () => {
+    const { rows, profile } = parseCsv('姓名,手機,車牌,優先序,P2事由,備註\n王小明,0912345678,ABC1234,P3,,')
+    expect(profile).toBe('roster')
+    expect(rows[0]).toMatchObject({ applicant_name: '王小明', mobile_phone: '0912345678', license_plate: 'ABC1234', priority: 'P3' })
+  })
+})
+
+describe('REASON_ALIASES (#20)', () => {
+  it('covers the five church labels → canonical p2_reason', () => {
+    expect(REASON_ALIASES).toMatchObject({
+      行動不便: 'mobility_long', 短期不便: 'mobility_short', 幼兒同行: 'child_companion',
+      孕婦: 'pregnancy', 長者同行: 'elderly_companion',
+    })
+  })
+})
+
+describe('parseMobilePhone (#22)', () => {
+  it.each([
+    ['0912345678', '0912345678'],   // 10-digit accepted
+    ['0912-345-678', '0912345678'], // punctuation stripped
+    ['912345678', '0912345678'],    // 9-digit → single leading 0 restored
+  ])('accepts %s → %s', (raw, canonical) => {
+    expect(parseMobilePhone(raw)).toEqual({ ok: true, phone: canonical })
+  })
+  it.each([
+    ['9.12346E+8', 'scientific_notation'], // Excel rounded — rejected, not reconstructed
+    ['1.2e3', 'scientific_notation'],
+    ['', 'missing'],
+    ['   ', 'missing'],
+    ['1', 'invalid'],
+    ['0212345678', 'invalid'],       // landline-style
+    ['+886912345678', 'invalid'],    // +886 not supported yet (backlog)
+    ['886912345678', 'invalid'],     // 886 prefix — length alone must not accept it
+  ])('rejects %s with code %s', (raw, code) => {
+    expect(parseMobilePhone(raw)).toEqual({ ok: false, code })
+  })
+})
+
+describe('deriveRosterEligibility (#21)', () => {
+  const NOW_ = new Date('2026-07-16T20:00:00Z') // 2026-07-17 04:00 Taipei
+  it('permanent reasons take effect immediately', () => {
+    expect(deriveRosterEligibility('mobility_long', NOW_)).toMatchObject({ reviewRequired: false, valid_until: null, review_date: null })
+    expect(deriveRosterEligibility('elderly_companion', NOW_)).toMatchObject({ reviewRequired: false, review_date: null })
+  })
+  it('windowed reasons are review-required with the Taipei date (never guessing an end date)', () => {
+    for (const r of ['mobility_short', 'pregnancy', 'child_companion'] as const) {
+      expect(deriveRosterEligibility(r, NOW_)).toEqual({ p2_reason: r, valid_until: null, review_date: '2026-07-17', reviewRequired: true })
+    }
   })
 })

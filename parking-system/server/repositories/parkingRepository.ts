@@ -585,7 +585,7 @@ export interface ParkingRepository {
     name: string
     phone: string
     plates: string[]
-    reason: string
+    reason: string | null // null = general (P1/P3) roster member: user+vehicles only, no eligibility
     validUntil: string | null
     reviewDate: string | null
     dependents: Array<{ kind: string; name: string; birthdate: string | null }>
@@ -596,6 +596,7 @@ export interface ParkingRepository {
     vehicles_added?: number
     dependents_added?: number
     plate_conflicts?: string[]
+    retained_p2?: boolean // null-reason import landed on a member who already had P2 (kept, not revoked)
   }>
   // Phase 5B Slice 2 — raw fields for the approve preview (the SERVICE masks them before output;
   // they are never printed/logged raw). Returns null only when the pending id doesn't exist.
@@ -1294,6 +1295,7 @@ export function createParkingRepository(
         vehicles_added?: number
         dependents_added?: number
         plate_conflicts?: string[]
+        retained_p2?: boolean
       }
     },
 
