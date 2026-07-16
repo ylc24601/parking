@@ -38,7 +38,6 @@
 | 本週已結束（唯讀） | `staff/StaffCheckIn.tsx` | `event.status === 'finalized'` | 寫入全禁 |
 | 已點名…尚未送出（復原 toast） | `staff/StaffCheckIn.tsx` | `pendingName` + `undo()` | — |
 | PIN 登入 | `staff/StaffLogin.tsx` | 6 碼 pad；423 鎖定 | `POST /api/staff/login` |
-| 列印備援清單 | `staff/print/*` | — | `/staff/print` |
 
 ## 管理員後台
 
@@ -54,6 +53,7 @@
 | 名單匯入（CSV upload→preview→apply） | `admin/import/MemberImport.tsx` | totals；preview/apply | `POST /api/admin/members/import/{preview,apply}` |
 | 牧養關懷（待處理列→結案 dialog→已處理） | `admin/pastoral/PastoralAlerts.tsx` | `OpenAlertItem` / `ResolvedAlertItem`；resetCounter；備註 200 字 | `POST /api/admin/pastoral/resolve` |
 | 現場 PIN 管理（發 PIN／解鎖） | `admin/staff-pin/StaffPinManager.tsx` | 當週 event；PIN 發行/解鎖 | `POST /api/admin/staff-pin/{issue,unlock}` |
+| 列印點名表（紙本備援） | `admin/print/page.tsx` + `PrintButton.tsx` | `getAdminPrintSheet`：台北日曆當週主日；Staff-safe 列 | `/admin/print`（Wave 1a 由 `/staff/print` 搬入，不再用現場 PIN） |
 | 帳號管理（停用／重設／撤銷） | `admin/accounts/AdminAccounts.tsx` | admin 帳號列 | `POST /api/admin/accounts/{disable,reset-password,revoke-sessions}` |
 
 **不畫（mockup 有、後端無）**：本週概覽統計、本週車位設定、稽核記錄頁、停車樣態分析、P2 approve/reject 動作、P1 全職同工管理／標記本週不停。

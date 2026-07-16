@@ -5,14 +5,17 @@ import { usePathname } from 'next/navigation'
 import LogoutButton from './LogoutButton'
 
 // Persistent back-office nav (Slice 3.5 follow-up). Routes are unchanged — this is a
-// shared shell over the existing 8 admin pages, not an SPA. Rendered only when the
+// shared shell over the existing admin pages, not an SPA. Rendered only when the
 // layout has a session; it does NOT gate auth (pages/APIs keep their own checks).
+// print:hidden on the shell: no admin page should print its navigation, and /admin/print
+// is a paper sheet that must come out clean.
 const NAV: Array<{ href: string; label: string; icon: string }> = [
   { href: '/admin/bindings', label: '綁定審核', icon: '🔗' },
   { href: '/admin/members', label: '會友管理', icon: '👥' },
   { href: '/admin/accounts', label: '帳號管理', icon: '⚙️' },
   { href: '/admin/eligibility', label: '資格審查', icon: '🏷️' },
   { href: '/admin/import', label: '名單匯入', icon: '📥' },
+  { href: '/admin/print', label: '列印點名表', icon: '🖨' },
   { href: '/admin/ops', label: '營運狀態', icon: '📊' },
   { href: '/admin/pastoral', label: '牧養關懷', icon: '💚' },
   { href: '/admin/staff-pin', label: '現場 PIN 管理', icon: '🔑' },
@@ -30,7 +33,7 @@ export default function AdminSidebar({ username }: { username: string }) {
   const pathname = usePathname()
   const homeActive = pathname === '/admin'
   return (
-    <div className="sticky top-0 z-20 flex flex-col border-b border-border bg-surface lg:h-dvh lg:w-56 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+    <div className="sticky top-0 z-20 flex flex-col border-b border-border bg-surface print:hidden lg:h-dvh lg:w-56 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
       {/* brand + username (mobile: logout shares this row) */}
       <div className="flex items-center justify-between gap-3 px-4 py-3">
         <div className="min-w-0">

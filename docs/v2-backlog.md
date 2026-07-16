@@ -11,7 +11,7 @@
 - **第一版（Slice 1）已上線**：清單 / 車牌後四碼搜尋 / 一鍵點名 / 補點名（含實機 DB E2E）。
 - **v2 P1 walk-in 現場登記：✅ 已完成（2026-06-30）**，見 handoff §6.6。
 - **v2 P2 穩定度（誤點復原 + 離線只讀）：✅ 已完成（2026-06-30）**，見 handoff §6.7。
-- **v2 Stability Slice B 紙本備援清單（`/staff/print`）：✅ 已完成（2026-06-30）**，見 handoff §6.8。
+- **v2 Stability Slice B 紙本備援清單：✅ 已完成（2026-06-30）**，見 handoff §6.8。⚠️ 當時路徑 `/staff/print`，**Wave 1a（triage #23）已搬至 `/admin/print`**（改 admin gate；本檔以下敘述為當時規劃）。
 - **v2 結束當週點名（settle route + UI）：✅ 已完成（2026-06-30）**，見 handoff §6.9。
 - **v2 真 PIN session（per-event PIN + 鎖定/過期 + event 綁定）：✅ 已完成（2026-06-30）**，見 handoff §6.10。
 - **v2 weekly_events finalize（結束整週 + 擋寫入）：✅ 已完成（2026-06-30）**，見 handoff §6.11。
