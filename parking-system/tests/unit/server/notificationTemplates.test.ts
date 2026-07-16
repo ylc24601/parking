@@ -88,6 +88,20 @@ describe('renderTemplate', () => {
     for (const t of [late, byUser]) expect(t).not.toMatch(/罰|penalty|逾期|名字|車牌/)
   })
 
+  // triage #25: the LINE webhook is capture-only and drops replies, so a "回覆…" instruction
+  // is a dead command. Both action templates must route the member to the member page instead
+  // (the offer-confirm / on-the-way buttons live there). Forbid ANY 回覆 wording so future
+  // rewrites can't silently reintroduce a dead reply command (covers the tail too).
+  it.each([
+    ['offer_2hr_confirm', { expires_at: '2026-06-20T02:00:00Z' }, '確認保留車位'],
+    ['p2_arrival_reminder', { sunday_date: '2026-06-21' }, '我正在路上'],
+  ] as const)('%s directs members to the member page instead of replying', (key, payload, action) => {
+    const text = renderTemplate(key, payload)
+    expect(text).not.toContain('回覆')
+    expect(text).toContain('會員頁面')
+    expect(text).toContain(action)
+  })
+
   it('throws on an unknown template_key', () => {
     expect(() => renderTemplate('totally_unknown_key', {})).toThrow(/unknown template_key/)
   })
