@@ -952,17 +952,21 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 0（正式資料匯入 #20／#21／#22）
+### Current HEAD 最近驗證：Wave 0.1（P2 application group consistency）
 
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `npm test`（不接 DB） | ✅ **943 passed / 175 skipped** |
-| `npm run db:reset` | ✅ 套用 `0001–0029` + seed |
-| `npm run db:verify` | ✅ all assertions passed |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1118 passed**（112 檔全過） |
+| `npm test`（不接 DB） | ✅ **956 passed / 175 skipped** |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1131 passed**（112 檔全過） |
 | `npm run build` | ✅ 全 route 編譯 |
+| DB schema | 本刀無 migration（仍 `0001–0029`） |
+
+> Wave 0.1＝`p2_application` 群組一致性：同手機多列不再由 `rows[0]` 靜默決定資格。規則——`reason_type` 須一致；`remarks` **只需導出的 `isPregnancy()` 旗標一致**（逐字可不同）；`application_date` 正規化後忽略空白、非空白須一致；眷屬以 `(kind,name)` 合併、空白由唯一有效值補足。**非空白但無法解析的日期在 `validateRow` 即擋下**（成為 row error → 由 Wave 0 的 row-completeness taint 整組），故「填錯日期」不會被誤讀成「沒提供日期→待覆核」。
+> 報表一般化：`priorityConflicts` → **`groupConflicts {phone, field, subject?, values}`**（涵蓋兩 profile，`values` 一律 canonical、不含原始備註）；每人一次只報第一項，順序 `reason_type → pregnancy → application_date → dependent_birthdate`。
+
+> 前兩刀：Wave 0（#20/#21/#22＋migration `0029`）非 DB 943 / 全套 1118 / `db:verify` PASS；Wave -1（文件與通知 correctness）非 DB 906、無 DB 變更。
 
 > Wave 0＝中文表頭對照＋兩格式自動辨識（`ambiguous_profile` fail-closed）＋一般名冊匯入（P1/P3 免資格）＋手機容錯。
 > **migration `0029`**：`import_member` 的 eligibility 改為 `p_reason IS NOT NULL` 才寫；P1/P3 只建 user+vehicles、**永不撤銷既有 P2**（回 `retained_p2` 供報表警示）。

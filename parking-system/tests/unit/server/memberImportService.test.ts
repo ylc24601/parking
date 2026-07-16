@@ -74,13 +74,22 @@ describe('importMembersFromCsvText — profiles', () => {
     expect(report.plateConflicts).toHaveLength(0) // distinct from the DB-conflict list
   })
 
-  it('same phone with inconsistent priority → whole member skipped (priorityConflicts)', async () => {
+  it('same phone with inconsistent priority → whole member skipped (groupConflicts)', async () => {
     const csv = '姓名,手機,車牌,優先序,P2事由\n甲,0912345678,AAA1111,P2,長者同行\n甲,0912345678,BBB2222,P3,'
     const { repo, calls } = mockRepo()
     const report = await importMembersFromCsvText({ csvText: csv, dryRun: true, now: NOW }, repo)
     expect(calls).toHaveLength(0)
-    expect(report.priorityConflicts).toHaveLength(1)
-    expect([...report.priorityConflicts[0].priorities].sort()).toEqual(['P2', 'P3'])
+    expect(report.groupConflicts).toEqual([{ phone: '0912345678', field: 'priority', values: ['P2', 'P3'] }])
+  })
+
+  it('same phone with inconsistent roster 事由 → groupConflicts field reason_label', async () => {
+    const csv = '姓名,手機,車牌,優先序,P2事由\n甲,0912345678,AAA1111,P2,長者同行\n甲,0912345678,BBB2222,P2,孕婦'
+    const { repo, calls } = mockRepo()
+    const report = await importMembersFromCsvText({ csvText: csv, dryRun: true, now: NOW }, repo)
+    expect(calls).toHaveLength(0)
+    expect(report.groupConflicts).toEqual([
+      { phone: '0912345678', field: 'reason_label', values: ['elderly_companion', 'pregnancy'] },
+    ])
   })
 
   it('row-completeness: one valid + one invalid row for a phone → whole member skipped', async () => {
@@ -108,5 +117,150 @@ describe('importMembersFromCsvText — profiles', () => {
     const report = await importMembersFromCsvText({ csvText: csv, dryRun: false, now: NOW }, repo)
     expect(report.p2Retained).toEqual([{ phone: '0912345678' }])
     expect(report.updated).toBe(1)
+  })
+})
+
+// Wave 0.1 — a p2_application member spanning several rows (one per vehicle) must derive its
+// eligibility from the WHOLE group; rows[0] must never decide, and bad input must never be
+// silently swallowed as a missing value.
+describe('importMembersFromCsvText — p2_application group consistency', () => {
+  const HEAD = '申請日期,申請人姓名,車牌號碼,手機號碼,申請原因,行動不便者姓名,備註,孩童姓名1,孩童生日1'
+  // date,name,plate,phone,reason,impaired,remarks,child1,child1bd
+  const row = (o: Partial<Record<'date' | 'plate' | 'reason' | 'impaired' | 'remarks' | 'child' | 'childBd', string>>) =>
+    [o.date ?? '2026-01-05', '王', o.plate ?? 'AAA1111', '0912345678', o.reason ?? '2',
+      o.impaired ?? '王', o.remarks ?? '', o.child ?? '', o.childBd ?? ''].join(',')
+  const csvOf = (...rows: string[]) => [HEAD, ...rows].join('\n')
+
+  it('inconsistent 申請原因 → groupConflicts reason_type, member skipped', async () => {
+    const { repo, calls } = mockRepo()
+    const report = await importMembersFromCsvText(
+      { csvText: csvOf(row({ reason: '2' }), row({ plate: 'BBB2222', reason: '1' })), dryRun: true, now: NOW }, repo)
+    expect(calls).toHaveLength(0)
+    expect(report.groupConflicts).toEqual([{ phone: '0912345678', field: 'reason_type', values: ['1', '2'] }])
+  })
+
+  it('申請日期 present but unparseable → row error and the WHOLE member is skipped', async () => {
+    const { repo, calls } = mockRepo()
+    const report = await importMembersFromCsvText(
+      { csvText: csvOf(row({ date: '2026-01-05' }), row({ plate: 'BBB2222', date: '2026-99-99' })), dryRun: true, now: NOW }, repo)
+    expect(calls).toHaveLength(0) // must NOT silently fall back to the valid row's date
+    expect(report.validationErrors.some(v => v.errors.some(e => e.startsWith('invalid application_date')))).toBe(true)
+  })
+
+  it('the same day written two ways is consistent → imported with that date (+6 months)', async () => {
+    const { repo, calls } = mockRepo()
+    await importMembersFromCsvText(
+      { csvText: csvOf(row({ date: '2026-01-05' }), row({ plate: 'BBB2222', date: '2026/01/05' })), dryRun: true, now: NOW }, repo)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].validUntil).toBe('2026-07-05') // mobility_short = application_date + 6 months
+  })
+
+  it('blank 申請日期 is filled by the single valid one', async () => {
+    const { repo, calls } = mockRepo()
+    await importMembersFromCsvText(
+      { csvText: csvOf(row({ date: '' }), row({ plate: 'BBB2222', date: '2026-01-05' })), dryRun: true, now: NOW }, repo)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].validUntil).toBe('2026-07-05')
+  })
+
+  it('two different valid 申請日期 → groupConflicts application_date', async () => {
+    const { repo, calls } = mockRepo()
+    const report = await importMembersFromCsvText(
+      { csvText: csvOf(row({ date: '2026-01-05' }), row({ plate: 'BBB2222', date: '2026-02-01' })), dryRun: true, now: NOW }, repo)
+    expect(calls).toHaveLength(0)
+    expect(report.groupConflicts).toEqual([
+      { phone: '0912345678', field: 'application_date', values: ['2026-01-05', '2026-02-01'] },
+    ])
+  })
+
+  it('reason 3: derived pregnancy flag disagrees → conflict reporting only controlled labels', async () => {
+    const { repo, calls } = mockRepo()
+    const report = await importMembersFromCsvText({
+      csvText: csvOf(
+        row({ reason: '3', remarks: '懷孕', impaired: '' }),
+        row({ plate: 'BBB2222', reason: '3', remarks: '', impaired: '', child: '小明', childBd: '2022-03-01' }),
+      ), dryRun: true, now: NOW,
+    }, repo)
+    expect(calls).toHaveLength(0)
+    expect(report.groupConflicts).toEqual([{ phone: '0912345678', field: 'pregnancy', values: ['孕婦', '非孕婦'] }])
+    // the raw remarks must never leak into the report values
+    expect(JSON.stringify(report.groupConflicts)).not.toContain('懷孕')
+  })
+
+  it('reason 3: remarks differing verbatim but both non-pregnancy is NOT a conflict', async () => {
+    const { repo, calls } = mockRepo()
+    const report = await importMembersFromCsvText({
+      csvText: csvOf(
+        row({ reason: '3', remarks: '第一台車', impaired: '', child: '小明', childBd: '2022-03-01' }),
+        row({ plate: 'BBB2222', reason: '3', remarks: '第二台車', impaired: '', child: '小明', childBd: '2022-03-01' }),
+      ), dryRun: true, now: NOW,
+    }, repo)
+    expect(report.groupConflicts).toHaveLength(0)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].reason).toBe('child_companion')
+  })
+
+  it('a dependent with a blank birthdate on one row is filled by the valid one', async () => {
+    const { repo, calls } = mockRepo()
+    await importMembersFromCsvText({
+      csvText: csvOf(
+        row({ reason: '3', impaired: '', child: '小明', childBd: '' }),
+        row({ plate: 'BBB2222', reason: '3', impaired: '', child: '小明', childBd: '2022-03-01' }),
+      ), dryRun: true, now: NOW,
+    }, repo)
+    expect(calls[0].dependents).toEqual([{ kind: 'child', name: '小明', birthdate: '2022-03-01' }])
+    expect(calls[0].validUntil).toBe('2027-03-01') // child birthdate + 5 years
+  })
+
+  it('the same dependent birthday written two ways collapses to one', async () => {
+    const { repo, calls } = mockRepo()
+    await importMembersFromCsvText({
+      csvText: csvOf(
+        row({ reason: '3', impaired: '', child: '小明', childBd: '2022-03-01' }),
+        row({ plate: 'BBB2222', reason: '3', impaired: '', child: '小明', childBd: '2022/03/01' }),
+      ), dryRun: true, now: NOW,
+    }, repo)
+    expect(calls[0].dependents).toEqual([{ kind: 'child', name: '小明', birthdate: '2022-03-01' }])
+  })
+
+  it('one dependent with two different birthdates → conflict naming the dependent', async () => {
+    const { repo, calls } = mockRepo()
+    const report = await importMembersFromCsvText({
+      csvText: csvOf(
+        row({ reason: '3', impaired: '', child: '小明', childBd: '2022-03-01' }),
+        row({ plate: 'BBB2222', reason: '3', impaired: '', child: '小明', childBd: '2023-05-02' }),
+      ), dryRun: true, now: NOW,
+    }, repo)
+    expect(calls).toHaveLength(0) // must not silently take max() and extend valid_until
+    expect(report.groupConflicts).toEqual([{
+      phone: '0912345678', field: 'dependent_birthdate', subject: 'child／小明',
+      values: ['2022-03-01', '2023-05-02'],
+    }])
+  })
+
+  it('a dependent birthdate present but unparseable → whole member skipped', async () => {
+    const { repo, calls } = mockRepo()
+    const report = await importMembersFromCsvText({
+      csvText: csvOf(
+        row({ reason: '3', impaired: '', child: '小明', childBd: '2022-03-01' }),
+        row({ plate: 'BBB2222', reason: '3', impaired: '', child: '小明', childBd: '2022-99-99' }),
+      ), dryRun: true, now: NOW,
+    }, repo)
+    expect(calls).toHaveLength(0)
+    expect(report.validationErrors.some(v => v.errors.some(e => e.startsWith('invalid child_1_birthdate')))).toBe(true)
+  })
+
+  it('regression: a consistent multi-vehicle member still imports with deduped dependents', async () => {
+    const { repo, calls } = mockRepo()
+    const report = await importMembersFromCsvText({
+      csvText: csvOf(
+        row({ reason: '3', impaired: '', child: '小明', childBd: '2022-03-01' }),
+        row({ plate: 'BBB2222', reason: '3', impaired: '', child: '小明', childBd: '2022-03-01' }),
+      ), dryRun: true, now: NOW,
+    }, repo)
+    expect(report.groupConflicts).toHaveLength(0)
+    expect(calls).toHaveLength(1)
+    expect([...calls[0].plates].sort()).toEqual(['AAA1111', 'BBB2222'])
+    expect(calls[0].dependents).toHaveLength(1) // one child, not two
   })
 })

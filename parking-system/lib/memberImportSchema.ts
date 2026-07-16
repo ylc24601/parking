@@ -70,6 +70,28 @@ export const PROFILE_REQUIRED_HEADERS: Record<ImportProfile, readonly string[]> 
   roster: ['applicant_name', 'mobile_phone', 'license_plate', 'priority'],
 }
 
+// One member (canonical phone) may span several rows — one per vehicle. When those rows disagree on
+// a field that decides the member's eligibility, the import fails that member closed rather than
+// letting row order pick a winner. This is the single mechanism for BOTH profiles.
+export type GroupConflictField =
+  | 'priority'            // roster: P1/P2/P3 disagree
+  | 'reason_label'        // roster: P2 事由 disagrees
+  | 'reason_type'         // p2_application: 申請原因 disagrees
+  | 'application_date'    // p2_application: two different (valid) 申請日期
+  | 'pregnancy'           // p2_application reason 3: derived isPregnancy() flag disagrees
+  | 'dependent_birthdate' // p2_application: one dependent with two different birthdates
+
+// UI labels for the conflict list. UI-only — the CLI just counts conflicts, so it does not import
+// this map. Conflict `values` are always CANONICAL (never raw free text such as remarks).
+export const GROUP_CONFLICT_FIELD_LABEL: Record<GroupConflictField, string> = {
+  priority: '優先序',
+  reason_label: 'P2事由',
+  reason_type: '申請原因',
+  application_date: '申請日期',
+  pregnancy: '孕婦判定',
+  dependent_birthdate: '眷屬生日',
+}
+
 // Normalize one raw header cell → canonical field_name: strip BOM, fold full-width spaces to
 // ASCII, trim, then map through HEADER_ALIASES. A header that is already canonical (or truly
 // unknown) maps to itself. Pure string logic → safe to run in either a client or the parser.

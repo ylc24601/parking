@@ -41,10 +41,9 @@
 - [x] #22 匯入手機容錯 — **Wave 0 完成**
   - Gate：9 碼補前置 `0`、**科學記號拒絕並提示**、測試涵蓋全部
   - Source：feature-triage.md #22
-- [ ] **Wave 0.1｜P2 application group consistency（correctness follow-up）**
-  - 問題：同一 canonical phone 多列時，`p2_application` 仍由 **`rows[0]` 靜默決定資格**（Wave 0 外部審查發現；非本刀回歸，既有行為，計畫明列「p2_application 維持現行邏輯不變」故未動）。roster 已有群組一致性，此 profile 尚無。
-  - Gate：定義並實作 `reason_type`／`remarks`／`application_date`／`dependents` 的**一致與合併規則**；任何矛盾 **fail closed**（整位跳過並回報），不由列順序決定資格。需釐清：reason_type 是否須逐列一致／remarks 只需導出的 canonical reason 一致或逐字一致／application_date 不一致採哪個／多列 dependents 合併規則／pregnancy 與 child_companion 判定。
-  - 時機：**正式 P2 CSV 匯入前**處理；**獨立 plan、獨立 commit**（非順手一行）。
+- [x] **Wave 0.1｜P2 application group consistency（correctness follow-up）** — **完成**
+  - 定案規則：`reason_type` 須全列一致；`remarks` **只需導出的 `isPregnancy()` 旗標一致**（逐字可不同——remarks 只經 `isPregnancy()` 生效、且只在 reason 3）；`application_date` 正規化後**忽略空白、非空白須一致**；眷屬以 `(kind,name)` 合併、空白由唯一有效值補足、不同有效值 ⇒ 衝突。**任何非空白但無法解析的日期在 `validateRow` 即擋下**（→ row-completeness taint 整組），故填錯不會被誤讀成缺值。
+  - 報表：`priorityConflicts` → `groupConflicts {phone, field, subject?, values}`（兩 profile 共用；`values` 一律 canonical，不含原始備註）；每人一次只報第一項，順序 `reason_type → pregnancy → application_date → dependent_birthdate`。
   - Source：Wave 0 code-review finding
 - [ ] #23 點名備援清單搬 admin
   - Gate：新增 `/admin/print`（gate `getAdminSession`）；`/staff/print` 移除且測試確認 staff PIN 不再能取列印資料
