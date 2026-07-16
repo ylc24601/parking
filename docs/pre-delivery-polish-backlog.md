@@ -32,15 +32,20 @@
 
 ## 交付前必修（delivery blockers）
 
-- [ ] #20 匯入中文 header＋reason 對照
+- [x] #20 匯入中文 header＋reason 對照 — **Wave 0 完成**
   - Gate：中文→canonical 集中單一 `REASON_ALIASES`；未知值 preview 錯誤要人工選、不 silently map
   - Source：feature-triage.md #20
-- [ ] #21 簡易全體會友匯入
+- [x] #21 簡易全體會友匯入 — **Wave 0 完成**
   - Gate：重用既有 `memberImportService`（preview/conflict/apply）、兩模式共存有測試
   - Source：feature-triage.md #21
-- [ ] #22 匯入手機容錯
+- [x] #22 匯入手機容錯 — **Wave 0 完成**
   - Gate：9 碼補前置 `0`、**科學記號拒絕並提示**、測試涵蓋全部
   - Source：feature-triage.md #22
+- [ ] **Wave 0.1｜P2 application group consistency（correctness follow-up）**
+  - 問題：同一 canonical phone 多列時，`p2_application` 仍由 **`rows[0]` 靜默決定資格**（Wave 0 外部審查發現；非本刀回歸，既有行為，計畫明列「p2_application 維持現行邏輯不變」故未動）。roster 已有群組一致性，此 profile 尚無。
+  - Gate：定義並實作 `reason_type`／`remarks`／`application_date`／`dependents` 的**一致與合併規則**；任何矛盾 **fail closed**（整位跳過並回報），不由列順序決定資格。需釐清：reason_type 是否須逐列一致／remarks 只需導出的 canonical reason 一致或逐字一致／application_date 不一致採哪個／多列 dependents 合併規則／pregnancy 與 child_companion 判定。
+  - 時機：**正式 P2 CSV 匯入前**處理；**獨立 plan、獨立 commit**（非順手一行）。
+  - Source：Wave 0 code-review finding
 - [ ] #23 點名備援清單搬 admin
   - Gate：新增 `/admin/print`（gate `getAdminSession`）；`/staff/print` 移除且測試確認 staff PIN 不再能取列印資料
   - Source：feature-triage.md #23
