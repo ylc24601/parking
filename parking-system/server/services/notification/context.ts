@@ -7,8 +7,9 @@ import type { OutboxRow, ParkingRepository } from '@/server/repositories/parking
 // and nothing else, so the message is a snapshot of the moment it was queued. A member who swaps
 // their vehicle after being approved should still see the plate they applied with.
 //
-// This is the single authority for `sunday_date` / `license_plate` in a payload: it overwrites
-// whatever a producer may have put there, and it STRIPS `license_plate` from templates that
+// This is the single authority for `sunday_date` / `license_plate` in a payload: it drops both
+// and re-adds only what it confirmed, so a producer can neither pre-empt it nor leave a stale
+// value behind when a lookup fails soft. It also strips `license_plate` from templates that
 // don't render one — data the message won't show has no business sitting in
 // notification_outbox.payload_json, which nothing purges yet.
 
@@ -112,11 +113,16 @@ export async function withNotificationContext(
     const plateAllowed = has(PLATE_TEMPLATES, row.template_key)
     const plate = plateAllowed && row.reservation_id ? plates.get(row.reservation_id) : undefined
 
-    // Drop any inherited plate before re-adding the resolved one. Dropping it unconditionally
-    // (not just for the templates that don't render one) is what makes this the authority: a
-    // template that shows no plate never persists one, and a template that does can never show
-    // a stale value the lookup didn't confirm.
+    // Drop BOTH context keys before re-adding whatever was actually confirmed. Dropping them
+    // unconditionally is what makes this the authority: a template that shows neither never
+    // persists one, and a template that does can never show a value the lookup didn't confirm.
+    //
+    // The date matters as much as the plate here. When the decorative event lookup fails soft,
+    // ctx.sundayDate is null — and a producer-written sunday_date left in place would then be an
+    // unverified date rendered as fact, instead of the honest「本週」fallback. No producer writes
+    // one today, but p2ReminderService did until this very slice, so treat it as reachable.
     const base = { ...row.payload }
+    delete base.sunday_date
     delete base.license_plate
 
     return {
