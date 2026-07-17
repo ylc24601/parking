@@ -7,6 +7,7 @@ import {
   revokeAdminSessions,
 } from '@/server/services/adminAccountService'
 import type { AdminAccountListRow, AdminAccountRow } from '@/server/repositories/parkingRepository'
+import type { AuditActor } from '@/server/services/auditContext'
 
 function run(over: Partial<MockRepo> = {}) {
   const repo = makeMockRepo(over)
@@ -35,7 +36,18 @@ const accountRow = (over: Partial<AdminAccountRow> = {}): AdminAccountRow => ({
 
 const SELF = 'self-admin-id'
 const TARGET = 'target-admin-id'
+const SESSION = 'self-session-id'
+const REQ = 'req-id-0001'
 const NOW = new Date('2026-07-12T00:00:00Z')
+
+// The audited surface (0030) takes a typed actor rather than a bare id, so the
+// service can never be handed an admin id with no session behind it.
+const ACTOR: AuditActor = {
+  actorType: 'admin',
+  actorId: SELF,
+  actorSessionId: SESSION,
+  actorRoleSnapshot: null,
+}
 
 describe('listAdmins', () => {
   it('derives active/disabled/locked status and never exposes password_hash', async () => {
@@ -58,41 +70,57 @@ describe('setAdminDisabled', () => {
   it('self-target → cannot_target_self, repo never called', async () => {
     const setDisabled = vi.fn(async () => ({ ok: true }))
     const { r } = run({ setAdminDisabled: setDisabled })
-    const res = await setAdminDisabled({ targetId: SELF, actingAdminId: SELF, disabled: true }, r, NOW)
+    const res = await setAdminDisabled({ targetId: SELF, actor: ACTOR, disabled: true, requestId: REQ }, r, NOW)
     expect(res).toEqual({ ok: false, reason: 'cannot_target_self' })
     expect(setDisabled).not.toHaveBeenCalled()
   })
 
   it('passes through not_found from the repo/RPC', async () => {
     const { r } = run({ setAdminDisabled: vi.fn(async () => ({ ok: false, reason: 'not_found' })) })
-    const res = await setAdminDisabled({ targetId: TARGET, actingAdminId: SELF, disabled: true }, r, NOW)
+    const res = await setAdminDisabled({ targetId: TARGET, actor: ACTOR, disabled: true, requestId: REQ }, r, NOW)
     expect(res).toEqual({ ok: false, reason: 'not_found' })
   })
 
   it('passes through last_active_admin from the repo/RPC', async () => {
     const { r } = run({ setAdminDisabled: vi.fn(async () => ({ ok: false, reason: 'last_active_admin' })) })
-    const res = await setAdminDisabled({ targetId: TARGET, actingAdminId: SELF, disabled: true }, r, NOW)
+    const res = await setAdminDisabled({ targetId: TARGET, actor: ACTOR, disabled: true, requestId: REQ }, r, NOW)
     expect(res).toEqual({ ok: false, reason: 'last_active_admin' })
   })
 
   it('disable success calls the repo with disabled:true and the acting admin id', async () => {
     const setDisabled = vi.fn(async () => ({ ok: true }))
     const { repo, r } = run({ setAdminDisabled: setDisabled })
-    const res = await setAdminDisabled({ targetId: TARGET, actingAdminId: SELF, disabled: true }, r, NOW)
+    const res = await setAdminDisabled({ targetId: TARGET, actor: ACTOR, disabled: true, requestId: REQ }, r, NOW)
     expect(res).toEqual({ ok: true })
     expect(repo.setAdminDisabled).toHaveBeenCalledWith({
-      targetId: TARGET, actingAdminId: SELF, disabled: true, nowIso: NOW.toISOString(),
+      targetId: TARGET, actingAdminId: SELF, actingSessionId: SESSION, requestId: REQ,
+      disabled: true, nowIso: NOW.toISOString(),
     })
   })
 
   it('enable success calls the repo with disabled:false', async () => {
     const setDisabled = vi.fn(async () => ({ ok: true }))
     const { repo, r } = run({ setAdminDisabled: setDisabled })
-    const res = await setAdminDisabled({ targetId: TARGET, actingAdminId: SELF, disabled: false }, r, NOW)
+    const res = await setAdminDisabled({ targetId: TARGET, actor: ACTOR, disabled: false, requestId: REQ }, r, NOW)
     expect(res).toEqual({ ok: true })
     expect(repo.setAdminDisabled).toHaveBeenCalledWith(
       expect.objectContaining({ disabled: false }),
     )
+  })
+
+  // The audit row is written by the RPC inside the business transaction, so the
+  // service must never be able to report success on an actor it cannot attribute.
+  // Falling back to a system/anonymous actor here would let a threading bug produce
+  // a disable that the log cannot pin on anyone.
+  it('refuses an actor that is not an admin with a session, without touching the repo', async () => {
+    const setDisabled = vi.fn(async () => ({ ok: true }))
+    const { r } = run({ setAdminDisabled: setDisabled })
+    const sessionless: AuditActor = { ...ACTOR, actorSessionId: null }
+
+    await expect(
+      setAdminDisabled({ targetId: TARGET, actor: sessionless, disabled: true, requestId: REQ }, r, NOW),
+    ).rejects.toThrow(/admin actor/)
+    expect(setDisabled).not.toHaveBeenCalled()
   })
 })
 

@@ -516,7 +516,9 @@ end $$;
 -- ── 31. Admin account management RPCs (Phase 8 Slice 3) ─────────────────────
 do $$
 begin
-  if not has_function_privilege('service_role', 'set_admin_disabled(uuid,uuid,boolean,timestamptz)', 'execute') then
+  -- Signature gained p_acting_session_id + p_request_id when 0030 made this the
+  -- audited exemplar; assertion 34 pins the audit-specific properties.
+  if not has_function_privilege('service_role', 'set_admin_disabled(uuid,uuid,uuid,boolean,timestamptz,uuid)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on set_admin_disabled';
   end if;
   if not has_function_privilege('service_role', 'reset_admin_password(uuid,uuid,text)', 'execute') then
@@ -581,6 +583,115 @@ begin
   end if;
 
   raise notice 'PASS: pastoral resolution columns/constraints/RPC + staff-PIN admin audit present';
+end $$;
+
+-- ── 34. Audit substrate: append-only + unforgeable by the app (Wave 2A-1 / #15) ──
+-- These assertions exist because every one of them is a guarantee something else
+-- now depends on, and each could be silently undone by an ordinary-looking future
+-- migration (a blanket re-grant, a `create or replace` that drops SECURITY DEFINER,
+-- a helper made callable "just for testing").
+do $$
+declare
+  v_helper_sig text :=
+    'private.append_audit_log(audit_actor_type,uuid,uuid,text,text,text,uuid,uuid,uuid,audit_result,jsonb)';
+  v_rpc_sig    text := 'set_admin_disabled(uuid,uuid,uuid,boolean,timestamptz,uuid)';
+  v_priv       text;
+begin
+  -- The app principal may READ the log and nothing else. TRUNCATE is listed
+  -- explicitly: it is not covered by DELETE and it never fires a row-level trigger.
+  foreach v_priv in array array['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] loop
+    if has_table_privilege('service_role', 'audit_logs', v_priv) then
+      raise exception 'FAIL: service_role must not hold % on audit_logs', v_priv;
+    end if;
+  end loop;
+  if not has_table_privilege('service_role', 'audit_logs', 'SELECT') then
+    raise exception 'FAIL: service_role lacks SELECT on audit_logs';
+  end if;
+
+  -- The whole point of the private schema: the app cannot reach the writer, so it
+  -- cannot forge a row even though it can call the RPCs that legitimately write one.
+  if has_schema_privilege('service_role', 'private', 'usage') then
+    raise exception 'FAIL: service_role must not hold USAGE on schema private';
+  end if;
+  foreach v_priv in array array['service_role', 'anon', 'authenticated', 'public'] loop
+    if has_function_privilege(v_priv, v_helper_sig, 'execute') then
+      raise exception 'FAIL: % must not execute private.append_audit_log', v_priv;
+    end if;
+  end loop;
+
+  -- SECURITY DEFINER is what lets the audited RPC reach the writer. Its two hazards
+  -- must stay closed: without search_path it is a privilege-escalation vector, and
+  -- without the revoke it would be one reachable by anon through PostgREST.
+  if not exists (select 1 from pg_proc where proname = 'set_admin_disabled' and prosecdef) then
+    raise exception 'FAIL: set_admin_disabled must be SECURITY DEFINER to reach the audit writer';
+  end if;
+  if not exists (
+    select 1 from pg_proc
+     where proname = 'set_admin_disabled'
+       and array_to_string(proconfig, ',') like '%search_path%'
+  ) then
+    raise exception 'FAIL: SECURITY DEFINER set_admin_disabled must pin search_path';
+  end if;
+  foreach v_priv in array array['anon', 'authenticated', 'public'] loop
+    if has_function_privilege(v_priv, v_rpc_sig, 'execute') then
+      raise exception 'FAIL: % must not execute set_admin_disabled', v_priv;
+    end if;
+  end loop;
+  if not has_function_privilege('service_role', v_rpc_sig, 'execute') then
+    raise exception 'FAIL: service_role lacks execute on set_admin_disabled';
+  end if;
+
+  -- Only the old 4-arg overload being gone keeps the PostgREST call unambiguous.
+  if exists (
+    select 1 from pg_proc
+     where proname = 'set_admin_disabled'
+       and pg_get_function_identity_arguments(oid) = 'uuid, uuid, boolean, timestamptz'
+  ) then
+    raise exception 'FAIL: the pre-audit set_admin_disabled overload still exists';
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'audit_logs_actor_shape_ck') then
+    raise exception 'FAIL: audit_logs_actor_shape_ck missing';
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+     where table_name = 'audit_logs' and column_name = 'request_id' and is_nullable = 'YES'
+  ) then
+    raise exception 'FAIL: audit_logs.request_id must be NOT NULL';
+  end if;
+
+  raise notice 'PASS: audit substrate is append-only, app-unforgeable, and shape-constrained';
+end $$;
+
+-- ── 34b. The trigger layer holds even if the grants are undone ───────────────────
+-- Layer 1 (the revoke above) is the primary control, so a naive test would pass
+-- purely on "permission denied" and never reach the triggers. This grants DML back
+-- to prove the second layer independently — which is the layer that survives a
+-- future migration repeating 0004's blanket `grant ... on all tables`.
+do $$
+declare
+  v_blocked int := 0;
+begin
+  grant insert, update, delete, truncate on audit_logs to service_role;
+  set local role service_role;
+
+  begin
+    update audit_logs set action = 'tampered.row';
+    raise exception 'FAIL: UPDATE on audit_logs was allowed once granted';
+  exception when insufficient_privilege then v_blocked := v_blocked + 1;
+  end;
+
+  begin
+    delete from audit_logs;
+    raise exception 'FAIL: DELETE on audit_logs was allowed once granted';
+  exception when insufficient_privilege then v_blocked := v_blocked + 1;
+  end;
+
+  reset role;
+  if v_blocked <> 2 then
+    raise exception 'FAIL: expected UPDATE and DELETE to be trigger-blocked, got %', v_blocked;
+  end if;
+  raise notice 'PASS: audit_logs triggers block mutation even when DML is granted';
 end $$;
 
 rollback;

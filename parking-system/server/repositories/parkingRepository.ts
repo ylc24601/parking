@@ -700,11 +700,17 @@ export interface ParkingRepository {
   // (when disabling) + session revoke (on BOTH disable and enable — re-enabling
   // also forces re-login so a missed session-delete during a prior disable can't
   // let a stale cookie come back to life).
+  // The actor/requestId pair is not bookkeeping: 0030's RPC writes the audit row
+  // inside this same transaction, so the change and its log commit or roll back
+  // together. There is deliberately no insertAuditLog() on this interface — its
+  // existence would invite a second, non-atomic write after the mutation.
   setAdminDisabled(args: {
     targetId: string
     actingAdminId: string
+    actingSessionId: string
     disabled: boolean
     nowIso: string
+    requestId: string
   }): Promise<{ ok: boolean; reason?: string }>
   // Wraps reset_admin_password (0026): atomic hash update + failed_attempts/locked_at
   // clear + session revoke. Receives only the already-hashed password; never sees
@@ -1765,12 +1771,14 @@ export function createParkingRepository(
       }))
     },
 
-    async setAdminDisabled({ targetId, actingAdminId, disabled, nowIso }) {
+    async setAdminDisabled({ targetId, actingAdminId, actingSessionId, disabled, nowIso, requestId }) {
       const { data, error } = await client.rpc('set_admin_disabled', {
         p_target_id: targetId,
         p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
         p_disabled: disabled,
         p_now: nowIso,
+        p_request_id: requestId,
       })
       if (error) throw new Error(`set_admin_disabled failed: ${error.message}`)
       return data as { ok: boolean; reason?: string }

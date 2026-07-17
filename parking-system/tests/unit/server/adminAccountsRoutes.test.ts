@@ -72,9 +72,21 @@ describe('POST /api/admin/accounts/disable', () => {
     expect(await res.json()).toEqual({ ok: true })
   })
 
-  it('actingAdminId is ALWAYS the session admin id; a smuggled body value is ignored', async () => {
+  it('the audit actor is ALWAYS built from the session; a smuggled body value is ignored', async () => {
     await post(disablePOST, 'disable', { targetId: TARGET_ID, disabled: true, actingAdminId: 'attacker' })
-    expect(setAdminDisabled).toHaveBeenCalledWith({ targetId: TARGET_ID, actingAdminId: 'admin-1', disabled: true })
+    // Same guarantee as before 0030 — the acting identity comes from the session and
+    // nowhere else — now stated against the actor the audit row is written from. If
+    // a body value could reach this, an admin could pin their action on someone else.
+    expect(setAdminDisabled).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: TARGET_ID,
+        disabled: true,
+        actor: { actorType: 'admin', actorId: 'admin-1', actorSessionId: 's1', actorRoleSnapshot: null },
+      }),
+    )
+    const { actor, requestId } = (setAdminDisabled as Mock).mock.calls[0][0]
+    expect(JSON.stringify(actor)).not.toContain('attacker')
+    expect(requestId).toMatch(/^[0-9a-f-]{36}$/)   // generated per request, never from the body
   })
 
   it.each([
