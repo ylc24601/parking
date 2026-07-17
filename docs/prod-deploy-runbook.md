@@ -534,17 +534,34 @@ the live demo member here and is removed in §12.3.
 **Step 0 — setup.** Verify the 6 synthetic phones (`0900000001`–`06`) and 6 plates
 (`DEMO01`–`06`) have **zero** matches in prod `users`/`vehicles` (swap the block if any
 hit). Create the demo event: `npm run job:ensure-event -- --sunday <far-future Sunday>`;
-record its `eventId`. Record the 07-19 event id + status + reservation count. Drop
-effective capacity to 2 **via `/admin/車位設定`** (`/admin/capacity`): set 保留·停用 to 21
-on the demo Sunday, and record the original numbers first.
+record its `eventId`. Record the 07-19 event id + status + reservation count. Set the
+demo event's capacity — **see the blocker below before doing this**.
 
-> Since #14A (migration `0031`) capacity is an Admin-UI operation and hand-written SQL is
-> no longer the way to do it — the UI enforces `可分配 >= 已核准` inside the transaction
-> and writes an audit row, neither of which an `UPDATE` does. The old instruction was
-> `UPDATE weekly_events SET blocked_spaces=21 WHERE id='<demo>'`; it is kept here only so
-> a reader of an older runbook copy knows what replaced it. If the demo Sunday is not the
-> current or next Sunday, the UI will not offer it — use a nearer Sunday, or fall back to
-> SQL knowingly and accept that the guard and the audit row are both skipped. **Record the `outbox-alert` cron job's original settings
+> **Capacity is an Admin-UI operation since #14A (`0031`): `/admin/車位設定`
+> (`/admin/capacity`). Do NOT `UPDATE weekly_events` directly.** Direct SQL skips the
+> `可分配 >= 已核准` guard *and* the audit row — the two controls #14A exists to add — and
+> it can drive effective capacity negative, which makes `computeCapacity` throw and
+> **bricks Friday allocation**. The previous instruction here was
+> `UPDATE weekly_events SET blocked_spaces=21 WHERE id='<demo>'`; it is named only so a
+> reader of an older copy knows it is withdrawn, not as a fallback.
+>
+> ⚠️ **Open blocker for a re-run of this walkthrough.** `/admin/capacity` deliberately
+> offers only the **current and next** Sunday, but §12 requires a **far-future** demo
+> event ("never the real upcoming Sunday" — that is what keeps synthetic members away
+> from real ones). Those two rules do not currently meet, so **there is no audited way to
+> set a far-future event's capacity**, and moving the demo onto the live week to work
+> around it would violate §12's whole premise.
+>
+> The `set_weekly_capacity` RPC itself is **not** Sunday-limited — only the UI is — so the
+> fix is a small ops CLI that calls the same RPC and keeps both controls. It is not
+> written yet because a CLI has no admin session, and the audit shape requires
+> `actor_id` **and** `actor_session_id` for an `admin` actor: the CLI-actor question has
+> to be answered first (the same gap that leaves `scripts/run-binding-approve.ts` passing
+> a null adminId). Until that lands, treat §12.1's capacity step as blocked rather than
+> reaching for SQL. The 2026-07-15 walkthrough predates #14A and was executed under the
+> old instruction.
+
+**Record the `outbox-alert` cron job's original settings
 (enabled / cron / timezone / notification-on-failure / next-run), then pause that cron +
 its failure notification** — synthetic members produce expected `no_line_id` failures
 during the window.
