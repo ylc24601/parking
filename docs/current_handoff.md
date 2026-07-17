@@ -954,7 +954,31 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 2A-2（#15 稽核唯讀頁，PR #39 / squash `d2e6890`）
+### Current HEAD 最近驗證：Wave 2B-1（#14A 車位容量設定，PR #40 / squash `8de24a0`）
+
+| 指令 | 結果 |
+|------|------|
+| `npx tsc --noEmit` / `npx eslint .` | ✅ exit 0 |
+| `npm test`（不接 DB） | ✅ **1165 passed** |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1399 passed**（含新增 37：weekly-capacity 16／capacity-race 3／service 18） |
+| `npm run db:verify` | ✅ **37**（35→37：`capacity_version`＋兩個 CHECK＋`set_weekly_capacity` 簽名/grant/`search_path`） |
+| `verify_schema_prod.sql`（catalog-only） | ✅ **28**（27→28） |
+| `npm run build` | ✅ 路由清單顯示 **`ƒ /admin/capacity`** |
+| 手動實跑（dev + curl，用 `http://[::1]:3000`） | 保留·停用 `0→4` 真的落地；**原值重送＝no-op，不寫任何列、不 bump version**；stale version→**409**；砍到低於 2 個 promised→**422** 且該列未動；`/admin/audit` 顯示 **「修改車位容量 · 可分配：23 → 19」**（非「未知動作」） |
+| DB schema | **migration `0031`**（`0001–0031`） |
+
+> **Wave 2B-1 ＝ 第一支從零寫的 audited governance RPC**（`set_admin_disabled` 是回頭改的），也是 `docs/prod-deploy-runbook.md` 最後一處「叫維運手打 `UPDATE weekly_events`」的終點。
+> - **公式現在刻意存在兩份**。[`0004:5-7`](../parking-system/supabase/migrations/0004_weekly_capacity_view.sql#L5-L7) 明文決定「view 只供 inputs、**不含公式**；算術留在純 `computeCapacity`（**公式單一來源**）」，`deadlines.test.ts:49-51` 還把它釘死。但**跑在 app 的 guard 可被繞過且無法 atomic**，故 RPC 必須用 SQL 重算。兩個決定在各自領域都對 ⇒ 讀取/預覽路徑仍走 `computeCapacity`（`fridayAllocationService:48` 未動），RPC 只為 guard 重算，**唯一的緩解是一份 fixture 表同時驅動兩邊的 parity 測試**（[[dev-lessons-retrospective]] 15：不可默默覆寫既有決定）。
+> - **`temp_approved` 算佔位**。[`0006:26-36`](../parking-system/supabase/migrations/0006_cancellation.sql#L26-L36) 在取消的同一句就把 `waiting` 升為 `temp_approved`，而 `apply_offer_resolution` 之後把它翻成 `approved` **完全不檢查容量** ⇒ 只算 `approved` 會讓管理員在週六 offer 窗開著時砍容量、confirm 當下超賣。DB 測試釘住並攤開差距：`promised=2` 而 `approved` 只有 `1`。
+> - **`COUNT()` 鎖不住還不存在的列**，所以 guard 的強度＝「**每個**會抬高 promised 的路徑都拿同一把 event row lock」這個主張的強度。故**寫入者清單寫進 migration 而非某人腦裡**：唯一淨增的是 `apply_friday_allocation`，它被 `job_runs 'running'` 擋住，而 event-row lock 正是讓那個 `job_runs` 讀數可信的東西（[`0023:14-21`](../parking-system/supabase/migrations/0023_apply_reservation_rpc.sql#L14-L21)：READ COMMITTED 看不見併發中未 commit 的 `'running'` 列）。**三個交錯 transaction 測試**兩面釘住，含最刁的一個：**未 commit** 的 claim 仍會擋下容量變更，而不是對它隱形。這是**協定不是 DB invariant**——未來任何淨增 promised 的路徑必須先拿鎖，否則 guard 會無聲失效。
+> - **`admin_reserved` 摺入 `blocked_spaces`＋`check (admin_reserved = 0)`**（與使用者共同決定）：它本來活在公式裡卻不在 UI 上 ⇒ 只編 `blocked_spaces` 的表單會給出**跟分配器悄悄不一致**的預覽。摺疊**保算術**（每一列、含過去，effective 完全相同；prod-like 資料實證 `23−1−2 → 23−3−0` 皆 20），只失去外賓-vs-停用的歸因，而 triage 早已決定不呈現它。一列 aggregate `system` audit 記錄，`rows_affected` 由 **`GET DIAGNOSTICS` 取自摺疊本身**。
+> - **可編輯狀態是 ALLOWLIST 不是 `<> 'finalized'`**：未來的 `closed`/`archived` 不該因為沒人記得排除就默默可編。未知狀態 fail closed。**哪些拒絕要寫 audit 也釘在 migration**：input/stale（`not_found`、`sunday_mismatch`）不寫；治理拒絕寫 `denied`；lost update 寫 `conflict`。
+> - **否決審查「把 `reserved_staff` 放進 CHECK」**：它**不是欄位**，是 `weekly_staff_allocations` 上的 count（`0004:13-19`），CHECK 不能 subquery。row-local 那半用 CHECK、跨表那半在 RPC 內。**殘留缺口（直接 INSERT staff allocation 可讓 effective 變負）明寫在 migration 而非藏起來**；目前無任何 app code 寫該表。審查要求的各欄非負 CHECK **早就存在**（`0002:10-12`）——引用，不重複。
+> - **兩個 fixture 陷阱值得記住**：① `audit_logs.weekly_event_id` FK `weekly_events` 且 audit 列 append-only ⇒ **被稽核過的 event 永遠刪不掉**（與 `0030` 假設一致，但現在會自我強制）；fixture 改為 reuse＋teardown finalize。② 殘留的 **open** 2099 測試 event 會**默默成為 `getActiveEvent` 的答案**（「最新未 finalized」）並打壞三個不相關 suite。
+> - **runbook 的直接 SQL fallback 是「撤除」不是「改寫」**：§12.1 Step 0 現在明說容量是 Admin UI 操作、**不要**直接 `UPDATE weekly_events`。**未採用審查建議的替代文字**（「改用當週/次週 demo event」）——runbook:521-522 要求 demo event **永遠不是真的下個主日**，那樣寫是為了遷就 UI 範圍而彎曲安全規則。改為**記錄真實狀態＝該步驟 blocked**：`/admin/capacity` 刻意只給當週/次週，§12 需要遠期 event，兩條規則接不上 ⇒ **今天沒有任何 audited 路徑可設遠期容量**。
+> - **未做（follow-up）**：小型 ops CLI 走同一支 RPC（`set_weekly_capacity` **本身不限主日、只有 UI 限**）——卡在 CLI 無 admin session 而 audit 形狀要求 `actor_id` **＋** `actor_session_id`，與 `scripts/run-binding-approve.ts` 傳 null adminId 是同一個缺口，是設計決策不是一支腳本 · 退休 `admin_reserved`（現已可證明為 0，觸及 `0004`／公式簽名／三個測試檔，自成一刀） · 跨表 invariant（`… − reserved_staff >= 0`）需兩張表都上 trigger，歸屬給「讓 `weekly_staff_allocations` 有 app 寫入者」的那一刀。
+
+### 前一刀：Wave 2A-2（#15 稽核唯讀頁，PR #39 / squash `d2e6890`）
 
 | 指令 | 結果 |
 |------|------|
@@ -1111,7 +1135,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 ## 10. 本機開發備忘（重點，詳見 development_plan §12）
 
-- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0030` + seed）/ `db:verify` / `db:stop`。
+- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0031` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
 - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**；**`MEMBER_AUTH_MODE`（`mock`|`liff`；本機用 `mock`，`liff` 另需 `LINE_LOGIN_CHANNEL_ID` + `NEXT_PUBLIC_LIFF_ID`，見 [member-liff-setup.md](member-liff-setup.md)）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**（`NEXT_PUBLIC_LIFF_ID` 例外，非機密）；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。
