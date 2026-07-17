@@ -291,6 +291,24 @@ const ACTIONS: Record<string, AuditActionDefinition> = {
       return [{ label: '歷史紀錄', value: backfilled === '是' ? '已回填' : '未回填（紀錄自此開始）' }]
     },
   },
+  // Wave 2A-3. The purge records itself, but only when it deleted something (0034),
+  // so this row means "the retention sweep actually removed rows". It carries no IDs
+  // and nothing from the deleted rows — only the count and the strict `<` boundary.
+  'audit.retention_purge': {
+    label: '稽核記錄清理',
+    reads: ['deleted_before', 'deleted_count', 'retention_months'],
+    render: metadata => {
+      const count = metadata.deleted_count
+      const before = metadata.deleted_before
+      if (typeof count !== 'number' || typeof before !== 'string') return 'unreadable'
+      // 「清除建立時間早於」mirrors the RPC's strict `<`: rows created before this
+      // instant were removed; this instant itself was kept.
+      return [
+        { label: '清除筆數', value: String(count) },
+        { label: '清除建立時間早於', value: before },
+      ]
+    },
+  },
 }
 
 export const UNKNOWN_ACTION_DETAIL = '詳細資料目前無法顯示'
@@ -302,16 +320,19 @@ export const UNREADABLE_DETAIL = '詳細資料格式無法辨識'
 //    skipping one. A reader must not treat「查不到」as「沒發生」.
 //  · the staff clause — the on-site PIN is a shared per-event credential, so a
 //    staff row names a session, never a person.
-//  · retention — 2A-3 has NOT shipped, so nothing is being deleted yet. A flat
-//    「紀錄保留 24 個月」would claim a deletion control that isn't running, which is
-//    a false PRIVACY claim, not merely an inaccuracy.
+//  · retention — 2A-3 shipped: the monthly purge_audit_logs sweep (0034) deletes rows
+//    past 24 months, so the copy now states that plainly. It was deliberately qualified
+//    ("將於後續啟用") until the mechanism existed, because a deletion claim without a
+//    running control is a false PRIVACY claim. The pinned test below flipped with it.
+//    ⚠️ The prod cron must actually be configured before this copy reaches a live
+//    /admin/audit (prod-deploy-runbook.md §8/§13), or the claim is premature again.
 //
 // Lives here rather than in the page because a page file can't export a const for
 // tests to import, and this copy is pinned by a test on purpose (see below).
 export const AUDIT_BOUNDARY_NOTE =
   '此頁顯示重要異動紀錄（帳號、資格、車位設定等），不是完整的操作紀錄。' +
   '現場同工使用共用 PIN，只能追溯到當週的登入 session，無法辨識個人。' +
-  '保留政策為 24 個月；自動清理將於後續維運功能啟用。'
+  '紀錄保留 24 個月，逾期後由定期維運作業清除。'
 
 export function auditActionLabel(action: string): string {
   return ACTIONS[action]?.label ?? action

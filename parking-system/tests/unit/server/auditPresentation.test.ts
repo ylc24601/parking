@@ -59,6 +59,25 @@ describe('renderAuditDetails — known action, valid metadata', () => {
     expect(r.fallback).toBeNull()
     expect(r.details).toEqual([{ label: '歷史紀錄', value: '未回填（紀錄自此開始）' }])
   })
+
+  it('renders a retention purge as count + the strict `<` boundary (2A-3), never 未知動作', () => {
+    const r = renderAuditDetails('audit.retention_purge', {
+      deleted_before: '2024-07-17T15:00:00+00:00',
+      deleted_count: 42,
+      retention_months: 24,
+    })
+    expect(r.fallback).toBeNull()
+    expect(r.details).toEqual([
+      { label: '清除筆數', value: '42' },
+      { label: '清除建立時間早於', value: '2024-07-17T15:00:00+00:00' },
+    ])
+  })
+
+  it('a malformed retention-purge row fails safe (unreadable), never throws', () => {
+    const r = renderAuditDetails('audit.retention_purge', { deleted_count: 'lots', deleted_before: 1 })
+    expect(r.details).toEqual([])
+    expect(r.fallback).toBe(UNREADABLE_DETAIL)
+  })
 })
 
 describe('renderAuditDetails — #14A capacity actions', () => {
@@ -268,14 +287,16 @@ describe('renderAuditDetails — the allowlist holds', () => {
 })
 
 describe('AUDIT_BOUNDARY_NOTE must not claim a control that is not running', () => {
-  // ⚠️ 2A-3 (retention purge): when the monthly purge ships, THIS TEST FAILS — and
-  // that is its job. Delete the qualifier assertion and update the copy to a flat
-  // 「紀錄保留 24 個月」then, deliberately. Do not "fix" it by loosening the check.
-  it('says automatic cleanup is not enabled yet, because 2A-3 has not shipped', () => {
-    // A bare「紀錄保留 24 個月」implies rows older than that are gone. Nothing is
-    // deleting anything yet, so that would be a false PRIVACY claim — the kind of
-    // promise-without-a-mechanism this project has been bitten by before.
-    expect(AUDIT_BOUNDARY_NOTE).toContain('自動清理將於後續維運功能啟用')
+  // 2A-3 (retention purge) has shipped: purge_audit_logs (0034) runs monthly, so the
+  // copy states retention plainly. This is the flipped form of the assertion that used
+  // to pin「自動清理將於後續維運功能啟用」. ⚠️ The claim is only honest in prod once the
+  // cron is actually configured (prod-deploy-runbook.md §8/§13) — enforced there.
+  it('states retention plainly now that the purge runs, with no future-tense qualifier', () => {
+    // A flat「紀錄保留 24 個月」is now TRUE: rows past 24 months are deleted by the sweep.
+    expect(AUDIT_BOUNDARY_NOTE).toContain('紀錄保留 24 個月')
+    // The old「將於後續」qualifier claimed a not-yet-running control; it must be gone,
+    // or the copy would understate a mechanism that now exists.
+    expect(AUDIT_BOUNDARY_NOTE).not.toContain('後續')
   })
 
   it('tells the reader what the log does NOT cover', () => {

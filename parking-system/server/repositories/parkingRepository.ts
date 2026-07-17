@@ -578,6 +578,12 @@ export interface ParkingRepository {
   // Phase 8 Slice 7 — PII retention: clear claimed_phone/claimed_name/submitted_code on rows
   // decided >= retentionDays ago (bounded, idempotent; dry-run probes max+1 rows for hasMore).
   redactDecidedBindingPii(nowIso: string, retentionDays: number, max: number, dryRun: boolean): Promise<{ count: number; hasMore: boolean }>
+  // Wave 2A-3 (#15) — audit retention: delete audit_logs older than retentionMonths (bounded,
+  // one batch; the RPC's clock is the DB's, so NO nowIso here). deletedBefore/retentionMonths
+  // come straight from the RPC (the service can't recompute the DB cutoff). Never via JS Date.
+  purgeAuditLogs(
+    retentionMonths: number, max: number, dryRun: boolean, requestId: string,
+  ): Promise<{ count: number; hasMore: boolean; deletedBefore: string; retentionMonths: number }>
   // Phase 4 Slice B — resolve a move-car target (owner user_id + plate + notifiability).
   // Returns null only when the reservation id doesn't exist (a walk-in still resolves).
   getMoveCarTarget(reservationId: string): Promise<MoveCarTarget | null>
@@ -1365,6 +1371,20 @@ export function createParkingRepository(
       if (error) throw new Error(`redact_decided_binding_pii failed: ${error.message}`)
       const row = data as { count: number; has_more: boolean }
       return { count: row.count, hasMore: row.has_more }
+    },
+
+    async purgeAuditLogs(retentionMonths, max, dryRun, requestId) {
+      const { data, error } = await client.rpc('purge_audit_logs', {
+        p_retention_months: retentionMonths,
+        p_max: max,
+        p_dry_run: dryRun,
+        p_request_id: requestId,
+      })
+      if (error) throw new Error(`purge_audit_logs failed: ${error.message}`)
+      // deleted_before is already a text timestamp from SQL — kept as a string, never
+      // parsed through Date (node-postgres would shift it; see the retention lessons).
+      const row = data as { count: number; has_more: boolean; deleted_before: string; retention_months: number }
+      return { count: row.count, hasMore: row.has_more, deletedBefore: row.deleted_before, retentionMonths: row.retention_months }
     },
 
     async capturePendingBinding({ lineUserId, code, eventType, nowIso }) {

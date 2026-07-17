@@ -1024,6 +1024,89 @@ begin
   raise notice 'PASS: P2 write path creates for a no-row member, governs on approve, and refuses to review a revoked row';
 end $$;
 
+-- ── 38. Audit retention purge: locked-down RPC + owner-equality (Wave 2A-3 / #15) ─
+-- The purge is the only DELETE path into an append-only table, so its lockdown mirrors
+-- append_audit_log's, plus one dependency unique to it: lock 2 in the trigger checks
+-- current_user = the table owner, and a SECURITY DEFINER runs AS its own owner — so if
+-- the fn's owner ever diverged from audit_logs' owner, even a LEGITIMATE purge would be
+-- rejected forever. That equality is a correctness invariant, not just a nicety.
+do $$
+begin
+  if not exists (select 1 from pg_proc where proname = 'purge_audit_logs' and prosecdef) then
+    raise exception 'FAIL: purge_audit_logs must be SECURITY DEFINER';
+  end if;
+  if not exists (
+    select 1 from pg_proc where proname = 'purge_audit_logs' and proconfig::text like '%search_path%'
+  ) then
+    raise exception 'FAIL: purge_audit_logs must pin search_path';
+  end if;
+  if not has_function_privilege('service_role', 'purge_audit_logs(int,int,boolean,uuid)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on purge_audit_logs';
+  end if;
+  if has_function_privilege('anon', 'purge_audit_logs(int,int,boolean,uuid)', 'execute')
+     or has_function_privilege('authenticated', 'purge_audit_logs(int,int,boolean,uuid)', 'execute') then
+    raise exception 'FAIL: anon/authenticated must not execute purge_audit_logs';
+  end if;
+
+  if (select proowner from pg_proc where proname = 'purge_audit_logs')
+     is distinct from (select relowner from pg_class where oid = 'public.audit_logs'::regclass) then
+    raise exception 'FAIL: purge_audit_logs owner <> audit_logs owner — lock 2 would reject even a legitimate purge';
+  end if;
+
+  if not exists (
+    select 1 from pg_proc where proname = 'audit_logs_block_mutation' and prosrc like '%audit.allow_purge%'
+  ) then
+    raise exception 'FAIL: audit_logs_block_mutation lost the purge escape hatch (2A-3)';
+  end if;
+
+  perform 1 from pg_indexes where indexname = 'audit_logs_retention_idx';
+  if not found then raise exception 'FAIL: audit_logs_retention_idx missing'; end if;
+
+  raise notice 'PASS: purge_audit_logs is locked down, owner-matched, and the escape hatch is present';
+end $$;
+
+-- ── 38b. The escape hatch behaves: the purge deletes, but the seam does not leak ──
+-- Mirrors 34b — grant DELETE back to service_role (simulating a future migration that
+-- repeats 0004's blanket grant) so this exercises lock 2 (owner identity) INDEPENDENT
+-- of the grant layer, and even with the GUC turned on.
+do $$
+declare
+  v_id uuid;
+begin
+  insert into audit_logs (created_at, actor_type, action, entity_type, request_id, result, metadata_redacted)
+    values (now() - interval '300 months', 'system', 'verify.purge_probe', 'audit',
+            gen_random_uuid(), 'success', '{}')
+    returning id into v_id;
+
+  -- (a) service_role calling the fn deletes it — the granted path works.
+  set local role service_role;
+  perform purge_audit_logs(24, 500, false, gen_random_uuid());
+  reset role;
+  if exists (select 1 from audit_logs where id = v_id) then
+    raise exception 'FAIL: purge_audit_logs did not delete an ancient row via service_role';
+  end if;
+
+  -- (b) but a DIRECT delete by service_role is blocked by lock 2, even with DELETE
+  -- granted back AND the GUC set on — because current_user (service_role) <> owner.
+  insert into audit_logs (created_at, actor_type, action, entity_type, request_id, result, metadata_redacted)
+    values (now() - interval '300 months', 'system', 'verify.purge_probe2', 'audit',
+            gen_random_uuid(), 'success', '{}')
+    returning id into v_id;
+  grant delete on audit_logs to service_role;
+  set local role service_role;
+  perform set_config('audit.allow_purge', 'on', true);
+  begin
+    delete from audit_logs where id = v_id;
+    raise exception 'FAIL: service_role deleted directly with grant+GUC — lock 2 (owner) did not hold';
+  exception when sqlstate '42501' then
+    null; -- expected: the trigger raises because current_user is not the owner
+  end;
+  reset role;
+  revoke delete on audit_logs from service_role;
+
+  raise notice 'PASS: audit purge deletes via the fn, and the DELETE seam does not leak to the app principal';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='
