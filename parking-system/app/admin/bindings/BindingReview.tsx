@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { fmtTaipeiDateTime } from '@/lib/taipeiDate'
 import type { PendingClaimListItem } from '@/server/services/bindingAdminService'
 import Badge from '../../ui/Badge'
 
@@ -40,14 +41,6 @@ const REASON_COPY: Record<string, string> = {
 
 function reasonCopy(reason: string): string {
   return REASON_COPY[reason] ?? reason
-}
-
-function fmtTaipei(iso: string): string {
-  return new Intl.DateTimeFormat('zh-TW', {
-    timeZone: 'Asia/Taipei',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(new Date(iso))
 }
 
 function sourceLabel(source: string): string {
@@ -127,8 +120,8 @@ export default function BindingReview({
                     <Badge variant="outline" tone={item.source === 'liff' ? 'info' : 'neutral'}>{sourceLabel(item.source)}</Badge>
                   </td>
                   <td className="px-4 py-3 font-mono text-ink">{item.claim}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted">{fmtTaipei(item.submittedAt)}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted">{fmtTaipei(item.lastUpdatedAt)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-muted">{fmtTaipeiDateTime(item.submittedAt)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-muted">{fmtTaipeiDateTime(item.lastUpdatedAt)}</td>
                   <td className="whitespace-nowrap px-4 py-3 tabular-nums text-muted">{item.resubmits}</td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <div className="flex gap-2">

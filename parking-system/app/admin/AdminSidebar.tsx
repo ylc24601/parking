@@ -17,6 +17,7 @@ const NAV: Array<{ href: string; label: string; icon: string }> = [
   { href: '/admin/import', label: '名單匯入', icon: '📥' },
   { href: '/admin/print', label: '列印點名表', icon: '🖨' },
   { href: '/admin/ops', label: '營運狀態', icon: '📊' },
+  { href: '/admin/audit', label: '稽核記錄', icon: '📜' },
   { href: '/admin/pastoral', label: '牧養關懷', icon: '💚' },
   { href: '/admin/staff-pin', label: '現場 PIN 管理', icon: '🔑' },
 ]

@@ -241,4 +241,108 @@ describe.skipIf(!RUN)('audit substrate (Wave 2A-1 / #15) — local DB integratio
       expect(serialized.toLowerCase()).not.toContain(forbidden)
     }
   })
+
+  // ── read path: the keyset timeline (Wave 2A-2) ───────────────────────────────
+  // These run against real PostgREST on purpose. The whole cursor design lives or
+  // dies on how PostgREST parses the `or(...)` predicate and how it round-trips a
+  // microsecond timestamptz — neither of which a mocked repo can tell us.
+
+  const writeRows = async (n: number) => {
+    const keeper = await mkAdmin(`tl-keep-${randomUUID().slice(0, 4)}`)
+    const target = await mkAdmin(`tl-target-${randomUUID().slice(0, 4)}`)
+    const ids: string[] = []
+    for (let i = 0; i < n; i++) {
+      const requestId = randomUUID()
+      await setDisabled({
+        targetId: target.id, actingAdminId: keeper.id, disabled: i % 2 === 0, requestId,
+      })
+      ids.push((await auditFor(requestId))[0].id as string)
+    }
+    return ids
+  }
+
+  it('reads newest-first and walks the whole timeline with no overlap and no gap', async () => {
+    await writeRows(5)
+    const first = await repo.listAuditLogs({ limit: 3 })
+    expect(first.rows).toHaveLength(3)
+
+    const times = first.rows.map(r => new Date(r.created_at).getTime())
+    expect([...times].sort((a, b) => b - a)).toEqual(times)   // descending
+
+    const last = first.rows[2]
+    const second = await repo.listAuditLogs({
+      limit: 3,
+      before: { createdAt: last.created_at, id: last.id },
+    })
+
+    const firstIds = first.rows.map(r => r.id)
+    const secondIds = second.rows.map(r => r.id)
+    expect(secondIds.some(id => firstIds.includes(id))).toBe(false)   // no overlap
+    // and no gap: the two pages together are a prefix of the full ordered timeline
+    const all = await repo.listAuditLogs({ limit: 100 })
+    expect([...firstIds, ...secondIds]).toEqual(all.rows.slice(0, firstIds.length + secondIds.length).map(r => r.id))
+  })
+
+  it('the cursor tiebreaker arm works on identical created_at values', async () => {
+    // created_at defaults to now() — the TRANSACTION timestamp — so two rows written
+    // by one RPC would tie. Rather than rely on a tie occurring, this pins the arm
+    // directly: same created_at + a higher id must treat the row as older; a lower
+    // id must not. Without this arm, ties silently skip rows.
+    const [rowId] = await writeRows(1)
+    const target = (await sb.from('audit_logs').select('id, created_at').eq('id', rowId).single()).data!
+
+    const matches = await repo.listAuditLogs({
+      limit: 10,
+      before: { createdAt: target.created_at as string, id: 'ffffffff-ffff-4fff-8fff-ffffffffffff' },
+    })
+    expect(matches.rows.map(r => r.id)).toContain(rowId)
+
+    const excludes = await repo.listAuditLogs({
+      limit: 10,
+      before: { createdAt: target.created_at as string, id: '00000000-0000-4000-8000-000000000000' },
+    })
+    expect(excludes.rows.map(r => r.id)).not.toContain(rowId)
+  })
+
+  it('an insert while paging does not duplicate or skip a row (what offset could not do)', async () => {
+    // The reason this timeline is keyset and not offset. audit_logs is append-only
+    // and read newest-first, so a new row lands at the TOP: under offset paging it
+    // would push page 1's last row down onto page 2, and the reader would see it
+    // twice. The cursor is anchored to a row, not a position, so it cannot move.
+    await writeRows(4)
+    const page1 = await repo.listAuditLogs({ limit: 2 })
+    const cursorRow = page1.rows[1]
+
+    await writeRows(1)   // a NEWER audit row arrives mid-read
+
+    const page2 = await repo.listAuditLogs({
+      limit: 2,
+      before: { createdAt: cursorRow.created_at, id: cursorRow.id },
+    })
+
+    const page1Ids = page1.rows.map(r => r.id)
+    expect(page2.rows.map(r => r.id).some(id => page1Ids.includes(id))).toBe(false)
+    // Every page-2 row is strictly older than the cursor — the new row cannot appear.
+    for (const r of page2.rows) {
+      expect(new Date(r.created_at).getTime()).toBeLessThanOrEqual(new Date(cursorRow.created_at).getTime())
+    }
+  })
+
+  it('reaching the end of the timeline returns fewer rows than asked', async () => {
+    const all = await repo.listAuditLogs({ limit: 100 })
+    const oldest = all.rows.at(-1)!
+    const past = await repo.listAuditLogs({
+      limit: 10,
+      before: { createdAt: oldest.created_at, id: oldest.id },
+    })
+    expect(past.rows).toEqual([])
+  })
+
+  it('created_at survives the round trip with microseconds intact', async () => {
+    // If the repo ever parseDate()s this column, the cursor's equality arm stops
+    // matching and rows get skipped — silently, and only when timestamps tie.
+    const { rows } = await repo.listAuditLogs({ limit: 1 })
+    expect(typeof rows[0].created_at).toBe('string')
+    expect(rows[0].created_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,6}[+-]\d{2}:\d{2}$/)
+  })
 })
