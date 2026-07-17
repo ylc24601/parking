@@ -114,6 +114,78 @@ describe('renderAuditDetails — #14A capacity actions', () => {
   })
 })
 
+describe('renderAuditDetails — #10 eligibility writes (2B-2b)', () => {
+  it('renders a create as a create, not as a transition from nothing', () => {
+    const r = renderAuditDetails('p2_eligibility.review_update', {
+      review_status_from: null, review_status_to: 'approved', created: true,
+      reason_to: 'pregnancy', p2_valid_until_from: null, p2_valid_until_to: '2027-01-01',
+      p2_review_date_from: null, p2_review_date_to: '2026-12-01',
+      child_birthdate_present: false, note_present: false,
+    })
+    expect(r.fallback).toBeNull()
+    expect(r.details[0]).toEqual({ label: '資格狀態', value: '新建立：已核准' })
+    expect(r.details).toContainEqual({ label: '有效至', value: '— → 2027-01-01' })
+  })
+
+  it('renders a revoke as a state transition', () => {
+    const r = renderAuditDetails('p2_eligibility.review_update', {
+      review_status_from: 'approved', review_status_to: 'revoked', created: false,
+      p2_valid_until_from: '2027-01-01', p2_valid_until_to: '2027-01-01',
+      p2_review_date_from: '2026-12-01', p2_review_date_to: null,
+    })
+    expect(r.details[0]).toEqual({ label: '資格狀態', value: '已核准 → 已撤銷' })
+    expect(r.details).toContainEqual({ label: '下次覆核', value: '2026-12-01 → —' })
+  })
+
+  it('says a birthdate EXISTS without ever saying what it is', () => {
+    // The single most sensitive field in the system. 0032's sanitizer makes the value
+    // unwritable; this makes sure the presentation never invents a way to show one either.
+    const r = renderAuditDetails('p2_eligibility.review_update', {
+      review_status_to: 'approved', created: false, reason_to: 'child_companion',
+      p2_valid_until_from: null, p2_valid_until_to: '2026-08-31',
+      p2_review_date_from: null, p2_review_date_to: '2026-06-01',
+      child_birthdate_present: true, note_present: true,
+    })
+    expect(r.details).toContainEqual({ label: '孩子生日', value: '已登記（不顯示）' })
+    expect(r.details).toContainEqual({ label: '覆核備註', value: '有（內容不進稽核）' })
+  })
+
+  it('maps every typed denial to operator language, unknown falls back to the code', () => {
+    expect(renderAuditDetails('p2_eligibility.review_update', { reason: 'expiry_not_settable' }).details)
+      .toEqual([{ label: '未執行原因', value: '幼兒同行的到期日由系統推算，不可手動指定' }])
+    expect(renderAuditDetails('p2_eligibility.review_update', { reason: 'future_guard' }).details)
+      .toEqual([{ label: '未執行原因', value: 'future_guard' }])
+  })
+
+  it('marked_reviewed says a review HAPPENED even when the date did not move', () => {
+    // This action is never inert (0033). Rendering an unchanged date as "nothing changed"
+    // would erase the fact that a human looked on this day — which is the entire point.
+    const r = renderAuditDetails('p2_eligibility.marked_reviewed', {
+      p2_review_date_from: '2027-06-30', p2_review_date_to: '2027-06-30',
+    })
+    expect(r.details).toEqual([
+      { label: '覆核紀錄', value: '已確認資料無誤' },
+      { label: '下次覆核', value: '2027-06-30 → 2027-06-30' },
+    ])
+  })
+
+  it('a wrong-typed status falls back rather than rendering nonsense', () => {
+    expect(renderAuditDetails('p2_eligibility.review_update', { review_status_to: 42 }).fallback)
+      .toBe(UNREADABLE_DETAIL)
+  })
+
+  it('drops a birthdate a future writer smuggles in under an unclaimed key', () => {
+    const r = renderAuditDetails('p2_eligibility.review_update', {
+      review_status_to: 'approved', created: false,
+      p2_valid_until_from: null, p2_valid_until_to: null,
+      p2_review_date_from: null, p2_review_date_to: null,
+      child_dob: '2020-09-01',
+    })
+    expect(JSON.stringify(r)).not.toContain('2020-09-01')
+    expect(r.unsupportedCount).toBe(1)
+  })
+})
+
 describe('renderAuditDetails — #10 eligibility markers', () => {
   it('says "未覆核", never "已撤銷", for the backfilled rows', () => {
     // The whole reason 0032's enum has three states. The old boolean model could not record

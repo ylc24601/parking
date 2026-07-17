@@ -63,6 +63,11 @@ export interface ImportReport {
   // The row is left untouched — a bulk roster must not overturn an audited human decision
   // (0032). Re-granting is a deliberate act in the review tool, not a side effect of import.
   revokedRetained: Array<{ phone: string }>
+  // The CSV lists this member as P2, but their eligibility is hand-maintained by a 幹事
+  // (reviewed_at is not null). Frozen and reported (0033) — a silent skip would be as bad as
+  // the silent overwrite it replaces: the operator uploads a roster, some members don't
+  // update, and nothing says why.
+  governedRetained: Array<{ phone: string }>
   validationErrors: Array<{ line: number; errors: string[] }>
   // True if any list was truncated to MAX_REPORT_ITEMS; totals hold the untruncated counts.
   truncated: boolean
@@ -74,6 +79,7 @@ export interface ImportReport {
     reviewRequired: number
     p2Retained: number
     revokedRetained: number
+    governedRetained: number
     validationErrors: number
   }
 }
@@ -200,11 +206,11 @@ export async function importMembersFromCsvText(
   const report: ImportReport = {
     dryRun, rows: records.length, members: 0, imported: 0, updated: 0, vehiclesAdded: 0, dependentsAdded: 0,
     phoneNameConflicts: [], plateConflicts: [], batchPlateConflicts: [], groupConflicts: [],
-    reviewRequired: [], p2Retained: [], revokedRetained: [], validationErrors: [],
+    reviewRequired: [], p2Retained: [], revokedRetained: [], governedRetained: [], validationErrors: [],
     truncated: false,
     totals: {
       phoneNameConflicts: 0, plateConflicts: 0, batchPlateConflicts: 0, groupConflicts: 0,
-      reviewRequired: 0, p2Retained: 0, revokedRetained: 0, validationErrors: 0,
+      reviewRequired: 0, p2Retained: 0, revokedRetained: 0, governedRetained: 0, validationErrors: 0,
     },
   }
 
@@ -357,6 +363,12 @@ export async function importMembersFromCsvText(
       pushCapped(report.revokedRetained, { phone })
       report.totals.revokedRetained++
     }
+    // A P2 row landing on a member whose eligibility a 幹事 hand-maintains: frozen, and said
+    // out loud. The RPC reports only the more specific of revoked/governed, never both.
+    if (res.retained_governed) {
+      pushCapped(report.governedRetained, { phone })
+      report.totals.governedRetained++
+    }
     if (!dryRun) processedMembers++
   }
 
@@ -378,7 +390,8 @@ function finalizeTruncation(report: ImportReport): void {
     report.totals.groupConflicts > report.groupConflicts.length ||
     report.totals.reviewRequired > report.reviewRequired.length ||
     report.totals.p2Retained > report.p2Retained.length ||
-    report.totals.revokedRetained > report.revokedRetained.length
+    report.totals.revokedRetained > report.revokedRetained.length ||
+    report.totals.governedRetained > report.governedRetained.length
 }
 
 // CLI / file-path entry point (unchanged contract): read the file, then run the shared

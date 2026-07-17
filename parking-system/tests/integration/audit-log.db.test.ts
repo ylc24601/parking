@@ -329,11 +329,14 @@ describe.skipIf(!RUN)('audit substrate (Wave 2A-1 / #15) — local DB integratio
   })
 
   it('reaching the end of the timeline returns fewer rows than asked', async () => {
-    const all = await repo.listAuditLogs({ limit: 100 })
-    const oldest = all.rows.at(-1)!
+    // The cursor is deliberately older than any row that can exist, rather than "the oldest of
+    // the first 100". audit_logs is append-only — no suite can clean up after itself — so the
+    // table grows with every DB test that audits anything, and once it passed 100 rows the old
+    // approach was paging from the middle and (correctly) getting more rows back.
+    // This asserts the same property without assuming how much history exists.
     const past = await repo.listAuditLogs({
       limit: 10,
-      before: { createdAt: oldest.created_at, id: oldest.id },
+      before: { createdAt: '1970-01-01T00:00:00+00:00', id: '00000000-0000-4000-8000-000000000000' },
     })
     expect(past.rows).toEqual([])
   })

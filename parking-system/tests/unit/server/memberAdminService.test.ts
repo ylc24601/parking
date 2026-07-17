@@ -140,8 +140,9 @@ describe('getMemberDetail', () => {
     line_id: null,
     vehicles: [{ license_plate: 'ABC-1234', nickname: '家庭車' }],
     eligibility: {
-      p2_eligible: true, p2_reason: 'mobility_long', p2_valid_from: null,
-      p2_valid_until: '2027-01-01', p2_review_date: '2026-12-01', reviewed_at: '2026-06-01T00:00:00Z',
+      p2_eligible: true, review_status: 'approved', p2_reason: 'mobility_long', p2_valid_from: null,
+      p2_valid_until: '2027-01-01', p2_review_date: '2026-12-01', p2_child_birthdate: null,
+      review_note: null, review_version: 2, reviewed_at: '2026-06-01T00:00:00Z',
     },
     dependents: [{ kind: 'child', name: '小華', birthdate: '2022-03-01' }],
     ...over,

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { p2ReasonLabel } from '@/lib/p2Reason'
 import { getAdminSession } from '@/server/http/adminAuth'
 import {
   listEligibilityReview,
@@ -19,10 +20,6 @@ export const metadata: Metadata = {
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-const REASON_LABEL: Record<string, string> = {
-  mobility_long: '行動不便（長期）', mobility_short: '行動不便（短期）',
-  child_companion: '幼兒同行', pregnancy: '孕婦', elderly_companion: '長者同行',
-}
 
 const SECTIONS: { status: ReviewListStatus; title: string; hint: string }[] = [
   { status: 'expired', title: '已過期', hint: '資格已失效，目前套用中會掉回 P3——需重新核定或更新' },
@@ -102,7 +99,7 @@ function Row({ row }: { row: EligibilityReviewItem }) {
           {row.displayName}
         </Link>
       </td>
-      <td className="px-4 py-3 text-ink">{row.reason ? (REASON_LABEL[row.reason] ?? row.reason) : '—'}</td>
+      <td className="px-4 py-3 text-ink">{p2ReasonLabel(row.reason)}</td>
       <td className="whitespace-nowrap px-4 py-3 text-muted">{row.validUntil ?? '—'}</td>
       <td className="whitespace-nowrap px-4 py-3 text-muted">{row.reviewDate ?? '—'}</td>
       <td className="whitespace-nowrap px-4 py-3 text-muted">{row.reviewedAt ? row.reviewedAt.slice(0, 10) : '—'}</td>

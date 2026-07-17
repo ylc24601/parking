@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -177,7 +178,7 @@ describe.skipIf(!RUN)('roster import (Wave 0 #21) — local DB integration', () 
   let repo: import('@/server/repositories/parkingRepository').ParkingRepository
   let importMembersFromCsvText: typeof import('@/server/services/memberImportService').importMembersFromCsvText
 
-  const ROSTER_PHONES = ['0955001001', '0955001002', '0955001003']
+  const ROSTER_PHONES = ['0955001001', '0955001002', '0955001003', '0955001004']
   const userByPhone = async (phone: string) =>
     (await sb.from('users').select('id, display_name').eq('phone_number', phone).maybeSingle()).data as { id: string; display_name: string } | null
   const eligRow = async (userId: string) =>
@@ -292,5 +293,113 @@ describe.skipIf(!RUN)('roster import (Wave 0 #21) — local DB integration', () 
     const row = (await eligRow(p2.id))!
     expect(row.reviewed_by).toBeNull()
     expect(row.reviewed_at).toBeNull()
+  })
+
+  // ── Wave 2B-2b (#10): import precedence ──────────────────────────────────────
+  // 0032 stopped import RESURRECTING a revoked row. This is the broader half: once a 幹事 can
+  // hand-set a period, `on conflict do update` would silently reset it — and import writes no
+  // audit row of its own. CSV may ESTABLISH an eligibility nobody decided on; it may not
+  // OVERWRITE one somebody did. The boundary is `reviewed_at is not null`.
+  describe('a hand-reviewed row is frozen against the CSV', () => {
+    let adminId: string
+    let governed: string
+
+    beforeAll(async () => {
+      if (!RUN) return
+      const { data } = await sb.from('admin_accounts')
+        .insert({ username: `imp-gov-${Date.now().toString(36)}`, password_hash: 'scrypt$notarealhash' })
+        .select('id').single()
+      adminId = (data as { id: string }).id
+
+      // A member the CSV created (approved, but NOT governed — no human has decided).
+      await importMembersFromCsvText({
+        csvText: '姓名,手機,車牌,優先序,P2事由\n丁,0955001004,ROST1004,P2,孕婦',
+        dryRun: false,
+      }, repo)
+      governed = (await userByPhone('0955001004'))!.id
+    })
+
+    afterAll(async () => {
+      if (RUN && adminId) {
+        await sb.from('user_eligibility').update({ reviewed_by: null, reviewed_at: null }).eq('user_id', governed)
+        await sb.from('admin_accounts').delete().eq('id', adminId)
+      }
+    })
+
+    it('BEFORE a human reviews it, the CSV still refreshes it', async () => {
+      // The complement that makes the freeze meaningful: import is not blanket-blocked, it is
+      // blocked only where a human has decided. Without this the rule would just be "import
+      // stops working".
+      const report = await importMembersFromCsvText({
+        csvText: '姓名,手機,車牌,優先序,P2事由\n丁,0955001004,ROST1004,P2,行動不便',
+        dryRun: false,
+      }, repo)
+      expect(report.governedRetained).toEqual([])
+      expect(await eligRow(governed)).toMatchObject({ p2_reason: 'mobility_long' })
+    })
+
+    it('AFTER a human reviews it, the CSV is refused and says so', async () => {
+      const { data: sess } = await sb.from('admin_sessions').select('id').limit(1)
+      void sess
+      // Cross the governance boundary the way the RPC does.
+      const res = await repo.setP2Eligibility({
+        userId: governed, expectedVersion: 0, reviewStatus: 'approved', reason: 'elderly_companion',
+        validFrom: null, validUntil: '2099-03-03', childBirthdate: null,
+        nextReviewDate: '2099-02-02', note: '同工手動核定',
+        actingAdminId: adminId, actingSessionId: '22222222-2222-4222-8222-222222222222',
+        requestId: randomUUID(),
+      })
+      expect(res.ok).toBe(true)
+      const before = (await eligRow(governed))!
+
+      const csv = '姓名,手機,車牌,優先序,P2事由\n丁,0955001004,ROST1004,P2,孕婦'
+      const dry = await importMembersFromCsvText({ csvText: csv, dryRun: true }, repo)
+      expect(dry.governedRetained).toEqual([{ phone: '0955001004' }])
+
+      const report = await importMembersFromCsvText({ csvText: csv, dryRun: false }, repo)
+      expect(report.governedRetained).toEqual([{ phone: '0955001004' }])
+      expect(report.totals.governedRetained).toBe(1)
+      expect(report.revokedRetained).toEqual([])   // the more specific bucket must not fire
+
+      // Byte-for-byte: not merely "still approved". A refresh that reset the dates would be
+      // just as much an overturned decision as a status flip.
+      const after = (await eligRow(governed))!
+      expect(after).toMatchObject({
+        review_status: before.review_status,
+        p2_reason: 'elderly_companion',
+        p2_valid_until: '2099-03-03',
+        p2_review_date: '2099-02-02',
+        review_note: '同工手動核定',
+        review_version: before.review_version,
+      })
+    })
+
+    it('a governed member still gets name and vehicle updates — those are not governance', async () => {
+      const report = await importMembersFromCsvText({
+        csvText: '姓名,手機,車牌,優先序,P2事由\n丁,0955001004,NEWCAR9,P2,孕婦',
+        dryRun: false,
+      }, repo)
+      expect(report.governedRetained).toEqual([{ phone: '0955001004' }])
+      expect((await vehiclesOf(governed)).map(v => v.license_plate_normalized).sort())
+        .toEqual(['NEWCAR9', 'ROST1004'])
+    })
+
+    it('a governed member\'s dependents are frozen too, and dry-run says so', async () => {
+      // eligibility_dependents IS the evidence p2_child_birthdate derives from. Writing
+      // dependents while freezing the source would let max(child birthdate) and the stored
+      // source disagree — the dual truth #10 exists to kill.
+      const csv = [
+        '姓名,手機,車牌,申請原因,備註,申請日期,孩童姓名1,孩童生日1',
+        '丁,0955001004,ROST1004,3,,2026-01-01,小明,2022-03-01',
+      ].join('\n')
+      const dry = await importMembersFromCsvText({ csvText: csv, dryRun: true }, repo)
+      expect(dry.governedRetained).toEqual([{ phone: '0955001004' }])
+      expect(dry.dependentsAdded).toBe(0)   // dry-run must not promise what apply won't do
+
+      const report = await importMembersFromCsvText({ csvText: csv, dryRun: false }, repo)
+      expect(report.dependentsAdded).toBe(0)
+      const { data: deps } = await sb.from('eligibility_dependents').select('id').eq('user_id', governed)
+      expect(deps).toHaveLength(0)
+    })
   })
 })

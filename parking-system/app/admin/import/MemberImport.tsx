@@ -26,6 +26,7 @@ interface ImportReport {
   reviewRequired: Array<{ phone: string; reason: string }>
   p2Retained: Array<{ phone: string }>
   revokedRetained: Array<{ phone: string }>
+  governedRetained: Array<{ phone: string }>
   validationErrors: Array<{ line: number; errors: string[] }>
   truncated: boolean
   totals: {
@@ -36,6 +37,7 @@ interface ImportReport {
     reviewRequired: number
     p2Retained: number
     revokedRetained: number
+    governedRetained: number
     validationErrors: number
   }
 }
@@ -361,6 +363,16 @@ function ReportView({ report }: { report: ImportReport }) {
         note="匯入不會推翻同工的撤銷決定。若確實要恢復，請到該會友的明細頁重新核准。"
       >
         {report.revokedRetained.map((r, i) => (
+          <li key={i}>{r.phone}</li>
+        ))}
+      </IssueList>
+
+      <IssueList
+        title="人工管理的資格未被更新（名單標 P2，但已經同工覆核）" total={report.totals.governedRetained}
+        empty={report.governedRetained.length === 0}
+        note="此會員的 P2 資格已由幹事人工管理，本次匯入只更新會員與車輛資料，不更新資格、依親或有效期間。若要改資格，請到該會友的明細頁。"
+      >
+        {report.governedRetained.map((r, i) => (
           <li key={i}>{r.phone}</li>
         ))}
       </IssueList>

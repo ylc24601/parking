@@ -1,3 +1,6 @@
+import { P2_REASON_LABEL } from '@/lib/p2Reason'
+import type { P2Reason } from '@/lib/memberImportSchema'
+
 // ── Audit presentation registry (Wave 2A-2 / #15) ────────────────────────────
 // What an audit row is allowed to SHOW. This is not UI decoration — it is the
 // read-side privacy boundary, and it is deliberately an ALLOWLIST.
@@ -78,6 +81,34 @@ const CAPACITY_DENIED_REASON: Record<string, string> = {
   version_conflict: '另一位管理員已先行修改',
 }
 
+// #10's typed refusals (0033). An unknown code falls through to the raw string — a refusal
+// nobody labelled must still be identifiable, never blank.
+const P2_DENIED_REASON: Record<string, string> = {
+  version_conflict: '另一位管理員已先行修改',
+  nothing_to_revoke: '該會友原本就沒有 P2 資格',
+  reason_required: '核准時必須指定事由',
+  review_date_required: '核准時必須指定下次覆核日',
+  review_date_in_past: '下次覆核日早於今天',
+  child_birthdate_required: '幼兒同行必須登記最小孩子生日',
+  child_birthdate_in_future: '孩子生日為未來日期',
+  child_birthdate_not_applicable: '此事由不需要孩子生日',
+  expiry_not_settable: '幼兒同行的到期日由系統推算，不可手動指定',
+  window_inverted: '生效日晚於到期日',
+  eligibility_not_approved: '非已核准的資格不可標記覆核',
+}
+
+const P2_STATUS_LABEL: Record<string, string> = {
+  unreviewed: '未覆核',
+  approved: '已核准',
+  revoked: '已撤銷',
+}
+
+// A missing date is 「—」, not "null" or an empty gap: an audit row is read by a person
+// deciding whether something looks wrong.
+function dashIfNull(v: unknown): string {
+  return typeof v === 'string' && v.length > 0 ? v : '—'
+}
+
 const ACTIONS: Record<string, AuditActionDefinition> = {
   // #14A. effective_capacity_from/to are read straight from the row rather than
   // recomputed here: the formula already lives in two places on purpose (the pure
@@ -133,6 +164,72 @@ const ACTIONS: Record<string, AuditActionDefinition> = {
       return [
         { label: '調整週次', value: `${rows} 週` },
         { label: '可分配車位', value: '不變（僅合併顯示方式）' },
+      ]
+    },
+  },
+
+  // The audited eligibility writes (Wave 2B-2b / #10). These rows are ABOUT a named member,
+  // so what they may say is tightly bounded: enum states, dates, and booleans for whether a
+  // birthdate/note exists. The birthdate value itself cannot even be written (0032's
+  // sanitizer), and note/review_note are exact-key denied by 0030.
+  'p2_eligibility.review_update': {
+    label: '修改 P2 資格',
+    reads: [
+      'review_status_from', 'review_status_to', 'reason_from', 'reason_to',
+      'p2_valid_from_from', 'p2_valid_from_to', 'p2_valid_until_from', 'p2_valid_until_to',
+      'p2_review_date_from', 'p2_review_date_to',
+      'child_birthdate_present', 'note_present', 'created',
+      'reason', 'expected_version', 'actual_version',
+    ],
+    render: metadata => {
+      if ('reason' in metadata && !('review_status_to' in metadata)) {
+        const reason = metadata.reason
+        if (typeof reason !== 'string') return 'unreadable'
+        return [{ label: '未執行原因', value: P2_DENIED_REASON[reason] ?? reason }]
+      }
+      const to = metadata.review_status_to
+      if (typeof to !== 'string') return 'unreadable'
+      const details: AuditDetail[] = [
+        {
+          label: '資格狀態',
+          value: metadata.created === true
+            ? `新建立：${P2_STATUS_LABEL[to] ?? to}`
+            : `${P2_STATUS_LABEL[String(metadata.review_status_from)] ?? '—'} → ${P2_STATUS_LABEL[to] ?? to}`,
+        },
+      ]
+      if (typeof metadata.reason_to === 'string') {
+        details.push({ label: '事由', value: P2_REASON_LABEL[metadata.reason_to as P2Reason] ?? metadata.reason_to })
+      }
+      details.push({ label: '有效至', value: `${dashIfNull(metadata.p2_valid_until_from)} → ${dashIfNull(metadata.p2_valid_until_to)}` })
+      details.push({ label: '下次覆核', value: `${dashIfNull(metadata.p2_review_date_from)} → ${dashIfNull(metadata.p2_review_date_to)}` })
+      // Presence only, never the value: a child's date of birth is the reason 0032's
+      // sanitizer exists, and 「有」/「無」 answers the operator's question without it.
+      if (typeof metadata.child_birthdate_present === 'boolean') {
+        details.push({ label: '孩子生日', value: metadata.child_birthdate_present ? '已登記（不顯示）' : '未登記' })
+      }
+      if (typeof metadata.note_present === 'boolean') {
+        details.push({ label: '覆核備註', value: metadata.note_present ? '有（內容不進稽核）' : '無' })
+      }
+      return details
+    },
+  },
+  'p2_eligibility.marked_reviewed': {
+    label: '標記 P2 資格已覆核',
+    reads: ['p2_review_date_from', 'p2_review_date_to', 'reason', 'expected_version', 'actual_version'],
+    render: metadata => {
+      if ('reason' in metadata) {
+        const reason = metadata.reason
+        if (typeof reason !== 'string') return 'unreadable'
+        return [{ label: '未執行原因', value: P2_DENIED_REASON[reason] ?? reason }]
+      }
+      const to = metadata.p2_review_date_to
+      if (typeof to !== 'string') return 'unreadable'
+      // Deliberately says a review HAPPENED even when the date is unchanged: this action is
+      // never inert (0033), and rendering it as "nothing changed" would erase the fact that
+      // a human looked on this day.
+      return [
+        { label: '覆核紀錄', value: '已確認資料無誤' },
+        { label: '下次覆核', value: `${dashIfNull(metadata.p2_review_date_from)} → ${to}` },
       ]
     },
   },
