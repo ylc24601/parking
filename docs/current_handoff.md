@@ -954,18 +954,36 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 1d（通知 #27）
+### Current HEAD 最近驗證：Wave 2A-1（#15 Audit substrate，PR #38 / squash `8513912`）
 
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` | ✅ exit 0 |
 | `npx eslint .` | ✅ exit 0 |
-| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1285 passed**（116 檔全過） |
+| `npm test`（不接 DB） | ✅ **1114 passed**（87 檔／188 skipped） |
+| `RUN_DB_TESTS=1 npm test`（接本機 Supabase） | ✅ **1302 passed**（118 檔全過） |
+| `npm run db:verify` | ✅ **35** 斷言 PASS（33→35：新增 audit substrate 權限/形狀 ＋ trigger 行為） |
+| `verify_schema_prod.sql`（catalog-only） | ✅ **27** 斷言 PASS（26→27） |
 | `npm run build` | ✅ |
-| 手動實跑（`NOTIFICATION_TRANSPORT=mock`，逐則印出 render 後字串） | 12 種 payload 組合（含全缺、缺車牌、缺期限）逐則校對換行後實際樣子；無雙重空行、無 ISO 日期外漏 |
-| DB schema | 本刀無 migration（仍 `0001–0029`） |
+| 手動實跑（dev server＋真 admin session） | 走 `/api/admin/accounts/disable` 真實停用一個帳號 → audit row 的 `actor_id` ＝真 admin、`actor_session_id` ＝**真的 `admin_sessions` 列**、無 PII；重複停用寫出 `state_changed:false` |
+| DB schema | **migration `0030`**（`0001–0030`） |
 
-> **Wave 1d（#27 通知內容 enrich）**：
+> **Wave 2A-1（#15 Audit substrate）＝ #10／#14A 的地基，兩者自此正式 unblocked。**
+> - **實作與 triage 原規格有四處刻意分歧**（詳見 [`0030` 標頭](../parking-system/supabase/migrations/0030_audit_substrate.sql) 與 `docs/feature-triage.md` #15 列）：
+>   1. **「app role 只 INSERT/SELECT」做不到**——app 跑 `service_role`、RLS 對它無效，且 `0004:66` 早已 blanket grant DML。實查 `rolsuper=f, rolbypassrls=t` ⇒ **grant 對它仍有效**（bypassrls ≠ superuser），故 revoke 是真控制。改為 **revoke DML（含 `TRUNCATE`）＋ trigger 雙層**：`TRUNCATE` 不受 row-level trigger 管故靠 revoke；trigger 則擋「未來某個 migration 重演 `0004` 的 blanket grant」（本 repo 已幹過一次＝已證實的風險，非假想）。
+>   2. **單一 RPC 升級為 `private.append_audit_log`，EXECUTE 不授權給任何人**（含 `service_role`）。只有 owner-controlled **`SECURITY DEFINER`** 業務 RPC 能呼叫 ⇒ **app 根本無法寫 audit row**，保證來自 privilege 而非 PostgREST schema 曝光設定。這是本 repo **首批 SECURITY DEFINER**，故 `verify_schema` 永久釘住其兩個風險：`search_path` 已釘、`PUBLIC`/`anon` 無 EXECUTE。
+>   3. **治理拒絕一律 typed return、不可 raise**——raise 會把「記錄這次拒絕」的那一列一起 rollback。`set_admin_disabled` 本來就是 typed return（`0026:61`）故 exemplar **零行為變更**；**#10（version conflict⇒`conflict`）、#14A（容量低於 approved⇒`denied`）必須照這個寫**。
+>   4. metadata **flat depth-1＋PII key denylist**，且**由 RPC 內部組裝**、route 不得傳入。
+> - **不宣稱的事（重要）**：owner 仍有 DDL ⇒ **不是 immutability**，只是「對 application principal append-only」；且**完全不防 omission**——app 仍可選擇不呼叫。只提高**偽造**成本，不提高**遺漏**成本。
+> - **atomic**：audit 寫在業務 txn 內 ⇒ audit 失敗＝業務 rollback。測試以「讓 audit insert 在 RPC **已經** update 帳號、delete sessions **之後**才失敗」證明兩者一起回滾（此測試在非原子設計下會 fail）。
+> - **exemplar 選 `set_admin_disabled`**（已是 atomic RPC、已帶 actor、在 #15 名單上、metadata 無 PII、同時能證 `success` 與 `denied`）。**外部審查建議的 `resolve_pastoral_alert` 已否決**：`0028:8-9` 明載「resolved_at/resolved_by_admin_id 加起來，alert row 本身就是 audit trail」——接上去等於默默推翻既有決策。
+> - **重複停用照寫 audit（`state_changed:false`），否決「no-op 不寫」建議**：[`0026:69`](../parking-system/supabase/migrations/0026_admin_account_management.sql#L69) 的 `delete from admin_sessions` **無條件執行**（在 `if v_disabled_at is null` 分支之外），所以重複停用**會撤 session**＝真實安全動作，抑制該列＝隱藏它。「inert no-op 不寫」的通則仍適用於 #14A 容量重送。
+> - **actor 模型**：polymorphic、**無 FK**（`0028:5-7` 已記載同一個坑兩次：admin 在 `admin_accounts` 不在 `users`；audit 是第三次、且是唯一無法用平行欄位繞過的）。測試釘住「actor 與 entity 都被刪除後 audit 仍在」。**不存 username**（可變）。
+> - **⚠️ `0030` 不是 additive**：舊 4-arg overload 被 drop，DB 與 app **兩個部署順序都會短暫不相容**（PostgREST `PGRST202`，開發中已實際遇到）。影響範圍**僅 admin 帳號啟用/停用**，其餘 route、cron、會員/現場流程不受影響。**rollback 不能只回退 app**（舊 app 打不到新簽名）：forward-fix，或先還原 4-arg wrapper（但那會重新開出本 migration 要消滅的未稽核寫入路徑）。
+> - **未做**：2A-2 read-only viewer；2A-3 retention（**政策已決：線上 24 個月、每月清、bootstrap/purge 記錄 retention-exempt**，見 `feature-triage.md`；注意 trigger 會擋掉所有 DELETE，purge 需刻意逃生口）。
+> - **既有限制（substrate 修不了、viewer 不得掩飾）**：staff 寫入**無自然人身分**——`StaffSession` ＝ `{sessionId, eventId}`，`sessionId` 是**全場共用**的 per-event 列；`settle`（大量 no-show＋罰則）是破壞力最大的現場寫入，卻只能歸因到「知道本週 PIN 的某人」。
+
+> 前一刀 **Wave 1d（#27 通知內容 enrich）**（全套 1285／116 檔）：
 > - **⚠️ triage 的「粗體期限」不可行、未採用**：`lineTransport.ts:86` 送 `{ type: 'text' }`，**LINE 純文字沒有粗體／markdown**（全 repo 無 Flex）。真粗體＝改 Flex Message＝`renderTemplate` 從回傳 string 變訊息物件、transport 契約與 9 個 renderer 全改，屬通知層改版、不屬 Wave 1。**改以換行＋`⏰` 期限獨立成行**強調。
 > - **順手修掉一個現存 bug**：`p2_arrival_reminder` 原本把 **ISO 日期直接印給會友**（「提醒您 2026-07-19 的…」）。日期一律走 `memberSundayLabel` → 「7月19日 主日」。
 > - **開頭改成「【教會停車】＋換行＋您好，…」**：`【教會停車】` 是**寄件者標籤**（台灣簡訊慣例「【中華電信】您的帳單…」），不是稱謂。分段後「【教會停車】您好」自成一行 ⇒ 中文讀起來變成「跟教會停車問好」。標籤獨立一行後，`您好，` 回到它所屬的句子、對象是會友；手機不管在哪換行都不會再湊出那一行。同時拿掉開頭的 🙏（少了它當分隔，`您好` 改接逗號；`reservation_released`／`reservation_cancelled` 的主旨原以「您」開頭，會變成「您好，您…」疊字 → 拿掉該「您」，收件者本來就是本人）。測試釘住 `【教會停車】\n您好，` 開頭且不得出現 `【教會停車】您好`。
@@ -985,7 +1003,7 @@ business-chain（ops 正式路徑驅動）逐步結果：
 > - 兩份清單（搜尋結果／名冊）欄位相同 → 抽共用 `MemberTable`；其 DTO `MemberSearchItem` 放 **client-safe 的 `lib/memberAdminTypes.ts`**（`lib/supabase/server.ts` 只有註解防護、無 `server-only` 套件，client 元件不該有理由 import 到 service 模組）。
 > - 不匯出、不 bulk、不預載敏感事由（P2 事由只在明細頁讀）；role 分級仍待 #19。
 
-> 更前幾刀：Wave 1b 全套 1137；Wave 1a 全套 1135、`/staff/print`→404；Wave 0.1 全套 1131；Wave 0（#20/#21/#22＋migration `0029`）全套 1118／`db:verify` PASS；Wave -1 非 DB 906。
+> 更前幾刀：Wave 1d 全套 1285；Wave 1c 全套 1179；Wave 1b 全套 1137；Wave 1a 全套 1135、`/staff/print`→404；Wave 0.1 全套 1131；Wave 0（#20/#21/#22＋migration `0029`）全套 1118／`db:verify` PASS；Wave -1 非 DB 906。
 
 > **Wave 1b（#29／#30）**：
 > - **#29 候補序號**：新 `repo.getWaitingRank(eventId, allocationOrder)`＝同 event、仍 `waiting`、`allocation_order` 較小者 count **+1**（1-based）。**只數 `waiting`**——持 offer（`temp_approved`）者當下不佔候補位，但 `failOffer` 會讓他帶**原 `allocation_order`** 退回 waiting、**插回前面**，故序號可能**變大**；UI 明示「順序可能因取消、資格與分配狀態而變動」，這不是號碼牌。`allocation_order` 為 server-only，只有衍生的 `waitingRank` 進 DTO；rank 不明時回退既有文案，不編造序號。count 查詢 error 或 `count === null` 一律 **throw**（絕不默默顯示假的「第 1 位」）。
@@ -1070,9 +1088,10 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 ## 10. 本機開發備忘（重點，詳見 development_plan §12）
 
-- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0028` + seed）/ `db:verify` / `db:stop`。
+- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0030` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
 - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**；**`MEMBER_AUTH_MODE`（`mock`|`liff`；本機用 `mock`，`liff` 另需 `LINE_LOGIN_CHANNEL_ID` + `NEXT_PUBLIC_LIFF_ID`，見 [member-liff-setup.md](member-liff-setup.md)）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**（`NEXT_PUBLIC_LIFF_ID` 例外，非機密）；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。
+  - **⚠️ `audit_logs` 是明確例外，不要順手照辦**：它**只給 `service_role` SELECT**，DML（含 `TRUNCATE`）一律 revoke（`0030`）。**絕對不要**用 `grant ... on all tables in schema public to service_role` 這種 blanket 寫法——`0004:66` 就是這樣寫的，再來一次會**默默把 audit 的 append-only 打回去**。（`0030` 的 trigger 正是為此而存在的第二層，但別依賴它替你收尾。）同理 `private` schema 不授 `USAGE` 給 `service_role`：app 不能碰 audit writer 是刻意的。
 - 整合測試需先 `db:reset` 且設 `RUN_DB_TESTS=1` 才會執行；否則 gate 跳過。
 - 目前本機 Supabase stack 已停止（`npm run db:stop`）；下次開發前先 `db:start && db:reset`。
