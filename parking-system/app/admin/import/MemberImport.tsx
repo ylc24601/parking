@@ -25,6 +25,7 @@ interface ImportReport {
   groupConflicts: Array<{ phone: string; field: GroupConflictField; subject?: string; values: string[] }>
   reviewRequired: Array<{ phone: string; reason: string }>
   p2Retained: Array<{ phone: string }>
+  revokedRetained: Array<{ phone: string }>
   validationErrors: Array<{ line: number; errors: string[] }>
   truncated: boolean
   totals: {
@@ -34,6 +35,7 @@ interface ImportReport {
     groupConflicts: number
     reviewRequired: number
     p2Retained: number
+    revokedRetained: number
     validationErrors: number
   }
 }
@@ -349,6 +351,16 @@ function ReportView({ report }: { report: ImportReport }) {
         empty={report.p2Retained.length === 0}
       >
         {report.p2Retained.map((r, i) => (
+          <li key={i}>{r.phone}</li>
+        ))}
+      </IssueList>
+
+      <IssueList
+        title="已撤銷資格未被復原（名單標 P2，但曾由同工撤銷）" total={report.totals.revokedRetained}
+        empty={report.revokedRetained.length === 0}
+        note="匯入不會推翻同工的撤銷決定。若確實要恢復，請到該會友的明細頁重新核准。"
+      >
+        {report.revokedRetained.map((r, i) => (
           <li key={i}>{r.phone}</li>
         ))}
       </IssueList>

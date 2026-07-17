@@ -29,7 +29,7 @@ function run(over: Partial<MockRepo> = {}) {
 describe('applyForWeek', () => {
   it('computes the §4 priority from server-side eligibility and passes it to the RPC', async () => {
     const { repo, r } = run({
-      getMemberEligibility: vi.fn(async () => ({ p2_eligible: true, p2_reason: 'mobility_long', p2_valid_until: null })),
+      getMemberEligibility: vi.fn(async () => ({ p2_eligible: true, p2_reason: 'mobility_long', p2_valid_from: null, p2_valid_until: null })),
     })
     expect(await applyForWeek({ userId: USER, vehicleId: VEHICLE, requestedP2: false }, r, NOW)).toEqual({ ok: true })
     expect(repo.applyReservation).toHaveBeenCalledWith({
@@ -44,7 +44,7 @@ describe('applyForWeek', () => {
 
   it('a plain member lands at P3; a declared companion at P2', async () => {
     const { repo, r } = run({
-      getMemberEligibility: vi.fn(async () => ({ p2_eligible: true, p2_reason: 'child_companion', p2_valid_until: null })),
+      getMemberEligibility: vi.fn(async () => ({ p2_eligible: true, p2_reason: 'child_companion', p2_valid_from: null, p2_valid_until: null })),
     })
     await applyForWeek({ userId: USER, vehicleId: VEHICLE, requestedP2: true }, r, NOW)
     expect(repo.applyReservation.mock.calls[0][0].effectivePriority).toBe(2)

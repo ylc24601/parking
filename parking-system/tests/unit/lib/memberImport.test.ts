@@ -77,9 +77,20 @@ describe('computeEligibility', () => {
       .toMatchObject({ p2_reason: 'pregnancy', valid_until: '2026-11-01', reviewRequired: false })
   })
 
-  it('child_companion = max(child birthdate) + 5 years', () => {
+  it('child_companion = the YOUNGEST child\'s school-entry cohort, ending 8/31', () => {
+    // Changed in Wave 2B-2a (#10). Was max(birthdate) + 5 years to the day, which expired a
+    // child mid-school-year; now it runs to the 8/31 before they enter 小一 (see
+    // lib/eligibilityStatus.ts childCompanionValidUntil). The two birthdates are here to
+    // prove the YOUNGEST wins: 2024-08-15 is before the 9/1 cutoff, so 2024 + 6 → 2030-08-31.
     expect(computeEligibility({ reasonType: 3, childBirthdates: ['2022-03-01', '2024-08-15'], now: NOW }))
-      .toMatchObject({ p2_reason: 'child_companion', valid_until: '2029-08-15', reviewRequired: false })
+      .toMatchObject({ p2_reason: 'child_companion', valid_until: '2030-08-31', reviewRequired: false })
+  })
+
+  it('child_companion picks the youngest across the 9/1 cutoff, not the latest expiry', () => {
+    // A child born 9/2 belongs to the NEXT cohort, so the youngest child is still the one
+    // that decides — the rule must not accidentally become max(derived date).
+    expect(computeEligibility({ reasonType: 3, childBirthdates: ['2019-09-02', '2019-09-01'], now: NOW }))
+      .toMatchObject({ p2_reason: 'child_companion', valid_until: '2026-08-31' })
   })
 
   it('reason 3 with children wins over a pregnancy remark', () => {

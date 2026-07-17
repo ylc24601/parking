@@ -46,11 +46,24 @@ export async function listEligibilityReview(
   const rows = await repo.listEligibilityReview({ cutoffDate: cutoff, branchCap: BRANCH_CANDIDATE_CAP })
 
   const mapped = rows.flatMap(r => {
-    const base = deriveEligibilityStatus({ validUntil: r.p2_valid_until, reviewDate: r.p2_review_date }, today)
+    // as-of = today: this list answers "who needs a human NOW", not "who is P2 on some
+    // Sunday". The allocator asks the other question against the event's date.
+    const base = deriveEligibilityStatus(
+      { validUntil: r.p2_valid_until, reviewDate: r.p2_review_date, validFrom: r.p2_valid_from },
+      today,
+    )
     // Permanent rows (both dates null) can't satisfy the repo's <= cutoff filter, so
     // they shouldn't reach here; skip defensively rather than mislabel them.
     if (base === 'permanent') return []
-    const status: ReviewListStatus = base === 'active' ? 'upcoming' : base
+    const status: ReviewListStatus =
+      base === 'expired' ? 'expired'
+      : base === 'review_due' ? 'review_due'
+      // 'not_yet_effective' cannot occur yet — nothing writes p2_valid_from until 2B-2b.
+      // When it can, an approved-but-not-yet-started row is closest to 'upcoming': not
+      // expired, not overdue, just not open. Written out rather than folded into the
+      // 'active' branch so 2B-2b has to decide deliberately whether it earns its own
+      // section, instead of inheriting this mapping by accident.
+      : 'upcoming'
     return [{
       userId: r.user_id,
       displayName: r.display_name,

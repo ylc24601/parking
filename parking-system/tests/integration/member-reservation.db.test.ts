@@ -49,8 +49,9 @@ describe.skipIf(!RUN)('member apply/cancel (Phase 7 Slice 3) — local DB integr
         .throwOnError()
     }
     if (opts.reason) {
+      // review_status is the authority since 0032; p2_eligible is generated from it.
       await sb.from('user_eligibility').insert({
-        user_id: id, p2_eligible: true, p2_reason: opts.reason, p2_valid_until: opts.validUntil ?? null,
+        user_id: id, review_status: 'approved', p2_reason: opts.reason, p2_valid_until: opts.validUntil ?? null,
       }).throwOnError()
     }
     return { id, vehicleId: vehicleId! }

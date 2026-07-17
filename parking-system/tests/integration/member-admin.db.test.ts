@@ -42,8 +42,9 @@ describe.skipIf(!RUN)('admin member management (Phase 8 Slice 2) — local DB in
 
     await mkUser(A.id, `${TAG}A`, A.phone)
     await mkVehicle(A.id, `${TAG}CAR1`)
+    // review_status is the authority since 0032; p2_eligible is generated from it.
     await sb.from('user_eligibility').insert({
-      user_id: A.id, p2_eligible: true, p2_reason: 'mobility_long',
+      user_id: A.id, review_status: 'approved', p2_reason: 'mobility_long',
       p2_valid_until: '2099-01-01', p2_review_date: '2098-12-01',
     }).throwOnError()
     await sb.from('eligibility_dependents').insert({

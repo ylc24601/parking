@@ -114,6 +114,52 @@ describe('renderAuditDetails — #14A capacity actions', () => {
   })
 })
 
+describe('renderAuditDetails — #10 eligibility markers', () => {
+  it('says "未覆核", never "已撤銷", for the backfilled rows', () => {
+    // The whole reason 0032's enum has three states. The old boolean model could not record
+    // WHO revoked anything, so labelling these rows revoked would assert a human decision
+    // that never happened — into a row that can never be edited or deleted.
+    const r = renderAuditDetails('p2_eligibility.review_status_backfill', {
+      rows_backfilled: 12, approved_count: 9, unreviewed_count: 3, derived_from: 'p2_eligible',
+    })
+    expect(r.fallback).toBeNull()
+    expect(r.details).toEqual([
+      { label: '轉換筆數', value: '12 筆' },
+      { label: '轉換結果', value: '已核准 9 筆、未覆核 3 筆' },
+      { label: '資格權限', value: '不變（依原有 P2 狀態對應）' },
+    ])
+    expect(JSON.stringify(r)).not.toContain('撤銷')
+  })
+
+  it('renders the child-expiry recompute as extend-only', () => {
+    const r = renderAuditDetails('p2_eligibility.child_expiry_recompute', {
+      rows_recomputed: 4, rows_extended: 4, rows_shortened: 0, rule: 'tw_school_cohort_v1',
+    })
+    expect(r.details).toEqual([
+      { label: '重算筆數', value: '4 筆' },
+      { label: '新規則', value: '算到孩子入學前的 8/31（原為滿 5 歲當天）' },
+      { label: '影響', value: '延長 4 筆、縮短 0 筆' },
+    ])
+  })
+
+  it('a wrong-typed count falls back rather than rendering nonsense', () => {
+    expect(renderAuditDetails('p2_eligibility.review_status_backfill', {
+      rows_backfilled: '12', approved_count: 9, unreviewed_count: 3,
+    }).fallback).toBe(UNREADABLE_DETAIL)
+  })
+
+  it('never renders a member id even if a future writer smuggles one in', () => {
+    // These markers are aggregate by design: P2 eligibility is health-adjacent, so a single
+    // user id beside 「已核准」 would leak a medical fact about a named person.
+    const r = renderAuditDetails('p2_eligibility.review_status_backfill', {
+      rows_backfilled: 1, approved_count: 1, unreviewed_count: 0,
+      user_id: 'a0000000-0000-0000-0000-000000000002',
+    })
+    expect(JSON.stringify(r)).not.toContain('a0000000')
+    expect(r.unsupportedCount).toBe(1)
+  })
+})
+
 describe('renderAuditDetails — the allowlist holds', () => {
   it('never renders an extra key a future writer added, and counts it instead', () => {
     // The exact hazard this registry exists for: 0030's write-side denylist would

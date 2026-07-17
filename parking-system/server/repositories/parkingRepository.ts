@@ -140,6 +140,7 @@ export interface MemberAdminDetailRow {
   eligibility: {
     p2_eligible: boolean
     p2_reason: string | null
+    p2_valid_from: string | null
     p2_valid_until: string | null
     p2_review_date: string | null
     reviewed_at: string | null
@@ -154,6 +155,7 @@ export interface EligibilityReviewRow {
   user_id: string
   display_name: string
   p2_reason: string | null
+  p2_valid_from: string | null
   p2_valid_until: string | null
   p2_review_date: string | null
   reviewed_at: string | null
@@ -644,6 +646,9 @@ export interface ParkingRepository {
     dependents_added?: number
     plate_conflicts?: string[]
     retained_p2?: boolean // null-reason import landed on a member who already had P2 (kept, not revoked)
+    // A P2 row in the CSV landed on a member a 幹事 had explicitly REVOKED. The row is left
+    // untouched: an audited human decision outranks a bulk roster (0032). Reported, never silent.
+    retained_revoked?: boolean
   }>
   // Phase 5B Slice 2 — raw fields for the approve preview (the SERVICE masks them before output;
   // they are never printed/logged raw). Returns null only when the pending id doesn't exist.
@@ -824,6 +829,7 @@ export interface ParkingRepository {
   getMemberEligibility(userId: string): Promise<{
     p2_eligible: boolean
     p2_reason: string | null
+    p2_valid_from: string | null
     p2_valid_until: string | null
   } | null>
   getUserRole(userId: string): Promise<string | null>
@@ -1431,6 +1437,7 @@ export function createParkingRepository(
         dependents_added?: number
         plate_conflicts?: string[]
         retained_p2?: boolean
+        retained_revoked?: boolean
       }
     },
 
@@ -2045,11 +2052,16 @@ export function createParkingRepository(
     async getMemberEligibility(userId) {
       const { data, error } = await client
         .from('user_eligibility')
-        .select('p2_eligible, p2_reason, p2_valid_until')
+        .select('p2_eligible, p2_reason, p2_valid_from, p2_valid_until')
         .eq('user_id', userId)
         .maybeSingle()
       if (error) throw new Error(`getMemberEligibility failed: ${error.message}`)
-      return (data as { p2_eligible: boolean; p2_reason: string | null; p2_valid_until: string | null } | null) ?? null
+      return (data as {
+        p2_eligible: boolean
+        p2_reason: string | null
+        p2_valid_from: string | null
+        p2_valid_until: string | null
+      } | null) ?? null
     },
 
     async getUserRole(userId) {
@@ -2213,7 +2225,7 @@ export function createParkingRepository(
 
       const { data: elig, error: ee } = await client
         .from('user_eligibility')
-        .select('p2_eligible, p2_reason, p2_valid_until, p2_review_date, reviewed_at')
+        .select('p2_eligible, p2_reason, p2_valid_from, p2_valid_until, p2_review_date, reviewed_at')
         .eq('user_id', userId)
         .maybeSingle()
       if (ee) throw new Error(`getMemberAdminDetail eligibility failed: ${ee.message}`)
@@ -2236,7 +2248,8 @@ export function createParkingRepository(
         })),
         eligibility: elig
           ? (elig as {
-              p2_eligible: boolean; p2_reason: string | null; p2_valid_until: string | null
+              p2_eligible: boolean; p2_reason: string | null
+              p2_valid_from: string | null; p2_valid_until: string | null
               p2_review_date: string | null; reviewed_at: string | null
             })
           : null,
@@ -2252,14 +2265,17 @@ export function createParkingRepository(
       type Raw = {
         user_id: string
         p2_reason: string | null
+        p2_valid_from: string | null
         p2_valid_until: string | null
         p2_review_date: string | null
         reviewed_at: string | null
         users: { display_name: string } | null
       }
-      // Disambiguate the embed: user_eligibility has TWO FKs to users (user_id and
-      // reviewed_by), so PostgREST needs the FK column hint to pick the right one.
-      const SELECT = 'user_id, p2_reason, p2_valid_until, p2_review_date, reviewed_at, users!user_id!inner(display_name)'
+      // The !user_id FK hint was originally REQUIRED to disambiguate: user_eligibility had
+      // two FKs to users (user_id and reviewed_by). Since 0032 repointed reviewed_by at
+      // admin_accounts there is only one, so the hint is no longer load-bearing — it stays
+      // because naming the FK explicitly is what keeps this query immune to the next one.
+      const SELECT = 'user_id, p2_reason, p2_valid_from, p2_valid_until, p2_review_date, reviewed_at, users!user_id!inner(display_name)'
 
       // Two date-ordered branches: each returns the EARLIEST rows by its own date, so
       // truncating at branchCap keeps the most-urgent cases (an unordered .or()+limit
@@ -2285,6 +2301,7 @@ export function createParkingRepository(
             user_id: r.user_id,
             display_name: r.users?.display_name ?? '',
             p2_reason: r.p2_reason,
+            p2_valid_from: r.p2_valid_from,
             p2_valid_until: r.p2_valid_until,
             p2_review_date: r.p2_review_date,
             reviewed_at: r.reviewed_at,

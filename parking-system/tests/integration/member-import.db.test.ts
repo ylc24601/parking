@@ -75,10 +75,15 @@ describe.skipIf(!RUN)('member import (Phase 6) — local DB integration', () => 
     const m2 = (await userByPhone('0955000002'))!
     expect(await eligibilityOf(m2.id)).toMatchObject({ p2_eligible: true, p2_reason: 'mobility_short', p2_valid_until: '2026-08-10' })
 
-    // child_companion: one member, TWO vehicles, valid_until = max(child birthdate)+5y, 2 dependents
+    // child_companion: one member, TWO vehicles, 2 dependents. valid_until follows the
+    // YOUNGEST child's school-entry cohort since Wave 2B-2a (#10): born 2024-08-15, before
+    // the 9/1 cutoff, so 2024 + 6 → 2030-08-31 (was max(birthdate)+5y = 2029-08-15).
+    // p2_child_birthdate records the source the date was derived from.
     const m4 = (await userByPhone('0955000004'))!
     expect((await vehiclesOf(m4.id)).map(v => v.license_plate_normalized).sort()).toEqual(['TEST4004', 'TEST4040'])
-    expect(await eligibilityOf(m4.id)).toMatchObject({ p2_reason: 'child_companion', p2_valid_until: '2029-08-15' })
+    expect(await eligibilityOf(m4.id)).toMatchObject({
+      p2_reason: 'child_companion', p2_valid_until: '2030-08-31', p2_child_birthdate: '2024-08-15',
+    })
     expect((await dependentsOf(m4.id)).filter(d => d.dependent_kind === 'child')).toHaveLength(2)
 
     // pregnancy: 6-month window, no dependents
@@ -236,5 +241,56 @@ describe.skipIf(!RUN)('roster import (Wave 0 #21) — local DB integration', () 
     // eligibility is untouched — the roster import never revokes an existing P2.
     const p2 = (await userByPhone('0955001002'))!
     expect(await eligRow(p2.id)).toMatchObject({ p2_eligible: true, p2_reason: 'pregnancy' })
+  })
+
+  // ── Wave 2B-2a (#10): the mirror image of retained_p2 ─────────────────────────
+  // 0029:9 promised import never REVOKES. It said nothing about import silently
+  // RE-GRANTING, and it did: `on conflict do update set p2_eligible = true` flipped a
+  // revoked member straight back to eligible, wiping an audited human decision with no
+  // audit row of its own. Import may ESTABLISH eligibility; it may not overturn a review.
+  it('a CSV cannot resurrect an eligibility a 幹事 revoked (retained_revoked); dry-run == apply', async () => {
+    const p2 = (await userByPhone('0955001002'))!
+    await sb.from('user_eligibility')
+      .update({ review_status: 'revoked', p2_valid_until: '2030-01-01' })
+      .eq('user_id', p2.id).throwOnError()
+
+    const csv = '姓名,手機,車牌,優先序,P2事由\n乙,0955001002,ROST1002,P2,孕婦'
+
+    const dry = await importMembersFromCsvText({ csvText: csv, dryRun: true }, repo)
+    expect(dry.revokedRetained).toEqual([{ phone: '0955001002' }])
+    // The preview must not promise dependent writes that apply won't make.
+    expect(dry.dependentsAdded).toBe(0)
+
+    const report = await importMembersFromCsvText({ csvText: csv, dryRun: false }, repo)
+    expect(report.revokedRetained).toEqual([{ phone: '0955001002' }])
+    expect(report.totals.revokedRetained).toBe(1)
+
+    // The row is untouched — not merely "still revoked". A re-approve that also reset the
+    // dates would be just as much an overturned decision.
+    const after = (await eligRow(p2.id))!
+    expect(after).toMatchObject({ review_status: 'revoked', p2_eligible: false, p2_valid_until: '2030-01-01' })
+  })
+
+  it('an UNREVIEWED member listed as P2 is approved normally — only revoke is protected', async () => {
+    // The complement, and the reason 0032's enum needed three states: if legacy non-P2
+    // rows had been backfilled to 'revoked', this member would be permanently locked out
+    // of the roster's reach and a 幹事 would have to re-approve them by hand.
+    const p3 = (await userByPhone('0955001001'))!
+    await sb.from('user_eligibility')
+      .insert({ user_id: p3.id, review_status: 'unreviewed', p2_reason: null }).throwOnError()
+
+    const csv = '姓名,手機,車牌,優先序,P2事由\n甲,0955001001,ROST1001,P2,孕婦'
+    const report = await importMembersFromCsvText({ csvText: csv, dryRun: false }, repo)
+    expect(report.revokedRetained).toEqual([])
+    expect(await eligRow(p3.id)).toMatchObject({ review_status: 'approved', p2_eligible: true, p2_reason: 'pregnancy' })
+  })
+
+  it('import never claims a human reviewed anything', async () => {
+    // A roster import is not a named review, so reviewed_by/at stay null and 「最近覆核」
+    // honestly renders as —. Writing them here would forge a review that never happened.
+    const p2 = (await userByPhone('0955001002'))!
+    const row = (await eligRow(p2.id))!
+    expect(row.reviewed_by).toBeNull()
+    expect(row.reviewed_at).toBeNull()
   })
 })
