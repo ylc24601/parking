@@ -139,9 +139,13 @@ comment on column user_eligibility.p2_valid_from is
   'Nothing writes this until 2B-2b, so it is NULL everywhere today and cannot change any allocation yet.';
 
 comment on column user_eligibility.p2_child_birthdate is
-  'For child_companion: the YOUNGEST child''s birthdate that p2_valid_until was derived from. '
-  'Deliberately NOT dependent_birthdate — that column is the FIRST dependent in the CSV (0029:74), '
-  'which is not necessarily the youngest, so it cannot serve as the derivation source.';
+  'MINOR-DEPENDENT PII. Must not appear in audit metadata, logs, analytics, list DTOs, or error '
+  'messages. Session-gated eligibility detail / review surfaces only, and only where the exact date '
+  'is genuinely needed; elsewhere report PRESENCE (a boolean), never the value. '
+  'private.append_audit_log rejects it at the write boundary (see the sanitizer note in this file). '
+  'Business meaning: for child_companion, the YOUNGEST child''s birthdate that p2_valid_until was '
+  'derived from. Deliberately NOT dependent_birthdate — that column is the FIRST dependent in the '
+  'CSV (0029:74), not necessarily the youngest, so it cannot serve as the derivation source.';
 
 comment on column user_eligibility.review_version is
   'Optimistic lock for 2B-2b. Monotonic counter + caller-supplied expected value compared inside a '
@@ -290,6 +294,122 @@ begin
       'rows_shortened',  v_shortened,
       'rule',            'tw_school_cohort_v1'));
 end $$;
+
+-- ── Close the audit sanitizer against birthdate-shaped keys ────────────────────
+-- 0030's denylist is an EXACT key match, and it says so ("'job_name' or
+-- 'review_note_present' are unaffected"). It carries 'birthdate' — which stops a key
+-- literally named that, and nothing else. Verified against the live DB before writing
+-- this: append_audit_log happily accepted
+--     {"p2_child_birthdate_from":"2020-09-01","p2_child_birthdate_to":"2021-03-02"}
+-- and returned a row id. audit_logs has UPDATE/DELETE/TRUNCATE revoked AND trigger-blocked,
+-- so that row can never be corrected — a minor's date of birth, permanent, in a table
+-- whose whole design is that nobody can take anything out of it.
+--
+-- Until this migration that was hypothetical: no column held a child's DOB. p2_child_birthdate
+-- makes it a live risk, and 2B-2b adds the write RPC that would naturally name its metadata
+-- after the column it changed. The boundary has to exist BEFORE the writer does.
+--
+-- The read-side registry (auditPresentation.ts) does NOT cover this. It stops an unknown key
+-- being DISPLAYED; it cannot stop it being STORED. Display is recoverable — storage here is not.
+--
+-- The rule blocks VALUES, not vocabulary: a birthdate-shaped key may only ever hold a boolean.
+-- That deliberately keeps `child_birthdate_present: true` legal — recording THAT a birthdate is
+-- on file is exactly how a writer should answer the question without leaking the answer.
+create or replace function private.append_audit_log(
+  p_actor_type          audit_actor_type,
+  p_actor_id            uuid,
+  p_actor_session_id    uuid,
+  p_actor_role_snapshot text,
+  p_action              text,
+  p_entity_type         text,
+  p_entity_id           uuid,
+  p_weekly_event_id     uuid,
+  p_request_id          uuid,
+  p_result              audit_result,
+  p_metadata            jsonb
+) returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_id  uuid;
+  v_key text;
+  -- Never acceptable in an audit row, no matter which action is writing. Store the
+  -- stable ID and resolve for display instead; record that a note EXISTS, never its
+  -- text. (Exact key match — 'job_name' or 'review_note_present' are unaffected.)
+  v_forbidden text[] := array[
+    'phone', 'phone_number', 'mobile',
+    'line_id', 'line_user_id', 'line_group_id',
+    'token', 'session_token', 'binding_code',
+    'password', 'password_hash', 'pin', 'pin_hash',
+    'plate', 'license_plate',
+    'name', 'display_name',
+    'note', 'review_note', 'reason_text', 'remarks',
+    'birthdate', 'address', 'email'
+  ];
+begin
+  if p_metadata is null or jsonb_typeof(p_metadata) <> 'object' then
+    raise exception 'append_audit_log: metadata must be a JSON object';
+  end if;
+
+  if pg_column_size(p_metadata) > 2048 then
+    raise exception 'append_audit_log: metadata too large (% bytes)', pg_column_size(p_metadata);
+  end if;
+
+  for v_key in select jsonb_object_keys(p_metadata) loop
+    if jsonb_typeof(p_metadata -> v_key) not in ('string', 'number', 'boolean', 'null') then
+      raise exception
+        'append_audit_log: metadata must be flat — key % holds a %',
+        v_key, jsonb_typeof(p_metadata -> v_key);
+    end if;
+    if v_key = any(v_forbidden) then
+      raise exception 'append_audit_log: metadata key % is never allowed in an audit row', v_key;
+    end if;
+    -- Wave 2B-2a (#10): catches what the exact list cannot see — p2_child_birthdate,
+    -- child_birthdate, youngest_child_birthdate, dependent_birthdate, *_birthdate_from/_to,
+    -- birth_date, dob. A boolean passes so presence stays reportable.
+    if v_key ~ '(birth_?date)|((^|_)dob($|_))'
+       and jsonb_typeof(p_metadata -> v_key) <> 'boolean' then
+      raise exception
+        'append_audit_log: key % is birthdate-shaped and holds a %; a date of birth must never be '
+        'stored in an append-only audit row — record presence as a boolean instead',
+        v_key, jsonb_typeof(p_metadata -> v_key);
+    end if;
+  end loop;
+
+  insert into audit_logs (
+    actor_type, actor_id, actor_session_id, actor_role_snapshot,
+    action, entity_type, entity_id, weekly_event_id,
+    request_id, result, metadata_redacted
+  ) values (
+    p_actor_type, p_actor_id, p_actor_session_id, p_actor_role_snapshot,
+    p_action, p_entity_type, p_entity_id, p_weekly_event_id,
+    p_request_id, p_result, p_metadata
+  )
+  returning id into v_id;
+
+  return v_id;
+end $$;
+
+-- create or replace preserves 0030's grants (EXECUTE to nobody), but re-assert rather than
+-- rely on that: this function is the only path into audit_logs, and a silent grant would
+-- hand the app the ability to forge rows.
+revoke all on function private.append_audit_log(
+  audit_actor_type, uuid, uuid, text, text, text, uuid, uuid, uuid, audit_result, jsonb
+) from public, anon, authenticated, service_role;
+
+-- ⚠️ 2B-2b's audit contract for eligibility, fixed HERE so the write RPC inherits a boundary
+-- instead of inventing one. `p2_eligibility.*` metadata may carry ONLY:
+--     child_birthdate_present   boolean   -- THAT a DOB is on file, never which
+--     p2_valid_until_from/_to   date str  -- the derived expiry being changed
+--     p2_valid_from_from/_to    date str
+--     expiry_rule               text      -- e.g. 'tw_school_cohort_v1'
+--     review_status_from/_to    text
+-- and never a birthdate, a name, a note, or a reason's free text.
+-- Known and accepted: the derived expiry discloses the child's school COHORT (birth year, and
+-- which side of 9/1) — that is unavoidable, since the expiry change is the very thing being
+-- audited, and it is far weaker than a DOB. Stated so it stays a decision, not an oversight.
 
 -- ── import_member: same signature, rewritten eligibility upsert ────────────────
 -- Changes vs 0029 (body only — the signature is byte-identical, see the DEPLOY note):

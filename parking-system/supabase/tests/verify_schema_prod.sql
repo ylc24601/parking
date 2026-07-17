@@ -814,4 +814,22 @@ begin
   raise notice 'PASS: P2 eligibility model — review_status authoritative, p2_eligible generated and date-free';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 29 assertions passed =='
+-- ── 30. Audit sanitizer blocks birthdate VALUES (verify_schema.sql #36c) ─────────
+-- Catalog-only: the behavioural probe writes rows, and audit_logs is append-only, so it
+-- stays local. Here we assert the guard's SOURCE is present — 0030's denylist is exact-match
+-- and cannot see p2_child_birthdate, so this pattern check is the only thing standing between
+-- a minor's DOB and a row nobody can ever delete.
+do $$
+begin
+  if not exists (
+    select 1 from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'private' and p.proname = 'append_audit_log'
+       and p.prosrc like '%birth_?date%'
+  ) then
+    raise exception 'FAIL: private.append_audit_log lost the birthdate-shaped key guard (2B-2a/#10)';
+  end if;
+  raise notice 'PASS: audit sanitizer retains the birthdate-value guard';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 30 assertions passed =='

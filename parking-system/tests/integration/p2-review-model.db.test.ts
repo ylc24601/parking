@@ -172,6 +172,60 @@ describe.skipIf(!RUN)('P2 eligibility model (Wave 2B-2a / #10)', () => {
     })
   })
 
+  // ── A minor's DOB must not be storable in an append-only row ──────────────────
+  describe('audit sanitizer rejects birthdate-shaped keys (Wave 2B-2a)', () => {
+    // 0032 introduces p2_child_birthdate, so a future writer naming metadata after the
+    // column it changed is the obvious next step — and 0030's denylist is an EXACT key
+    // match, so 'p2_child_birthdate_from' sailed straight through before this.
+    //
+    // Why this matters more than a display bug: audit_logs has UPDATE/DELETE/TRUNCATE
+    // revoked AND trigger-blocked. A DOB written here cannot be corrected or removed by
+    // anyone. The read-side registry (auditPresentation) stops an unknown key being
+    // DISPLAYED — it cannot stop it being STORED.
+    //
+    // append_audit_log grants EXECUTE to nobody, so these go through the owner connection;
+    // that is also the strongest form of the test — even the owner cannot store one.
+    // Deliberately NOT a p2_eligibility.* action: the two ALLOW cases below write real rows,
+    // and audit_logs is append-only, so they can never be cleaned up. A p2_eligibility.*
+    // probe would lodge itself in the marker assertions below, permanently.
+    const write = (metadata: string) =>
+      pg.query(
+        `select private.append_audit_log('system',null,null,null,'probe.sanitizer',
+           'user_eligibility',null,null,gen_random_uuid(),'success',$1::jsonb)`,
+        [metadata],
+      )
+
+    it.each([
+      ['p2_child_birthdate',        '{"p2_child_birthdate":"2020-09-01"}'],
+      ['p2_child_birthdate_from/to','{"p2_child_birthdate_from":"2020-09-01","p2_child_birthdate_to":"2021-03-02"}'],
+      ['child_birthdate',           '{"child_birthdate":"2020-09-01"}'],
+      ['youngest_child_birthdate',  '{"youngest_child_birthdate":"2020-09-01"}'],
+      ['dependent_birthdate',       '{"dependent_birthdate":"2020-09-01"}'],
+      ['birth_date',                '{"birth_date":"2020-09-01"}'],
+      ['dob',                       '{"dob":"2020-09-01"}'],
+      ['child_dob_from',            '{"child_dob_from":"2020-09-01"}'],
+    ])('refuses %s', async (_label, metadata) => {
+      await expect(write(metadata)).rejects.toThrow(/birthdate-shaped|never allowed/)
+    })
+
+    it('refuses a birthdate smuggled as a number, not just a string', async () => {
+      await expect(write('{"p2_child_birthdate":20200901}')).rejects.toThrow(/birthdate-shaped/)
+    })
+
+    it('ALLOWS a boolean presence flag — the rule blocks values, not vocabulary', async () => {
+      // This is how 2B-2b must answer "is a birthdate on file": report THAT, never which.
+      // If this ever starts failing, the sanitizer has become a blunt keyword ban and the
+      // write RPC will be pushed toward a vaguer key that leaks more, not less.
+      await expect(write('{"child_birthdate_present":true}')).resolves.toBeDefined()
+    })
+
+    it('still allows the derived expiry, which is what 2B-2b actually audits', async () => {
+      await expect(write(
+        '{"p2_valid_until_from":"2025-08-31","p2_valid_until_to":"2026-08-31","expiry_rule":"tw_school_cohort_v1"}',
+      )).resolves.toBeDefined()
+    })
+  })
+
   // ── The markers 0032 actually wrote, through the real presenter ───────────────
   describe("0032's migration markers render for real", () => {
     // The unit tests in auditPresentation.test.ts assert the renderers against metadata

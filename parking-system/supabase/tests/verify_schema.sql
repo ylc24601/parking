@@ -890,6 +890,37 @@ begin
   raise notice 'PASS: p2_eligible tracks review_status and rejects direct writes';
 end $$;
 
+-- ── 36c. A minor's DOB cannot be stored in an append-only audit row (2B-2a / #10) ─
+do $$
+declare
+  v_stored uuid;
+begin
+  -- 0030's denylist is an EXACT key match, so it stops 'birthdate' and nothing near it.
+  -- 0032 introduced p2_child_birthdate, making a birthdate-named metadata key a live
+  -- possibility for the first time. audit_logs cannot be updated, deleted or truncated —
+  -- so a DOB written here is permanent. This must fail closed forever.
+  begin
+    select private.append_audit_log('system', null, null, null, 'probe.verify', 'user_eligibility',
+             null, null, gen_random_uuid(), 'success',
+             '{"p2_child_birthdate_from":"2020-09-01"}'::jsonb)
+      into v_stored;
+    raise exception 'FAIL: a child birthdate was ACCEPTED into audit metadata (row %) — the sanitizer is not closed', v_stored;
+  exception when others then
+    if sqlstate = 'P0001' and sqlerrm like 'FAIL:%' then raise; end if;
+  end;
+
+  -- ...but presence must stay reportable, or the write RPC gets pushed toward a vaguer key
+  -- that leaks more, not less.
+  select private.append_audit_log('system', null, null, null, 'probe.verify', 'user_eligibility',
+           null, null, gen_random_uuid(), 'success', '{"child_birthdate_present":true}'::jsonb)
+    into v_stored;
+  if v_stored is null then
+    raise exception 'FAIL: a boolean presence flag was rejected — the sanitizer has become a keyword ban';
+  end if;
+
+  raise notice 'PASS: audit sanitizer refuses birthdate VALUES while allowing presence flags';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='
