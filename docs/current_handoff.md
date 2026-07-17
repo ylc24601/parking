@@ -954,7 +954,30 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 2A-1（#15 Audit substrate，PR #38 / squash `8513912`）
+### Current HEAD 最近驗證：Wave 2A-2（#15 稽核唯讀頁，PR #39 / squash `d2e6890`）
+
+| 指令 | 結果 |
+|------|------|
+| `npx tsc --noEmit` / `npx eslint .` | ✅ exit 0 |
+| `npm test`（不接 DB） | ✅ **1165 passed**（89 檔／193 skipped） |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1358 passed**（120 檔全過） |
+| `npm run db:verify` | ✅ **35**（**不變**＝本刀 app-only、無 migration，這正是 scope gate） |
+| `npm run build` | ✅ 路由清單顯示 **`ƒ /admin/audit`**（＝`force-dynamic` 真的生效） |
+| 手動實跑（dev + curl） | 未登入 `/admin/audit`→**307 `/admin`**；乾淨 DB→bootstrap 列顯示「系統／稽核記錄啟用／未回填（紀錄自此開始）」；真實停用一位管理員→該列 actor 顯示 **王姐妹**、對象 **陳弟兄**、已完成／已變更、`操作編號：尾碼 d13d9a`（完整 UUID 在 `title`）；`?cursor=garbage`→**200 最新頁非 500**；古老 cursor→空狀態；HTML 無 `scrypt$`／`password_hash`／`metadata_redacted`；`/admin/bindings` 在 formatter 抽出後仍正常 |
+| DB schema | **本刀無 migration**（仍 `0001–0030`） |
+
+> **Wave 2A-2（稽核唯讀頁）＝ #15 的讀取端；至此 #15 只剩 2A-3 retention。**
+> - **keyset cursor 而非 offset**（外部審查要求，且複審後我同意——原本主張「與 `/admin/members` 一致」是錯的）：`audit_logs` **append-only 且最新在前**，新列一律插在**頂端** ⇒ offset 分頁「跨頁重複」是**系統性結果不是 race**。名冊按 `display_name` 排、插入位置隨機且罕見，那份容忍**不能移轉**到「時間軸型證據」。附帶好處：keyset **反而更小**——不用 offset 數學、不用 count query、不用 `PGRST103` handler、也**不必動 Wave 1c 的 `parsePage`**。
+> - **動工前先對真 PostgREST 驗三件事**（整個 cursor 靠它們）：① `created_at` 回**微秒**（`…40.355854+00:00`），`new Date(ts).toISOString()` 會截成 `…40.355Z`，用它 `created_at.eq` **比對到 0 列** ⇒ cursor 若經 `Date` round-trip 會**默默漏列**（且只有在時間戳相同時才發作，任何沒有 tie 的測試都看起來正常）。故 cursor 存**原字串**、repo **不得 `parseDate`** 這欄、驗證**刻意不用 `Date.parse`**（它「會動」正是問題：會教下一個人以為能轉）。② **supabase-js 會正確 url-encode `or()`**，raw curl 不會（`+` 變空格→PostgREST `22007`）。③ **兩個 arm 都驗過**：同 `created_at`＋較大 id 命中、較小 id 不命中。
+> - **metadata 改為 action-owned allowlist**（外部審查要求，同意）：寫入端已是 allowlist＋PII key denylist，但 **denylist 無法知道它沒被告知的事**——未來 RPC 寫 `eligibility_comment: '因罹患…'` 會**原封通過** 0030 的 denylist，generic viewer 就會印出來。兩層獨立 ⇒ 任一有缺口都不致外洩。**時機**：#10 的 metadata 就是資格資料，pattern 必須**先於 #10** 存在。三態固定：known+valid→該 action 自己的 details（＋未認領 key 的**數量**）；known+型別錯→「格式無法辨識」**無數量**；unknown action→**顯示 raw code**（藏列＝讀成「沒發生」）但**完全不顯示 metadata**、亦無數量（數量會被讀成「因權限被隱藏」）。數量**永不含 key 名**。
+> - **DTO 根本沒有 metadata 欄位** ⇒ 頁面**不可能**碰到 `metadata_redacted`（型別層保證，非慣例）；另有測試證明 renderer 不會把它洗進 `details`。
+> - **現場同工 session 永不解析成人**：測試刻意讓某 admin 的 UUID 與 session id **完全相同**，仍不得顯示姓名、且**根本不查**。**會友 actor/entity 只顯示 type＋ID 尾碼**：#10 要遮罩姓名必須**明確擴充 registry**，而不是從 generic resolver 繼承 PII 曝光（故**刻意不做** `resolveEntityName(type, id)`）。**已刪除的 actor 是正常列不是錯誤**（`actor_id` 無 FK 就是為了讓 log 活得比它指涉的列久）。
+> - **文案不得聲稱尚未實作的控制**：2A-3 未上線＝**目前無限累積**，寫死「紀錄保留 24 個月」會是**假的隱私聲稱**。故加「自動清理將於後續維運功能啟用」，並用**測試釘住這句**——**2A-3 上線時該測試會 fail**，強迫刻意更新文案（[[dev-lessons-retrospective]] 15）。
+> - `fmtTaipeiDateTime` 抽到 `lib/taipeiDate.ts`（第二個 surface 需要**同一格式**＝當初抽 `MemberTable` 的同一條件）；repo 其餘 4 個 Intl formatter 選項不同、**不動**。
+> - **實跑環境雷**（非本 repo 問題但會再咬人）：VS Code Live Preview 佔用 **IPv4 `127.0.0.1:3000`** 提供靜態檔，Next dev 綁 **IPv6 `*:3000`** ⇒ `curl localhost:3000` 會打到 VS Code 得到 404。實跑請用 **`http://[::1]:3000`**。
+> - **未做**：filters（依 actor/entity/action）——0030 另兩個 index 已為此存在，但目前列數少，filter UI 是家具；等 #10/#14A 讓 log 有量再說。
+
+### 前一刀：Wave 2A-1（#15 Audit substrate，PR #38 / squash `8513912`）
 
 | 指令 | 結果 |
 |------|------|
