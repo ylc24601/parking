@@ -921,6 +921,109 @@ begin
   raise notice 'PASS: audit sanitizer refuses birthdate VALUES while allowing presence flags';
 end $$;
 
+-- ── 37. P2 write path: RPCs locked down, invariants enforced (2B-2b / #10) ──────
+do $$
+declare
+  v_priv text;
+  v_sig  text;
+begin
+  foreach v_sig in array array[
+    'set_p2_eligibility(uuid,int,text,p2_reason,date,date,date,date,text,uuid,uuid,uuid)',
+    'mark_p2_reviewed(uuid,int,date,uuid,uuid,uuid)'
+  ] loop
+    if not exists (select 1 from pg_proc where oid = to_regprocedure(v_sig) and prosecdef) then
+      raise exception 'FAIL: % must be SECURITY DEFINER to reach the audit writer', v_sig;
+    end if;
+    if not exists (
+      select 1 from pg_proc where oid = to_regprocedure(v_sig)
+         and array_to_string(proconfig, ',') like '%search_path%'
+    ) then
+      raise exception 'FAIL: SECURITY DEFINER % must pin search_path', v_sig;
+    end if;
+    foreach v_priv in array array['anon', 'authenticated', 'public'] loop
+      if has_function_privilege(v_priv, v_sig, 'execute') then
+        raise exception 'FAIL: % must not execute %', v_priv, v_sig;
+      end if;
+    end loop;
+    if not has_function_privilege('service_role', v_sig, 'execute') then
+      raise exception 'FAIL: service_role lacks execute on %', v_sig;
+    end if;
+  end loop;
+
+  -- The governance boundary import_member checks. If reviewed_at/reviewed_by could drift
+  -- apart, "has a human decided?" would have two different answers.
+  if not exists (select 1 from pg_constraint where conname = 'eligibility_reviewed_pair_ck') then
+    raise exception 'FAIL: eligibility_reviewed_pair_ck missing — reviewed_at/reviewed_by could diverge';
+  end if;
+
+  -- 「不可覛改」 is a DB guarantee, not a UI promise: this CHECK is the whole claim.
+  if not exists (select 1 from pg_constraint where conname = 'eligibility_child_expiry_derived_ck') then
+    raise exception 'FAIL: eligibility_child_expiry_derived_ck missing — a hand-set child expiry would be accepted';
+  end if;
+  if not exists (select 1 from pg_proc where proname = 'child_companion_valid_until' and provolatile = 'i') then
+    raise exception 'FAIL: child_companion_valid_until must be IMMUTABLE or the CHECK cannot call it';
+  end if;
+
+  -- ⚠️ The DB session is UTC, so current_date is a UTC date: between 00:00-08:00 Taipei it is
+  -- YESTERDAY, and the past-date guards would refuse a legitimate same-day review date for 8
+  -- hours every day. This pins the fix so nobody "simplifies" it back.
+  foreach v_sig in array array['set_p2_eligibility', 'mark_p2_reviewed'] loop
+    if not exists (select 1 from pg_proc where proname = v_sig and prosrc like '%Asia/Taipei%') then
+      raise exception 'FAIL: % lost its Asia/Taipei date computation (current_date is UTC here)', v_sig;
+    end if;
+    -- Strip `-- comments` before matching: both functions EXPLAIN why current_date is wrong,
+    -- and a naive scan flags the explanation as the offence.
+    if exists (
+      select 1 from pg_proc
+       where proname = v_sig
+         and regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ '\mcurrent_date\M'
+    ) then
+      raise exception 'FAIL: % uses current_date — that is a UTC date on this server', v_sig;
+    end if;
+  end loop;
+
+  raise notice 'PASS: P2 write RPCs locked down, governance pair + derived expiry pinned, Taipei date computed in SQL';
+end $$;
+
+-- ── 37b. The write path actually bites (behavioural) ────────────────────────────
+do $$
+declare
+  v_admin uuid;
+  v_user  uuid;
+  v_r     jsonb;
+begin
+  insert into admin_accounts (username, password_hash)
+       values ('verify-p2-writer', 'scrypt$notarealhash') returning id into v_admin;
+  insert into users (display_name) values ('verify-p2-target') returning id into v_user;
+
+  -- The delivery blocker: a general member has NO eligibility row, and 幹事 must be able to
+  -- approve them anyway. If this ever returns not_found, #10 has silently regressed to
+  -- "edit-only" and the church is back to needing a CSV.
+  v_r := set_p2_eligibility(v_user, 0, 'approved', 'pregnancy', null, '2099-01-01', null,
+                            '2098-12-01', null, v_admin, gen_random_uuid(), gen_random_uuid());
+  if not (v_r->>'ok')::boolean then
+    raise exception 'FAIL: could not create eligibility for a member who had none (%)', v_r->>'reason';
+  end if;
+  if (select reviewed_at from user_eligibility where user_id = v_user) is null then
+    raise exception 'FAIL: an approve did not set reviewed_at — import would overwrite it';
+  end if;
+
+  -- A revoked row must not be markable as reviewed, or the cleared review date comes back.
+  v_r := set_p2_eligibility(v_user, 1, 'revoked', null, null, '2099-01-01', null, null, null,
+                            v_admin, gen_random_uuid(), gen_random_uuid());
+  if not (v_r->>'ok')::boolean then raise exception 'FAIL: revoke refused (%)', v_r->>'reason'; end if;
+  if (select p2_review_date from user_eligibility where user_id = v_user) is not null then
+    raise exception 'FAIL: revoke did not clear p2_review_date';
+  end if;
+
+  v_r := mark_p2_reviewed(v_user, 2, '2099-06-30', v_admin, gen_random_uuid(), gen_random_uuid());
+  if v_r->>'reason' is distinct from 'eligibility_not_approved' then
+    raise exception 'FAIL: mark_p2_reviewed accepted a non-approved row (%)', v_r;
+  end if;
+
+  raise notice 'PASS: P2 write path creates for a no-row member, governs on approve, and refuses to review a revoked row';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

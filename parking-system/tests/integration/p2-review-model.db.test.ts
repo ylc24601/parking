@@ -153,8 +153,14 @@ describe.skipIf(!RUN)('P2 eligibility model (Wave 2B-2a / #10)', () => {
 
       // A MEMBER id — exactly what 0001's FK pointed at, and exactly what a reviewer never
       // is. This must bounce, or the column could hold a member as its own reviewer.
+      // reviewed_at is set alongside it because 0033's eligibility_reviewed_pair_ck would
+      // otherwise reject the row first, for a different (also correct) reason — and then this
+      // test would be proving the pair check rather than the FK it claims to test.
       await expect(
-        pg.query(`update user_eligibility set reviewed_by = $1 where user_id = $1`, [id]),
+        pg.query(
+          `update user_eligibility set reviewed_by = $1, reviewed_at = now() where user_id = $1`,
+          [id],
+        ),
       ).rejects.toThrow(/user_eligibility_reviewed_by_fkey/)
 
       // An ADMIN id — what 2B-2b will actually write. The seed ships no admin account, so
@@ -167,7 +173,10 @@ describe.skipIf(!RUN)('P2 eligibility model (Wave 2B-2a / #10)', () => {
       )).rows[0]
       adminIds.push(admin.id)
 
-      await pg.query(`update user_eligibility set reviewed_by = $1 where user_id = $2`, [admin.id, id])
+      await pg.query(
+        `update user_eligibility set reviewed_by = $1, reviewed_at = now() where user_id = $2`,
+        [admin.id, id],
+      )
       expect((await eligOf(id)).reviewed_by).toBe(admin.id)
     })
   })
@@ -235,8 +244,12 @@ describe.skipIf(!RUN)('P2 eligibility model (Wave 2B-2a / #10)', () => {
     // rows the migration genuinely produced and renders them.
     it('both markers render as real actions, with no unreadable/unknown fallback', async () => {
       const { rows } = await pg.query(
+        // Named exactly, not `like 'p2_eligibility%'`: 2B-2b's review_update /
+        // marked_reviewed rows share that prefix, and audit_logs is append-only, so any test
+        // that writes one is permanently in scope of a prefix match.
         `select action, metadata_redacted from audit_logs
-          where action like 'p2_eligibility%' order by created_at`)
+          where action in ('p2_eligibility.review_status_backfill', 'p2_eligibility.child_expiry_recompute')
+          order by created_at`)
       expect(rows.map(r => r.action)).toEqual([
         'p2_eligibility.review_status_backfill',
         'p2_eligibility.child_expiry_recompute',

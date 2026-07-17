@@ -119,11 +119,20 @@ export interface MemberDetail {
   vehicles: Array<{ plate: string; nickname: string | null }>
   eligibility: {
     p2Eligible: boolean       // DERIVED from review_status; carries no date — see 0032
+    reviewStatus: string      // the authority
     p2Reason: string | null
     p2ValidFrom: string | null
     p2ValidUntil: string | null
     p2ReviewDate: string | null
+    // Minor-dependent PII. Reaches this session-gated detail page because the form derives
+    // the expiry from it; it must never enter an audit row, a log, or a list DTO (0032).
+    p2ChildBirthdate: string | null
+    reviewNote: string | null
+    // reviewedAt is not just display: `reviewed_at is not null` IS the governance boundary
+    // import_member checks (0033), so the page uses it to say whether the row is still
+    // CSV-managed.
     reviewedAt: string | null
+    reviewVersion: number     // optimistic lock the form echoes back as expectedVersion
   } | null
   dependents: Array<{ kind: string; name: string; birthdate: string | null }>
 }
@@ -143,11 +152,15 @@ export async function getMemberDetail(
     eligibility: row.eligibility
       ? {
           p2Eligible: row.eligibility.p2_eligible,
+          reviewStatus: row.eligibility.review_status,
           p2Reason: row.eligibility.p2_reason,
           p2ValidFrom: row.eligibility.p2_valid_from,
           p2ValidUntil: row.eligibility.p2_valid_until,
           p2ReviewDate: row.eligibility.p2_review_date,
+          p2ChildBirthdate: row.eligibility.p2_child_birthdate,
+          reviewNote: row.eligibility.review_note,
           reviewedAt: row.eligibility.reviewed_at,
+          reviewVersion: row.eligibility.review_version,
         }
       : null,
     dependents: row.dependents.map(d => ({ kind: d.kind, name: d.name, birthdate: d.birthdate })),

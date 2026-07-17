@@ -143,6 +143,10 @@ export interface MemberAdminDetailRow {
     p2_valid_from: string | null
     p2_valid_until: string | null
     p2_review_date: string | null
+    p2_child_birthdate: string | null
+    review_status: string
+    review_note: string | null
+    review_version: number
     reviewed_at: string | null
   } | null
   dependents: Array<{ kind: string; name: string; birthdate: string | null }>
@@ -649,7 +653,23 @@ export interface ParkingRepository {
     // A P2 row in the CSV landed on a member a 幹事 had explicitly REVOKED. The row is left
     // untouched: an audited human decision outranks a bulk roster (0032). Reported, never silent.
     retained_revoked?: boolean
+    // A P2 row landed on a member whose eligibility a 幹事 hand-maintains (reviewed_at is not
+    // null). Frozen and reported for the same reason — import may establish an eligibility
+    // nobody decided on, never overwrite one somebody did (0033).
+    retained_governed?: boolean
   }>
+  // Wave 2B-2b (#10) — the audited eligibility writes. Both return typed refusals; a throw
+  // here means the RPC itself failed and nothing (including the audit row) was written.
+  setP2Eligibility(args: {
+    userId: string; expectedVersion: number; reviewStatus: 'approved' | 'revoked'
+    reason: string | null; validFrom: string | null; validUntil: string | null
+    childBirthdate: string | null; nextReviewDate: string | null; note: string | null
+    actingAdminId: string; actingSessionId: string; requestId: string
+  }): Promise<{ ok: boolean; reason?: string; noop?: boolean; review_version?: number; actual_version?: number }>
+  markP2Reviewed(args: {
+    userId: string; expectedVersion: number; nextReviewDate: string
+    actingAdminId: string; actingSessionId: string; requestId: string
+  }): Promise<{ ok: boolean; reason?: string; review_version?: number; actual_version?: number }>
   // Phase 5B Slice 2 — raw fields for the approve preview (the SERVICE masks them before output;
   // they are never printed/logged raw). Returns null only when the pending id doesn't exist.
   // Phase 7 Slice 2: also carries the claim source/fields + superseded_count (the optimistic-
@@ -1438,7 +1458,40 @@ export function createParkingRepository(
         plate_conflicts?: string[]
         retained_p2?: boolean
         retained_revoked?: boolean
+        retained_governed?: boolean
       }
+    },
+
+    async setP2Eligibility(args) {
+      const { data, error } = await client.rpc('set_p2_eligibility', {
+        p_user_id: args.userId,
+        p_expected_version: args.expectedVersion,
+        p_review_status: args.reviewStatus,
+        p_reason: args.reason,
+        p_valid_from: args.validFrom,
+        p_valid_until: args.validUntil,
+        p_child_birthdate: args.childBirthdate,
+        p_next_review_date: args.nextReviewDate,
+        p_note: args.note,
+        p_acting_admin_id: args.actingAdminId,
+        p_acting_session_id: args.actingSessionId,
+        p_request_id: args.requestId,
+      })
+      if (error) throw new Error(`set_p2_eligibility failed: ${error.message}`)
+      return data as { ok: boolean; reason?: string; noop?: boolean; review_version?: number }
+    },
+
+    async markP2Reviewed(args) {
+      const { data, error } = await client.rpc('mark_p2_reviewed', {
+        p_user_id: args.userId,
+        p_expected_version: args.expectedVersion,
+        p_next_review_date: args.nextReviewDate,
+        p_acting_admin_id: args.actingAdminId,
+        p_acting_session_id: args.actingSessionId,
+        p_request_id: args.requestId,
+      })
+      if (error) throw new Error(`mark_p2_reviewed failed: ${error.message}`)
+      return data as { ok: boolean; reason?: string; review_version?: number }
     },
 
     async getUserDisplayName(userId) {
@@ -2225,7 +2278,7 @@ export function createParkingRepository(
 
       const { data: elig, error: ee } = await client
         .from('user_eligibility')
-        .select('p2_eligible, p2_reason, p2_valid_from, p2_valid_until, p2_review_date, reviewed_at')
+        .select('p2_eligible, p2_reason, p2_valid_from, p2_valid_until, p2_review_date, p2_child_birthdate, review_status, review_note, review_version, reviewed_at')
         .eq('user_id', userId)
         .maybeSingle()
       if (ee) throw new Error(`getMemberAdminDetail eligibility failed: ${ee.message}`)
@@ -2250,7 +2303,9 @@ export function createParkingRepository(
           ? (elig as {
               p2_eligible: boolean; p2_reason: string | null
               p2_valid_from: string | null; p2_valid_until: string | null
-              p2_review_date: string | null; reviewed_at: string | null
+              p2_review_date: string | null; p2_child_birthdate: string | null
+              review_status: string; review_note: string | null; review_version: number
+              reviewed_at: string | null
             })
           : null,
         dependents: ((deps ?? []) as Array<{ dependent_kind: string; dependent_name: string; dependent_birthdate: string | null }>).map(d => ({

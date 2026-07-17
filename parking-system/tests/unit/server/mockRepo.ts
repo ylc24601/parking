@@ -30,6 +30,9 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     setWeeklyCapacity: vi.fn(async () => ({
       ok: true, noop: false, effective_capacity: 19, promised_count: 0, capacity_version: 1,
     })),
+    // Wave 2B-2b (#10) — the audited eligibility writes.
+    setP2Eligibility: vi.fn(async () => ({ ok: true, noop: false, review_version: 1 })),
+    markP2Reviewed: vi.fn(async () => ({ ok: true, review_version: 2 })),
     // Wave 1d (#27) — notification plate lookup. Empty by default: a payload with no plate is
     // the graceful case, so tests that don't care about it stay unaffected.
     getPlatesForReservations: vi.fn(async () => new Map<string, string>()),

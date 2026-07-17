@@ -3,10 +3,12 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { taipeiToday } from '@/lib/taipeiDate'
 import { deriveEligibilityStatus, type EligibilityStatus } from '@/lib/eligibilityStatus'
+import { p2ReasonLabel } from '@/lib/p2Reason'
 import { getAdminSession } from '@/server/http/adminAuth'
 import { getMemberDetail, type MemberDetail } from '@/server/services/memberAdminService'
 import Badge, { type BadgeTone } from '../../../ui/Badge'
 import DataMinimizationNotice from '../../DataMinimizationNotice'
+import EligibilityForm from './EligibilityForm'
 import IssueBindingCode from './IssueBindingCode'
 
 export const metadata: Metadata = {
@@ -23,10 +25,6 @@ const UUID_FORMAT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 
 const ROLE_LABEL: Record<string, string> = {
   user: '會友', full_time_staff: '全職同工', staff: '同工', admin: '管理員',
-}
-const REASON_LABEL: Record<string, string> = {
-  mobility_long: '行動不便（長期）', mobility_short: '行動不便（短期）',
-  child_companion: '幼兒同行', pregnancy: '孕婦', elderly_companion: '長者同行',
 }
 const DEP_KIND_LABEL: Record<string, string> = { impaired: '身障', child: '幼兒', elder: '長者' }
 
@@ -112,7 +110,7 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
           <p className="mt-2 text-sm text-muted">無 P2 資格</p>
         ) : (
           <dl className="mt-3 grid grid-cols-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
-            <Row label="事由">{detail.eligibility.p2Reason ? (REASON_LABEL[detail.eligibility.p2Reason] ?? detail.eligibility.p2Reason) : '—'}</Row>
+            <Row label="事由">{p2ReasonLabel(detail.eligibility.p2Reason)}</Row>
             <Row label="有效至">{detail.eligibility.p2ValidUntil ?? '—'}</Row>
             <Row label="覆核日">{detail.eligibility.p2ReviewDate ?? '—'}</Row>
             <Row label="最近覆核">{detail.eligibility.reviewedAt ? detail.eligibility.reviewedAt.slice(0, 10) : '—'}</Row>
@@ -132,6 +130,22 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
             </ul>
           </div>
         )}
+
+        {/* The write path (#10). Rendered even when there is NO eligibility row: a general
+            member is exactly that — a users row with no eligibility — and granting them P2 is
+            the whole point of this slice. */}
+        <EligibilityForm
+          userId={id}
+          reviewStatus={detail.eligibility?.reviewStatus ?? null}
+          reason={detail.eligibility?.p2Reason ?? null}
+          validFrom={detail.eligibility?.p2ValidFrom ?? null}
+          validUntil={detail.eligibility?.p2ValidUntil ?? null}
+          reviewDate={detail.eligibility?.p2ReviewDate ?? null}
+          childBirthdate={detail.eligibility?.p2ChildBirthdate ?? null}
+          note={detail.eligibility?.reviewNote ?? null}
+          reviewedAt={detail.eligibility?.reviewedAt ?? null}
+          reviewVersion={detail.eligibility?.reviewVersion ?? 0}
+        />
       </section>
 
       <section className="rounded-xl border border-border bg-surface p-6">

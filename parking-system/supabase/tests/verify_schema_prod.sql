@@ -832,4 +832,67 @@ begin
   raise notice 'PASS: audit sanitizer retains the birthdate-value guard';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 30 assertions passed =='
+-- ── 31. P2 write path (verify_schema.sql #37) ───────────────────────────────────
+-- Catalog-only twin. The behavioural half (#37b: creates for a no-row member, governs on
+-- approve, refuses to review a revoked row) writes rows and stays local.
+do $$
+declare
+  v_priv text;
+  v_sig  text;
+  v_name text;
+begin
+  foreach v_sig in array array[
+    'set_p2_eligibility(uuid,int,text,p2_reason,date,date,date,date,text,uuid,uuid,uuid)',
+    'mark_p2_reviewed(uuid,int,date,uuid,uuid,uuid)'
+  ] loop
+    if to_regprocedure(v_sig) is null then
+      raise exception 'FAIL: % is missing', v_sig;
+    end if;
+    if not exists (select 1 from pg_proc where oid = to_regprocedure(v_sig) and prosecdef) then
+      raise exception 'FAIL: % must be SECURITY DEFINER', v_sig;
+    end if;
+    if not exists (
+      select 1 from pg_proc where oid = to_regprocedure(v_sig)
+         and array_to_string(proconfig, ',') like '%search_path%'
+    ) then
+      raise exception 'FAIL: SECURITY DEFINER % must pin search_path', v_sig;
+    end if;
+    foreach v_priv in array array['anon', 'authenticated'] loop
+      if has_function_privilege(v_priv, v_sig, 'execute') then
+        raise exception 'FAIL: % must not execute %', v_priv, v_sig;
+      end if;
+    end loop;
+    if not has_function_privilege('service_role', v_sig, 'execute') then
+      raise exception 'FAIL: service_role lacks execute on %', v_sig;
+    end if;
+  end loop;
+
+  foreach v_name in array array['eligibility_reviewed_pair_ck', 'eligibility_child_expiry_derived_ck'] loop
+    if not exists (select 1 from pg_constraint where conname = v_name) then
+      raise exception 'FAIL: constraint % missing on user_eligibility', v_name;
+    end if;
+  end loop;
+
+  if not exists (select 1 from pg_proc where proname = 'child_companion_valid_until' and provolatile = 'i') then
+    raise exception 'FAIL: child_companion_valid_until must be IMMUTABLE or its CHECK cannot call it';
+  end if;
+
+  -- The DB session is UTC in this deployment, so current_date is a UTC date and the past-date
+  -- guards would misfire between 00:00-08:00 Taipei. Comments are stripped before matching
+  -- because both functions explain the hazard in prose.
+  foreach v_sig in array array['set_p2_eligibility', 'mark_p2_reviewed'] loop
+    if not exists (select 1 from pg_proc where proname = v_sig and prosrc like '%Asia/Taipei%') then
+      raise exception 'FAIL: % lost its Asia/Taipei date computation', v_sig;
+    end if;
+    if exists (
+      select 1 from pg_proc where proname = v_sig
+         and regexp_replace(prosrc, '--[^\n]*', '', 'g') ~ '\mcurrent_date\M'
+    ) then
+      raise exception 'FAIL: % uses current_date — that is a UTC date on this server', v_sig;
+    end if;
+  end loop;
+
+  raise notice 'PASS: P2 write RPCs present and locked down, invariants + Taipei date pinned';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 31 assertions passed =='
