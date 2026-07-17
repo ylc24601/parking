@@ -25,7 +25,9 @@
 
 ### 1.1 Supabase Free → Pro（真 PII 落地前）
 - **Who**：dev（billing 需教會/擁有者帳號）
-- **Verify**：專案未被 inactivity 暫停；daily backup / PITR 在 dashboard 顯示啟用；`SUPABASE_URL`/`SERVICE_ROLE_KEY` 不變故 Vercel env 不需改。**升級後把日期＋執行者記進 [current_handoff.md](current_handoff.md)。**
+- **為什麼（決策脈絡，2026-07-18）**：**升級不是為了效能或容量**——本專案規模（幾十～一兩百會友、每週一次預約）對 Free 的 500 MB DB／流量綽綽有餘。**唯一真正的理由是備份**：Free **完全沒有每日備份**，而系統存真會友 PII（姓名/車牌/電話/資格含未成年生日）＋一個 **append-only 稽核軌**（設計上不可重建）。DB 一旦壞掉/誤刪/migration 出事，Free 沒有任何還原點，且 CSV 救不回綁定/預約/稽核/手動覆核。**次要理由**：Free 一週無活動會自動暫停——平常 cron 一直打 DB 不會觸發，但 §2 rollback 第一步就是**停排程** ⇒ 停排程後 Free 可能一週後暫停、app 掛掉要人工喚醒，正好在處理事故時多一個坑。Pro 兩者都移除。
+- **替代（若要省月費）**：留 Free ＋自排 `pg_dump` 到**加密**儲存。省 ~US$25/月，但代價＝多一組要顧的 ops ＋ dump 檔含全套 PII（新開一個 PII-at-rest 攻擊面，需加密與存取控管）。對無專人維運的教會，總風險通常更高 ⇒ **預設建議走 Pro**；**若選這條**，把 dump 排程與加密儲存位置記進本檔，並在 §3 監控裡加「確認最近一次 dump 成功」。
+- **Verify**：專案未被 inactivity 暫停；**每日備份在 dashboard 顯示啟用**（Pro 內含滾動 7 天；PITR 是**額外付費 add-on、非必需**，除非要更細的還原點才開）；`SUPABASE_URL`/`SERVICE_ROLE_KEY` 不變故 Vercel env 不需改。**升級後把日期＋執行者記進 [current_handoff.md](current_handoff.md)。**
 - **Detail**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §8（就地升級、同 project ref、勿建新專案；先確認 demo/PII 已依 §12.3 清乾淨）
 
 ### 1.2 教會正式 OA 接線

@@ -446,8 +446,10 @@ inactivity and have no daily backups; Pro removes both (per
 2. Supabase Dashboard → the project → **Settings → Subscription / Billing** → upgrade to
    **Pro**. The upgrade is in-place: same project ref, URL, service-role key, and data —
    **no re-link, no re-push, no re-bootstrap**. Do not create a new project.
-3. After upgrade: confirm the project is not paused, and that daily backups (PITR /
-   scheduled backups) show as enabled in the dashboard.
+3. After upgrade: confirm the project is not paused, and that **daily scheduled backups**
+   (included with Pro, rolling 7-day retention) show as enabled in the dashboard. PITR
+   (point-in-time recovery) is a **separate paid add-on**, not on by default — only enable
+   it if you need finer restore points than daily; daily is enough to recover an accident.
 4. `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are unchanged, so Vercel env needs no
    edit. (Only rotate the service-role key if you have a reason to; if you do, remember it
    also signs the member-import HMAC — rotate outside a 30-min import window.)
