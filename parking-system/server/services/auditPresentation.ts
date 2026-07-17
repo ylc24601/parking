@@ -137,6 +137,42 @@ const ACTIONS: Record<string, AuditActionDefinition> = {
     },
   },
 
+  // Two aggregate markers written by migration 0032 (#10). Counts only — a member's
+  // eligibility is health-adjacent, so not one ID reaches these rows.
+  'p2_eligibility.review_status_backfill': {
+    label: 'P2 資格改為覆核制',
+    reads: ['rows_backfilled', 'approved_count', 'unreviewed_count', 'derived_from'],
+    render: metadata => {
+      const rows = metadata.rows_backfilled
+      const approved = metadata.approved_count
+      const unreviewed = metadata.unreviewed_count
+      if ([rows, approved, unreviewed].some(v => typeof v !== 'number')) return 'unreadable'
+      return [
+        { label: '轉換筆數', value: `${rows} 筆` },
+        // Says "未覆核" and NOT "已撤銷" on purpose: the old boolean model could not
+        // record who revoked anything, so calling these revoked would invent a decision
+        // nobody made — and this row is append-only.
+        { label: '轉換結果', value: `已核准 ${approved} 筆、未覆核 ${unreviewed} 筆` },
+        { label: '資格權限', value: '不變（依原有 P2 狀態對應）' },
+      ]
+    },
+  },
+  'p2_eligibility.child_expiry_recompute': {
+    label: '幼兒陪同資格到期日改依學年度',
+    reads: ['rows_recomputed', 'rows_extended', 'rows_shortened', 'rule'],
+    render: metadata => {
+      const rows = metadata.rows_recomputed
+      const extended = metadata.rows_extended
+      const shortened = metadata.rows_shortened
+      if ([rows, extended, shortened].some(v => typeof v !== 'number')) return 'unreadable'
+      return [
+        { label: '重算筆數', value: `${rows} 筆` },
+        { label: '新規則', value: '算到孩子入學前的 8/31（原為滿 5 歲當天）' },
+        { label: '影響', value: `延長 ${extended} 筆、縮短 ${shortened} 筆` },
+      ]
+    },
+  },
+
   'admin_account.disable': {
     label: '停用管理員帳號',
     reads: ['disabled_to', 'state_changed', 'reason'],

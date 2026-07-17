@@ -118,8 +118,9 @@ export interface MemberDetail {
   bound: boolean             // derived; the raw line_id never reaches the client
   vehicles: Array<{ plate: string; nickname: string | null }>
   eligibility: {
-    p2Eligible: boolean
+    p2Eligible: boolean       // DERIVED from review_status; carries no date — see 0032
     p2Reason: string | null
+    p2ValidFrom: string | null
     p2ValidUntil: string | null
     p2ReviewDate: string | null
     reviewedAt: string | null
@@ -143,6 +144,7 @@ export async function getMemberDetail(
       ? {
           p2Eligible: row.eligibility.p2_eligible,
           p2Reason: row.eligibility.p2_reason,
+          p2ValidFrom: row.eligibility.p2_valid_from,
           p2ValidUntil: row.eligibility.p2_valid_until,
           p2ReviewDate: row.eligibility.p2_review_date,
           reviewedAt: row.eligibility.reviewed_at,

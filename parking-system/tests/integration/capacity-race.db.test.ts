@@ -27,8 +27,15 @@ try {
 const RUN = process.env.RUN_DB_TESTS === '1'
 
 const DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
-// This file owns Sunday 2099-09-06.
-const SUNDAY = '2099-09-06'
+// ⚠️ This file OWNS Sunday 2099-08-30 — no other suite may use it.
+// Events audited by set_weekly_capacity can never be deleted (audit_logs.weekly_event_id
+// FKs weekly_events and audit rows are append-only), so teardown can only FINALIZE them.
+// The row therefore outlives the run, and any suite that INSERTs the same sunday_date
+// afterwards dies on weekly_events_sunday_date_key. This file originally took 2099-09-06,
+// which outbox-health.db.test.ts already owned; it only passed because the two suites
+// disagree about who creates the row first (this one reuses, that one inserts), so the
+// collision surfaced or hid depending on file order.
+const SUNDAY = '2099-08-30'
 const ADMIN = '11111111-1111-4111-8111-111111111111'
 const SESSION = '22222222-2222-4222-8222-222222222222'
 

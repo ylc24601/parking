@@ -788,6 +788,108 @@ begin
   raise notice 'PASS: capacity guard refuses below-promised (temp_approved counted) and non-editable events';
 end $$;
 
+-- ── 36. P2 eligibility model: review_status authoritative, p2_eligible derived (2B-2a / #10) ─
+do $$
+begin
+  -- The enum must keep a NEUTRAL state. If 'unreviewed' were ever dropped, the only
+  -- landing spot for "no human decision on record" becomes 'revoked' — which would claim
+  -- a 幹事 took something away that they never granted, and (with import's retained_revoked
+  -- rule) would lock those members out of the roster's reach entirely.
+  if not exists (
+    select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid
+     where t.typname = 'p2_review_status' and e.enumlabel = 'unreviewed'
+  ) then
+    raise exception 'FAIL: p2_review_status is missing the neutral unreviewed state';
+  end if;
+
+  -- p2_eligible must be GENERATED. If it ever became writable again, a writer could set
+  -- it independently of review_status and the two truths the #10 contract exists to
+  -- collapse would be back — silently, because nothing would fail.
+  if not exists (
+    select 1 from pg_attribute
+     where attrelid = 'user_eligibility'::regclass
+       and attname = 'p2_eligible' and attgenerated = 's'
+  ) then
+    raise exception 'FAIL: user_eligibility.p2_eligible must be a STORED generated column';
+  end if;
+
+  -- ...and it must carry NO date term. A date here would bake in the WRITER's as-of date,
+  -- and both readers (allocator: event Sunday / review queue: today) would inherit it.
+  if exists (
+    select 1 from pg_attrdef d
+      join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum
+     where d.adrelid = 'user_eligibility'::regclass
+       and a.attname = 'p2_eligible'
+       and (pg_get_expr(d.adbin, d.adrelid) ilike '%valid_from%'
+         or pg_get_expr(d.adbin, d.adrelid) ilike '%valid_until%'
+         or pg_get_expr(d.adbin, d.adrelid) ilike '%current_date%'
+         or pg_get_expr(d.adbin, d.adrelid) ilike '%now()%')
+  ) then
+    raise exception 'FAIL: p2_eligible references a date — it must derive from review_status ALONE (see 0032)';
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'eligibility_window_ordered_ck') then
+    raise exception 'FAIL: eligibility_window_ordered_ck missing — valid_from could exceed valid_until';
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'eligibility_child_birthdate_reason_ck') then
+    raise exception 'FAIL: eligibility_child_birthdate_reason_ck missing';
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'eligibility_reason_present') then
+    raise exception 'FAIL: eligibility_reason_present was not rebuilt after the p2_eligible drop/re-add';
+  end if;
+
+  perform 1 from information_schema.columns
+   where table_name = 'user_eligibility' and column_name = 'review_version';
+  if not found then raise exception 'FAIL: user_eligibility.review_version missing (2B-2b optimistic lock)'; end if;
+
+  -- reviewed_by must point at admin_accounts. Pointing at users(id) — the MEMBER table,
+  -- as 0001 had it — makes the column unwritable by its own writer: reviewers are
+  -- admin_accounts rows.
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'user_eligibility_reviewed_by_fkey'
+       and confrelid = 'admin_accounts'::regclass
+  ) then
+    raise exception 'FAIL: user_eligibility.reviewed_by must reference admin_accounts(id)';
+  end if;
+
+  raise notice 'PASS: P2 eligibility model — review_status authoritative, p2_eligible generated and date-free, window pinned';
+end $$;
+
+-- ── 36b. The derived column actually tracks review_status (behavioural) ──────────
+do $$
+declare
+  v_user uuid;
+  v_elig boolean;
+begin
+  insert into users (display_name) values ('verify-p2-model') returning id into v_user;
+  insert into user_eligibility (user_id, review_status, p2_reason)
+       values (v_user, 'approved', 'pregnancy');
+
+  select p2_eligible into v_elig from user_eligibility where user_id = v_user;
+  if v_elig is not true then raise exception 'FAIL: approved did not derive p2_eligible = true'; end if;
+
+  update user_eligibility set review_status = 'revoked' where user_id = v_user;
+  select p2_eligible into v_elig from user_eligibility where user_id = v_user;
+  if v_elig is not false then raise exception 'FAIL: revoked did not derive p2_eligible = false'; end if;
+
+  update user_eligibility set review_status = 'unreviewed', p2_reason = null where user_id = v_user;
+  select p2_eligible into v_elig from user_eligibility where user_id = v_user;
+  if v_elig is not false then raise exception 'FAIL: unreviewed did not derive p2_eligible = false'; end if;
+
+  -- The write must be refused, not silently ignored: that refusal is what forced
+  -- import_member's rewrite, and it is the only thing stopping a future writer from
+  -- re-creating the dual truth.
+  begin
+    update user_eligibility set p2_eligible = true where user_id = v_user;
+    raise exception 'FAIL: writing p2_eligible was ALLOWED — the generated column is not protecting the invariant';
+  exception when others then
+    if sqlstate = 'P0001' then raise; end if;   -- our own FAIL, not the expected rejection
+  end;
+
+  raise notice 'PASS: p2_eligible tracks review_status and rejects direct writes';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

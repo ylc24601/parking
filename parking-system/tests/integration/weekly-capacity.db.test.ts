@@ -15,9 +15,14 @@ const RUN = process.env.RUN_DB_TESTS === '1'
 
 type Sb = import('@supabase/supabase-js').SupabaseClient
 
-// This file owns its own Sundays so it can never collide with the seed event or the
-// other DB suites.
-const SUNDAY = '2099-08-02'
+// ⚠️ This file OWNS Sunday 2099-08-23 — no other suite may use it.
+// Events audited by set_weekly_capacity can never be deleted (audit_logs.weekly_event_id
+// FKs weekly_events and audit rows are append-only), so teardown can only FINALIZE them.
+// The row outlives the run, and any suite that INSERTs the same sunday_date afterwards
+// dies on weekly_events_sunday_date_key. This file originally claimed to "own" 2099-08-02
+// while move-car.db.test.ts already had it — the claim was written, not checked, and the
+// collision only surfaced when file order put move-car second.
+const SUNDAY = '2099-08-23'
 const ADMIN = '11111111-1111-4111-8111-111111111111'
 const SESSION = '22222222-2222-4222-8222-222222222222'
 

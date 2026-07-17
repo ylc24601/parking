@@ -4,6 +4,7 @@
 
 import { parse } from 'csv-parse/sync'
 import { taipeiToday } from '@/lib/taipeiDate'
+import { childCompanionValidUntil } from '@/lib/eligibilityStatus'
 import {
   canonicalizeHeader,
   detectProfile,
@@ -83,16 +84,12 @@ function addMonthsISO(iso: string, months: number): string {
   const [y, m, d] = iso.split('-').map(Number)
   return new Date(Date.UTC(y, m - 1 + months, d)).toISOString().slice(0, 10)
 }
-function addYearsISO(iso: string, years: number): string {
-  const [y, m, d] = iso.split('-').map(Number)
-  return new Date(Date.UTC(y + years, m - 1, d)).toISOString().slice(0, 10)
-}
+// The LATEST birthdate is the YOUNGEST child — the one whose eligibility runs longest.
 function maxISO(dates: string[]): string {
   return dates.reduce((a, b) => (b > a ? b : a))
 }
 
 const TEMP_MONTHS = 6 // mobility_short / pregnancy validity window from application date
-const CHILD_MAX_AGE = 5 // child eligibility ends at the 5th birthday
 
 export interface EligibilityInput {
   reasonType: ReasonType
@@ -111,7 +108,12 @@ export interface EligibilityResult {
 // Maps reason_type → p2_reason and computes the eligibility window (decision 3):
 //   mobility_long / elderly_companion → permanent
 //   mobility_short / pregnancy        → application_date + 6 months; missing date → review_required
-//   child_companion                   → max(child birthdate) + 5 years; no birthdate → review_required
+//   child_companion                   → the Aug-31 school-year cohort of the YOUNGEST child
+//                                       (childCompanionValidUntil); no birthdate → review_required
+// The child rule changed in Wave 2B-2a (#10): it used to be the youngest child's 5th
+// birthday to the day, which expired a child mid-school-year. It is now anchored to the
+// 9/1 school-entry cutoff — see lib/eligibilityStatus.ts for the rule and why 9/1 vs 9/2
+// differ by a full year.
 export function computeEligibility(input: EligibilityInput): EligibilityResult {
   const { reasonType, remarks, applicationDate, childBirthdates = [], now = new Date() } = input
   const hasChildren = childBirthdates.length > 0
@@ -136,7 +138,7 @@ export function computeEligibility(input: EligibilityInput): EligibilityResult {
 
   // child_companion
   if (!hasChildren) return { p2_reason, valid_until: null, review_date: today, reviewRequired: true }
-  const until = addYearsISO(maxISO(childBirthdates), CHILD_MAX_AGE)
+  const until = childCompanionValidUntil(maxISO(childBirthdates))
   return { p2_reason, valid_until: until, review_date: until, reviewRequired: false }
 }
 

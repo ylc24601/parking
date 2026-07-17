@@ -24,9 +24,13 @@ insert into vehicles (id, user_id, license_plate, nickname) values
   ('b0000000-0000-0000-0000-000000000005', 'a0000000-0000-0000-0000-000000000005', 'MNO-7890', null);
 
 -- ── Eligibility (sensitive) ────────────────────────────────────────────────────
-insert into user_eligibility (user_id, p2_eligible, p2_reason, dependent_name, dependent_birthdate) values
-  ('a0000000-0000-0000-0000-000000000001', true, 'mobility_long',     null,    null),
-  ('a0000000-0000-0000-0000-000000000002', true, 'child_companion',   '小寶',  '2022-03-01');
+-- review_status is the authority since 0032; p2_eligible is generated from it and
+-- cannot be written. child_companion carries the youngest child's birthdate, and the
+-- expiry derives from it via the Aug-31 school-year cohort rule: born 2022-03-01 →
+-- enters school Sept 2028 → last eligible 2028-08-31.
+insert into user_eligibility (user_id, review_status, p2_reason, p2_child_birthdate, p2_valid_until, p2_review_date, dependent_name, dependent_birthdate) values
+  ('a0000000-0000-0000-0000-000000000001', 'approved', 'mobility_long',   null,         null,         null,         null,    null),
+  ('a0000000-0000-0000-0000-000000000002', 'approved', 'child_companion', '2022-03-01', '2028-08-31', '2028-08-31', '小寶',  '2022-03-01');
 
 -- ── Penalties (default clean record per member) ──────────────────────────────
 insert into user_penalties (user_id) values

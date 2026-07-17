@@ -118,6 +118,20 @@ describe('importMembersFromCsvText — profiles', () => {
     expect(report.p2Retained).toEqual([{ phone: '0912345678' }])
     expect(report.updated).toBe(1)
   })
+
+  it('a P2 row landing on a REVOKED member surfaces revokedRetained (Wave 2B-2a)', async () => {
+    // The RPC decides and reports; the service must SURFACE it. A refusal the operator
+    // never sees is the same as a silent overwrite from their side of the screen.
+    const csv = '姓名,手機,車牌,優先序,P2事由\n甲,0912345678,AAA1111,P2,孕婦'
+    const { repo } = mockRepo(vi.fn(async () => ({
+      status: 'updated' as const, vehicles_added: 0, dependents_added: 0, plate_conflicts: [],
+      retained_revoked: true,
+    })))
+    const report = await importMembersFromCsvText({ csvText: csv, dryRun: false, now: NOW }, repo)
+    expect(report.revokedRetained).toEqual([{ phone: '0912345678' }])
+    expect(report.totals.revokedRetained).toBe(1)
+    expect(report.p2Retained).toEqual([])   // the other direction must not fire
+  })
 })
 
 // Wave 0.1 — a p2_application member spanning several rows (one per vehicle) must derive its
@@ -209,7 +223,9 @@ describe('importMembersFromCsvText — p2_application group consistency', () => 
       ), dryRun: true, now: NOW,
     }, repo)
     expect(calls[0].dependents).toEqual([{ kind: 'child', name: '小明', birthdate: '2022-03-01' }])
-    expect(calls[0].validUntil).toBe('2027-03-01') // child birthdate + 5 years
+    // The merged birthdate must actually reach the derivation, not just the dependent list:
+    // born 2022-03-01 → before the 9/1 cutoff → enters school Sept 2028 → 2028-08-31.
+    expect(calls[0].validUntil).toBe('2028-08-31')
   })
 
   it('the same dependent birthday written two ways collapses to one', async () => {

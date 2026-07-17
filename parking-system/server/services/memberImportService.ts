@@ -33,6 +33,8 @@ import {
 //                    P2 writes a review-required eligibility summary (no dates in the roster).
 // A P1/P3 roster row NEVER revokes an existing member's P2 (eligibility revocation is the review
 // tool, #10); if the member already had P2, it is reported in p2Retained as an untouched warning.
+// The converse holds too since 0032: a P2 row NEVER resurrects an eligibility a 幹事 revoked —
+// reported in revokedRetained. Import can establish eligibility; it cannot overturn a review.
 //
 // PII note: this reads a real member file. The report is operator-facing and may contain
 // names/plates/phones — it must NOT be logged or persisted.
@@ -57,6 +59,10 @@ export interface ImportReport {
   reviewRequired: Array<{ phone: string; reason: string }>
   // Existing-P2 member marked P1/P3 in a roster import: eligibility kept, NOT revoked (warning).
   p2Retained: Array<{ phone: string }>
+  // The CSV lists this member as P2, but a 幹事 had explicitly REVOKED their eligibility.
+  // The row is left untouched — a bulk roster must not overturn an audited human decision
+  // (0032). Re-granting is a deliberate act in the review tool, not a side effect of import.
+  revokedRetained: Array<{ phone: string }>
   validationErrors: Array<{ line: number; errors: string[] }>
   // True if any list was truncated to MAX_REPORT_ITEMS; totals hold the untruncated counts.
   truncated: boolean
@@ -67,6 +73,7 @@ export interface ImportReport {
     groupConflicts: number
     reviewRequired: number
     p2Retained: number
+    revokedRetained: number
     validationErrors: number
   }
 }
@@ -193,11 +200,11 @@ export async function importMembersFromCsvText(
   const report: ImportReport = {
     dryRun, rows: records.length, members: 0, imported: 0, updated: 0, vehiclesAdded: 0, dependentsAdded: 0,
     phoneNameConflicts: [], plateConflicts: [], batchPlateConflicts: [], groupConflicts: [],
-    reviewRequired: [], p2Retained: [], validationErrors: [],
+    reviewRequired: [], p2Retained: [], revokedRetained: [], validationErrors: [],
     truncated: false,
     totals: {
       phoneNameConflicts: 0, plateConflicts: 0, batchPlateConflicts: 0, groupConflicts: 0,
-      reviewRequired: 0, p2Retained: 0, validationErrors: 0,
+      reviewRequired: 0, p2Retained: 0, revokedRetained: 0, validationErrors: 0,
     },
   }
 
@@ -344,6 +351,12 @@ export async function importMembersFromCsvText(
       pushCapped(report.p2Retained, { phone })
       report.totals.p2Retained++
     }
+    // A P2 row landing on a member a 幹事 revoked: left alone, and said out loud. Silently
+    // re-approving them would overturn an audited decision with no record of its own.
+    if (res.retained_revoked) {
+      pushCapped(report.revokedRetained, { phone })
+      report.totals.revokedRetained++
+    }
     if (!dryRun) processedMembers++
   }
 
@@ -364,7 +377,8 @@ function finalizeTruncation(report: ImportReport): void {
     report.totals.batchPlateConflicts > report.batchPlateConflicts.length ||
     report.totals.groupConflicts > report.groupConflicts.length ||
     report.totals.reviewRequired > report.reviewRequired.length ||
-    report.totals.p2Retained > report.p2Retained.length
+    report.totals.p2Retained > report.p2Retained.length ||
+    report.totals.revokedRetained > report.revokedRetained.length
 }
 
 // CLI / file-path entry point (unchanged contract): read the file, then run the shared

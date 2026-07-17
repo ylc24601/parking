@@ -753,4 +753,65 @@ begin
   raise notice 'PASS: weekly capacity admin columns/constraints/RPC present and locked down';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 28 assertions passed =='
+-- ── 29. P2 eligibility model (verify_schema.sql #36) ─────────────────────────────
+-- Catalog-only twin. The behavioural half (#36b: the column tracks review_status and
+-- rejects direct writes) needs DML and stays local-only, per this file's header.
+do $$
+declare
+  v_name text;
+begin
+  if not exists (
+    select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid
+     where t.typname = 'p2_review_status' and e.enumlabel = 'unreviewed'
+  ) then
+    raise exception 'FAIL: p2_review_status is missing the neutral unreviewed state';
+  end if;
+
+  if not exists (
+    select 1 from pg_attribute
+     where attrelid = 'user_eligibility'::regclass
+       and attname = 'p2_eligible' and attgenerated = 's'
+  ) then
+    raise exception 'FAIL: user_eligibility.p2_eligible must be a STORED generated column';
+  end if;
+
+  -- No date term: it answers "is this approved?", never "is this valid today?".
+  if exists (
+    select 1 from pg_attrdef d
+      join pg_attribute a on a.attrelid = d.adrelid and a.attnum = d.adnum
+     where d.adrelid = 'user_eligibility'::regclass
+       and a.attname = 'p2_eligible'
+       and (pg_get_expr(d.adbin, d.adrelid) ilike '%valid_from%'
+         or pg_get_expr(d.adbin, d.adrelid) ilike '%valid_until%'
+         or pg_get_expr(d.adbin, d.adrelid) ilike '%current_date%'
+         or pg_get_expr(d.adbin, d.adrelid) ilike '%now()%')
+  ) then
+    raise exception 'FAIL: p2_eligible references a date — it must derive from review_status ALONE (see 0032)';
+  end if;
+
+  foreach v_name in array array[
+    'eligibility_window_ordered_ck',
+    'eligibility_child_birthdate_reason_ck',
+    'eligibility_reason_present'
+  ] loop
+    if not exists (select 1 from pg_constraint where conname = v_name) then
+      raise exception 'FAIL: constraint % missing on user_eligibility', v_name;
+    end if;
+  end loop;
+
+  perform 1 from information_schema.columns
+   where table_name = 'user_eligibility' and column_name = 'review_version';
+  if not found then raise exception 'FAIL: user_eligibility.review_version missing'; end if;
+
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'user_eligibility_reviewed_by_fkey'
+       and confrelid = 'admin_accounts'::regclass
+  ) then
+    raise exception 'FAIL: user_eligibility.reviewed_by must reference admin_accounts(id)';
+  end if;
+
+  raise notice 'PASS: P2 eligibility model — review_status authoritative, p2_eligible generated and date-free';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 29 assertions passed =='

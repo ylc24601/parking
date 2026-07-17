@@ -25,10 +25,12 @@ describe.skipIf(!RUN)('eligibility review (Phase 8 Slice 4) — local DB integra
   let repo: import('@/server/repositories/parkingRepository').ParkingRepository
   const ids: string[] = []
 
+  // review_status is the authority since 0032 — p2_eligible is generated from it and the
+  // DB rejects any attempt to write it ("can only be updated to DEFAULT").
   const mkMember = async (
     label: string,
     elig: {
-      p2_eligible: boolean
+      review_status: 'unreviewed' | 'approved' | 'revoked'
       p2_reason: string | null
       p2_valid_until: string | null
       p2_review_date: string | null
@@ -56,14 +58,17 @@ describe.skipIf(!RUN)('eligibility review (Phase 8 Slice 4) — local DB integra
 
   it('surfaces expired / review-required / upcoming (incl. min-date), excludes permanent / far / non-eligible', async () => {
     // Insert in an order deliberately REVERSED from due-date order to prove the sort.
-    await mkMember('Far', { p2_eligible: true, p2_reason: 'mobility_short', p2_valid_until: '2099-12-01', p2_review_date: '2099-12-01' })
-    await mkMember('Perm', { p2_eligible: true, p2_reason: 'mobility_long', p2_valid_until: null, p2_review_date: null })
-    await mkMember('NotElig', { p2_eligible: false, p2_reason: null, p2_valid_until: null, p2_review_date: null })
-    await mkMember('Upcoming', { p2_eligible: true, p2_reason: 'child_companion', p2_valid_until: '2099-07-01', p2_review_date: '2099-07-01' })
+    await mkMember('Far', { review_status: 'approved', p2_reason: 'mobility_short', p2_valid_until: '2099-12-01', p2_review_date: '2099-12-01' })
+    await mkMember('Perm', { review_status: 'approved', p2_reason: 'mobility_long', p2_valid_until: null, p2_review_date: null })
+    // NOT eligible because nobody has ever reviewed them — which is precisely why 0032's
+    // enum needed a neutral 'unreviewed' rather than folding this into 'revoked'. Calling
+    // this member revoked would claim a 幹事 took something away that they never had.
+    await mkMember('NotElig', { review_status: 'unreviewed', p2_reason: null, p2_valid_until: null, p2_review_date: null })
+    await mkMember('Upcoming', { review_status: 'approved', p2_reason: 'child_companion', p2_valid_until: '2099-07-01', p2_review_date: '2099-07-01' })
     // Inconsistent row: valid_until EARLIER than review_date → dueDate must be valid_until.
-    await mkMember('Inconsistent', { p2_eligible: true, p2_reason: 'mobility_short', p2_valid_until: '2099-06-15', p2_review_date: '2099-07-20' })
-    await mkMember('ReviewReq', { p2_eligible: true, p2_reason: 'mobility_short', p2_valid_until: null, p2_review_date: '2099-05-30' })
-    await mkMember('Expired', { p2_eligible: true, p2_reason: 'mobility_short', p2_valid_until: '2099-05-31', p2_review_date: '2099-05-31' })
+    await mkMember('Inconsistent', { review_status: 'approved', p2_reason: 'mobility_short', p2_valid_until: '2099-06-15', p2_review_date: '2099-07-20' })
+    await mkMember('ReviewReq', { review_status: 'approved', p2_reason: 'mobility_short', p2_valid_until: null, p2_review_date: '2099-05-30' })
+    await mkMember('Expired', { review_status: 'approved', p2_reason: 'mobility_short', p2_valid_until: '2099-05-31', p2_review_date: '2099-05-31' })
 
     const { items } = await listEligibilityReview(repo, NOW)
     const mine = items.filter(i => i.displayName.startsWith(TAG))

@@ -94,7 +94,14 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
           {detail.eligibility !== null && detail.eligibility.p2Eligible && (
             <EligibilityBadge
               status={deriveEligibilityStatus(
-                { validUntil: detail.eligibility.p2ValidUntil, reviewDate: detail.eligibility.p2ReviewDate },
+                {
+                  validUntil: detail.eligibility.p2ValidUntil,
+                  reviewDate: detail.eligibility.p2ReviewDate,
+                  validFrom: detail.eligibility.p2ValidFrom,
+                },
+                // as-of = today: this badge answers "what is this member's eligibility
+                // state now", not "are they P2 for some Sunday" — the allocator asks that
+                // one against the event's own date.
                 taipeiToday(new Date()),
               )}
               validUntil={detail.eligibility.p2ValidUntil}
@@ -143,6 +150,10 @@ function EligibilityBadge({ status, validUntil }: { status: EligibilityStatus; v
     expired: { label: validUntil ? `已過期（${validUntil}）` : '已過期', tone: 'danger' },
     review_due: { label: '待覆核', tone: 'warning' },
     permanent: { label: '永久', tone: 'neutral' },
+    // Approved, but the window hasn't opened — so the member is P3 today and P2 later.
+    // Unreachable until 2B-2b writes p2_valid_from; the Record is total so that slice
+    // cannot ship the state without choosing its copy.
+    not_yet_effective: { label: '尚未生效', tone: 'neutral' },
   }
   const { label, tone } = meta[status]
   return <Badge variant="outline" tone={tone}>{label}</Badge>

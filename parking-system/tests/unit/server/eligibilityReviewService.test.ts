@@ -16,6 +16,7 @@ const row = (over: Partial<EligibilityReviewRow>): EligibilityReviewRow => ({
   user_id: '11111111-1111-4111-8111-111111111111',
   display_name: '王小明',
   p2_reason: 'mobility_short',
+  p2_valid_from: null,
   p2_valid_until: null,
   p2_review_date: null,
   reviewed_at: null,
