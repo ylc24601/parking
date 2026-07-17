@@ -35,7 +35,7 @@
 | 7 | 移車/急件即時通知 | 通知/dispatcher | S–M | ✅（4） | **commit 後才 dispatch**：txn（業務寫入＋enqueue）→**commit**→回業務成功→**commit 後** best-effort「只 claim 這筆/dedupe key」bounded dispatch→LINE 失敗不回滾、cron 續 retry。（不可在 txn 未 commit 時觸發 dispatcher——另一連線看不到 row/讀到未完成狀態。）UI 三態文案：已排入／已送達／暫時失敗稍後重試。 |
 | 8 | 本週概覽（上指標下待辦） | admin/page | M | ✅（3） | 鎖管理日曆當週主日（非 `getActiveEvent`）；標本週階段。容量顯示用**「可分配/保留·停用」總數，不用「外賓」字樣**（對齊 #14A 單一 blocked）。 |
 | 9 | Sidebar 待辦徽章 | admin sidebar | S–M | ✅（3） | 與 #8 共用 **server-side query/service contract**（不硬 RPC）；business semantics 留 service；layout 一次取。先定義各 badge（P2 待審 status／牧養 open vs overdue／backlog pending vs 超時／系統健康**只系統管理員可見**）。 |
-| 10 | P2 寫入型覆核 | admin/members/[id]＋eligibility inline | M | ✅（**2B**） | ✅ 已驗證 `user_eligibility` 有 `p2_eligible boolean`＋`p2_reason`＋CHECK（[0001:46](../parking-system/supabase/migrations/0001_enums_core.sql#L46)）→ **避免雙重真相**：`review_status` 為權威、`p2_eligible` 改為衍生（`= review_status='approved' AND effective 期間有效`）。**v1 只做 `approved/revoked`＋`reviewed_by/at`、`review_note`、`effective_from/until`、`version`/`updated_at` 樂觀鎖**（兩 admin 併發）；`pending/needs_information/rejected` **綁到 #11**（目前無真 pending intake，全由已審 CSV 匯入）。「標記已覆核」≠「核准」。寫入放明細頁、eligibility 頁佇列＋inline 共用 service。**依賴 #15，不依賴 #19**。 |
+| 10 | P2 寫入型覆核 | admin/members/[id]＋eligibility inline | M | **2B-2a 模型 ✅（PR #41 / `155c7f7`）；2B-2b 寫入 RPC＋UI 未做** | **避免雙重真相**：`review_status` 為權威、`p2_eligible` 改為衍生。**實作與本規格四處刻意分歧（以實作為準，見 [0032](../parking-system/supabase/migrations/0032_p2_review_status.sql) 標頭）**：① `p2_eligible` 衍生自 **`review_status='approved'` 而已、不含任何日期**——含日期會把「寫入者的 as-of」烘進去，兩個 reader 各自繼承（見 §6 2B-2a 的 silent-P3）。② **不新增 `effective_until`**：`p2_valid_until` 已經是截止日、正是 `priority.ts` 讀的權威，再加一個就是本列要消滅的雙重真相；只加 `p2_valid_from`。③ enum **三態** `unreviewed/approved/revoked`——`revoked` 必須代表「人撤銷過」，舊 false 回填成 revoked 是憑空捏造。④ **不加 `updated_at`**：樂觀鎖是 `review_version`（counter 非 timestamp，`0022:118-120`），顯示權威是 `reviewed_at`，該欄無消費者。<br>**2B-2a 已含**：`reviewed_by` FK 由 `users`→`admin_accounts`（原本根本存不進自己的覆核者）、`review_note`、`review_version`、幼兒到期改學年度制、匯入不得復活已撤銷者、**audit sanitizer 擋生日值**。**2B-2b 剩**：`set_p2_eligibility`／`mark_p2_reviewed`（「標記已覆核」≠「核准」，且**永不 inert**、不可照抄 0031 的 no-op 規則）、明細頁 inline＋佇列共用 service。`pending/needs_information/rejected` 仍綁 #11。**依賴 #15，不依賴 #19**。 |
 | 11 | P2 會友自助申請＋待審 inbox | member＋eligibility | L | ✅ defer（5） | #10 的完整五態 enum 在此補齊。 |
 | 12 | 資料最小化橫幅 | eligibility, members/[id] | S | ✅（1） | 明示「不索取/不顯示診斷證明」。 |
 | 13 | P1 同工名單＋「本週不停」自動釋出 | admin | M–L | 🕒 defer | auto-release 業務規則未定。 |
@@ -80,7 +80,7 @@
 **Wave 0：正式資料匯入** — #20／#21（重用既有 preview/conflict）／#22（科學記號拒絕）／測試兩模式共存
 **Wave 1：低風險交付 UX** — #23→#24／#30／#29／#12／#27／#5A
 **Wave 2A：寫入治理地基** — #15 Audit substrate。**拆三刀：2A-1 substrate ✅（PR #38 / `8513912`）／2A-2 read-only viewer ✅（PR #39 / `d2e6890`，app-only 無 migration）／2A-3 retention（未做，政策已定見下）**
-**Wave 2B：關鍵 Admin 寫入**（需 #15、不需 #19）— **2B-1 #14A 車位容量 ✅（PR #40 / `8de24a0`，migration `0031`）／2B-2 #10 P2 覆核（進行中）**
+**Wave 2B：關鍵 Admin 寫入**（需 #15、不需 #19）— **2B-1 #14A 車位容量 ✅（PR #40 / `8de24a0`，migration `0031`）／#10 P2 覆核拆兩刀：2B-2a 模型 ✅（PR #41 / `155c7f7`，migration `0032`）、2B-2b 寫入 RPC＋UI（下一刀）**
 **Wave 2C：角色地基** — #19 Admin roles＋session 撤銷＋role matrix
 **Wave 3：其餘管理功能** — #8／#9／#17／#18／#5B／#14B override
 **Wave 4：通知便利性** — 通用 destination model→#7→#6A（#6B 後續）→#3（最後，語意最敏感）→#4／#26
@@ -92,7 +92,7 @@
 ## 交付分級
 
 **交付前必修**：文件同步、#25、#20、#21、#22、#23、#24、#27、#30
-**強烈建議交付前**：#5A ✅、**#15 ✅（2A-1／2A-2 完成，剩 2A-3 retention）**、**#14A ✅（2B-1）→ 容量已不需 SQL**、**剩 #10**（資格目前仍需 CSV，不符「幹事自行操作」目標；不需 #19 角色，只需 #15 Audit）、#12 ✅
+**強烈建議交付前**：#5A ✅、**#15 ✅（2A-1／2A-2 完成，剩 2A-3 retention）**、**#14A ✅（2B-1）→ 容量已不需 SQL**、**#10 剩 2B-2b**（模型已落地；但**幹事仍不能自行核准/撤銷資格**，仍需 CSV ⇒ 交付目標尚未達成）、#12 ✅
 
 ### Audit retention 政策（已決，2A-3 實作）
 **線上保留 24 個月、每月清理一次；不宣稱永久保存。** 理由：涵蓋兩個完整年度週期足以處理資格/容量/帳號/操作爭議；本系統非金融、醫療或法定會計帳冊，無支持永久保存的內控需求；audit 雖已最小化仍含 actor/entity stable ID，無限保存違反資料最小化；「量不大所以永不刪」不是治理政策。

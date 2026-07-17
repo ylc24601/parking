@@ -954,7 +954,31 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 2B-1（#14A 車位容量設定，PR #40 / squash `8de24a0`）
+### Current HEAD 最近驗證：Wave 2B-2a（#10 P2 資格模型，PR #41 / squash `155c7f7`）
+
+| 指令 | 結果 |
+|------|------|
+| `npx tsc --noEmit` / `npx eslint .` | ✅ exit 0 |
+| `npm test`（不接 DB） | ✅ **1221 passed** |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1463 passed**（124 檔全過，**同一個 DB 連跑兩次不 reset 皆過**——見下方 flake） |
+| `npm run db:verify` | ✅ **40**（37→40：#36 結構／#36b 衍生欄行為／#36c audit sanitizer 擋生日） |
+| `verify_schema_prod.sql`（catalog-only） | ✅ **30**（28→30） |
+| `npm run build` | ✅ `ƒ /admin/eligibility` 仍 dynamic |
+| DB schema | **migration `0032`**（`0001–0032`） |
+
+> **#10 拆兩刀（與使用者共同決定）：2B-2a ＝模型、無 UI 無寫入 RPC；2B-2b ＝ RPC＋UI。** 對照 2A 的拆法。**幹事目前仍不能自行核准/撤銷資格**，交付目標要等 2B-2b。
+> - **as-of date 是這一刀的全部重點**。兩個 reader 問的是**不同問題**，各自的日期**都對**，不該統一：`priority.ts` 問「這位會友對 **D 這個主日**是不是 P2」→ 用 event 的 `sunday_date`；review queue／明細 badge 問「這筆**現在**要不要人看」→ 用今日。**壞掉的不是日期而是 predicate 重複兩份、且沒有任何地方講明用哪一天**。故收斂成 `isWithinEligibilityWindow(w, asOf)`：`asOf` **必填**、模組**不 export 任何 clock**，看 call site 就知道在問哪個問題。
+> - **所以 `p2_eligible` 不含任何日期**（generated from `review_status = 'approved'` **而已**）。若它代表「現在有效」，就會把**寫入者**當時用的 as-of 烘進去、兩個 reader 一起繼承：週三核准、`valid_from` = 週六 ⇒ 寫入時算出 `p2_eligible=false` ⇒ 會友週三為**週日**申請時被判 **P3**，但那個週日他其實有資格。**不會拋錯，只是安靜地掉一級**。危險方向專在**起始**端：`priority.ts:30` 本來就自帶 `valid_until` 檢查（結束端有安全網），**起始端沒有** ⇒ 本刀補上、且比對 `sundayDate`。**附帶好處**：欄位不含日期 ⇒ **SQL 裡沒有日期運算** ⇒ 不像 2B-1 產生雙公式。
+> - **與 triage 規格四處刻意分歧**（詳見 `0032` 標頭，triage #10 列已同步）：① 不加 `effective_until`——`p2_valid_until` 已是截止日且是 `priority.ts` 讀的權威，再加一個正是該列要消滅的雙重真相；只加 `p2_valid_from`（**不改名**，40+ 呼叫點、只換到對稱、且改名本身是 deploy 風險）。② `reviewed_by` FK `users(id)`＝**會友表**，但覆核者是 `admin_accounts.id` ⇒ **這欄從來存不進自己的覆核者**（實查：`0001` 定義至今**零 writer**，故「最近覆核」永遠是 `—`）；#10 給它第一個 writer，故改指 `admin_accounts`。**這裡能用 FK 而 `audit_logs.actor_id` 刻意不用**，因為 admin 帳號是 soft-disable 永不 hard-delete（`0026`，`0030` 的 actor 解析正是靠這點）。③ enum **三態**（見下）。④ **不加 `updated_at`**（否決外部審查給的兩個方案）：樂觀鎖是 `review_version`（`0022:118-120` 明說 counter「不會像呼叫端傳來的 timestamp 那樣碰撞」），顯示權威是 `reviewed_at`——該欄**沒有消費者**；triage 也寫了 `effective_until`，同樣以「重複既有權威」為由否決。
+> - **`unreviewed/approved/revoked` 三態（外部審查要求，接受但更正理由）**：`revoked` 必須代表**有人撤銷過**，把舊 `p2_eligible=false` 回填成 `revoked` 是憑空捏造。**審查描述的「大量會友被鎖死」情境不成立**（實查：`p2_eligible=false` **0 筆**、**7 位會友根本沒有 eligibility 列**——`import_member` P2 路徑一律寫 `true`、一般路徑**不寫列**，故 false 列無任何 writer 能產生）。但**修正仍必要**，理由是審查沒講到的三點：① 該數字會寫進 **append-only audit marker**＝永久捏造（2B-1 同款錯）；② `revoked` 是 2B-2b 新增列的**錯誤預設**；③ **migration 不可對「自己相信不存在」的資料做錯誤標記**——我自己的 plan 引用了 `0031` 的 pre-flight idiom 卻沒套用在這裡。
+> - **幼兒陪同到期改學年度制（使用者拍板：入學年 +6、既有一併重算、不可覛改）**：舊規則 `youngest + 5 年`**到日**，根本不是 cutoff 規則、會在學期中途到期。新規則 = 入學前的 **8/31**；**9/1 含當日屬前一屆、9/2 起屬下一屆**（`2019-09-01 → 2025-08-31`、`2019-09-02 → 2026-08-31`，差整整一年，是 cohort 規則的本質不是 bug）。**只會延長不會縮短**，migration 內若縮短就 `raise`，marker 記 `rows_shortened` 讓宣稱可查而非可信。`p2_child_birthdate` 存來源——**不能用 `dependent_birthdate`**，那是 CSV 的 `dependents[0]`（`0029:74`）不必然是最小的。**公式刻意兩份**（TS 權威，因為 **dry-run 匯入預覽必須先顯示推導日期**，SQL 服務不了預覽；SQL 那份是凍結在 migration 的一次性重算），parity test 是唯一緩解。
+> - **匯入可以建立資格，但不能推翻覆核**：`0029:9` 只承諾匯入不會 **REVOKE**，沒人擋它默默 **RE-GRANT**——`on conflict do update set p2_eligible = true` 會把幹事撤銷過的人翻回可用、洗掉覆核痕跡、且**自己不寫任何 audit**。現在回報 `retained_revoked`、整列不動，preview 有對應警告。
+> - **⚠️ audit sanitizer 擋不住生日（外部審查抓到，實測確認，比看起來嚴重）**：`0030` 的 denylist 是 **exact key match**（它自己的註解就寫了「`job_name` 或 `review_note_present` 不受影響」），帶了 `birthdate` 卻**看不到 `p2_child_birthdate`**。實測 `append_audit_log('{"p2_child_birthdate_from":"2020-09-01"}')` **回傳 row id ＝未成年生日成功寫入**，而 `audit_logs` 的 UPDATE/DELETE/TRUNCATE 已 revoke ＋ trigger 擋 ⇒ **任何人（含 owner）都刪不掉**。**2A-2 的讀取端 registry 救不了這個**：它擋的是「不被**顯示**」，擋不了「被**儲存**」——顯示可挽回，儲存不可。規則設計成**擋值不擋詞彙**（生日型 key **只能放 boolean**），因為單純關鍵字禁令會連 `child_birthdate_present` 一起擋掉、反而逼未來的 RPC 改用更模糊、洩露更多的 key。**2B-2b 的 audit 契約已釘在 `0032` 標頭**。已知殘留（明寫非疏漏）：**推導出的到期日本身會洩露孩子的學年屆別**（生年＋9/1 哪一側）——無法避免，因為被稽核的正是到期日變更。
+> - **順手修掉 2B-1 我自己種下的 flake**：兩個 capacity suite 佔用了 `move-car`／`outbox-health` 已擁有的主日（`2099-08-02`／`2099-09-06`），而註解還寫著「owns its own Sundays so it can never collide」——**寫了但沒查**。它們的 event 被稽核過 ⇒ teardown 只能 finalize 不能刪 ⇒ 殘留列會殺掉下一個 INSERT 同一天的 suite，**依檔案順序時而爆時而不爆**（故 2B-1 驗證與我今天第一次跑都是綠的）。改用真正無人使用的 `2099-08-23`／`2099-08-30`，並以**同一個 DB 連跑兩次**驗證。
+> - **⚠️ vitest 摘要會騙人**：suite 在 `beforeAll` 掛掉時，它的測試會顯示成 **skipped**，摘要行寫「1445 passed | 7 skipped」看起來像綠的——**要看 `Test Files X failed` 那行**。我差點就據此回報通過。
+> - **`date → JS Date → toISOString()` 會位移一天**（node-postgres 把 `date` 轉成本地午夜，`toISOString()` 再扣掉台北 +8 ⇒ `2025-08-31` 變 `2025-08-30`）——parity test 因此對**正確的 SQL** 報錯。與 2A-2 的 cursor 微秒 bug 同源：**DB 日期不該經過 `Date` round-trip**，一律 SQL 內 `::text`。
+
+### 前一刀：Wave 2B-1（#14A 車位容量設定，PR #40 / squash `8de24a0`）
 
 | 指令 | 結果 |
 |------|------|
@@ -1135,7 +1159,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 ## 10. 本機開發備忘（重點，詳見 development_plan §12）
 
-- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0031` + seed）/ `db:verify` / `db:stop`。
+- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0032` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
 - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**；**`MEMBER_AUTH_MODE`（`mock`|`liff`；本機用 `mock`，`liff` 另需 `LINE_LOGIN_CHANNEL_ID` + `NEXT_PUBLIC_LIFF_ID`，見 [member-liff-setup.md](member-liff-setup.md)）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**（`NEXT_PUBLIC_LIFF_ID` 例外，非機密）；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。
