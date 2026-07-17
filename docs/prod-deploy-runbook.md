@@ -706,6 +706,12 @@ pass.
 
 ## 13. Post-delivery checklist (church handover)
 
+> **The consolidated, ordered, who-does-what version of this list is
+> [go-live-checklist.md](go-live-checklist.md)** — follow that on delivery day. The items
+> below are the same handover steps in their original runbook form; the checklist adds the
+> named-owner gate (go-live-readiness §1), the pilot sequence (go-live-readiness §5), and
+> the delivery-day ordering, all pointing back here for detail.
+
 Everything here is **after** the Slice 4 demo, when switching from the developer's demo OA
 to the church's real setup. None of it is done during Phase 9 itself.
 

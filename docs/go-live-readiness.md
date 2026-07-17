@@ -1,5 +1,12 @@
 # LINE OA Go-Live Readiness Plan
 
+> **➡️ For the actual delivery-day checklist, use [go-live-checklist.md](go-live-checklist.md)** —
+> it consolidates this doc's §1 (named owners) and §5 (pilot rollout) with the runbook's
+> handover steps into one ordered, checkable list. THIS doc is the original 2026-07-04
+> reasoning behind those decisions (why capture-only webhook, why a binding code over
+> name+plate, `userId` scoping); its technical content still holds, but it is not the list
+> you tick on delivery day.
+>
 > Status: **reviewed / planning only** (2026-07-04). Precedes any Phase 5 code.
 > Scope guard: no webhook/LIFF/Member UI/migration is implemented by this doc. It sets the
 > decisions, config posture, and slice order for going from "outbox writes but reaches nobody"

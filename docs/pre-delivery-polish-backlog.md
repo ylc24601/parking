@@ -70,9 +70,9 @@
 
 ---
 
-## 強烈建議交付前（因目前仍需 CSV/SQL，不符「幹事自行操作」）
+## 強烈建議交付前（因目前仍需 CSV/SQL，不符「幹事自行操作」）— ✅ 全部完成（2026-07-18）
 
-> 三者**只需 #15 Audit、不需 #19 角色**，可先於角色交付。
+> 三者**只需 #15 Audit、不需 #19 角色**，可先於角色交付。**此整節已清空** ⇒ 開發面無交付阻擋，剩下的是 ops（見 [go-live-checklist.md](go-live-checklist.md)）。
 
 - [x] #5A 名冊瀏覽（最小欄位、server 分頁）— **Wave 1c 完成**
   - Gate：`/admin/members` 預設 SSR 第一頁；`repo.listMembers` **在 DB 排序 `(display_name, id)` 再 range**（全序才能 offset 分頁）；欄位僅姓名/遮罩電話/車牌摘要/角色/綁定；**不匯出、不 bulk、不預載敏感事由**（P2 事由只在明細頁）；頁面加 `force-dynamic`/`revalidate=0`（現在 SSR 遮罩 PII）；搜尋維持 POST、名冊 URL 只有 `?page=N`。
@@ -80,14 +80,14 @@
   - **實作發現的真 bug**：PostgREST 對超界 offset 回 416/`PGRST103` ⇒ `?page=999` 原會 500、redirect 永遠跑不到；已改為視為空頁並另查 count。
   - role 分級仍待 #19；**現階段全名冊對所有 admin 可見**（已明確接受）。
   - Source：feature-triage.md #5A
-- [ ] #15 稽核 substrate（Audit Log 地基）
-  - Gate：既有 `audit_logs` 補 insert path；actor 模型（`actor_type`+`actor_id`+`actor_role_snapshot`）；DB append-only
+- [x] #15 稽核 substrate（Audit Log 地基）— **Wave 2A 全完成**（2A-1 `8513912`／2A-2 `d2e6890`／2A-3 retention `5db33bc`，migrations 0030/0034）
+  - Gate：既有 `audit_logs` 補 insert path（`private.append_audit_log`，EXECUTE 不授權任何人）；actor 模型；DB append-only（grant＋trigger 雙層）；**retention 有 24 月邊界、雙鎖逃生口清理**
   - Source：feature-triage.md #15（Wave 2A）
-- [ ] #10 P2 寫入型覆核（依賴 #15）
-  - Gate：`review_status` 權威、`p2_eligible` 衍生、樂觀鎖；v1 只 `approved/revoked`
+- [x] #10 P2 寫入型覆核（依賴 #15）— **Wave 2B-2a＋2B-2b 完成**（`155c7f7`／`c536b01`，migrations 0032/0033）
+  - Gate：`review_status` 權威、`p2_eligible` 衍生、樂觀鎖；v1 只 `approved/revoked`；**幹事可自行核准/撤銷、CSV 不再能推翻人工決定**
   - Source：feature-triage.md #10（Wave 2B）
-- [ ] #14A 車位容量設定（依賴 #15）
-  - Gate：`total_capacity`/`blocked_spaces`（顯示「保留·停用」）；`effective_capacity >= approved_count` 由 **DB RPC 在 txn 內**檢查
+- [x] #14A 車位容量設定（依賴 #15）— **Wave 2B-1 完成**（`8de24a0`，migration 0031）
+  - Gate：`total_capacity`/`blocked_spaces`（顯示「保留·停用」）；`effective_capacity >= approved_count` 由 **DB RPC 在 txn 內**檢查；**容量已不需 SQL**
   - Source：feature-triage.md #14A（Wave 2B）
 - [x] #12 資料最小化橫幅 — **Wave 1c 完成**
   - Gate：`DataMinimizationNotice` 掛在 `/admin/eligibility` 與 `/admin/members/[id]`，**在事由/眷屬出現之前**；明示不索取/不儲存/不顯示診斷證明、病歷。
