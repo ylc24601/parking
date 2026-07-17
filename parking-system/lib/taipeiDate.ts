@@ -21,3 +21,20 @@ export function upcomingSundayISO(now: Date): string {
   const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay() // 0 = Sunday
   return addDaysToIsoDate(today, (7 - weekday) % 7)
 }
+
+// A timestamp for an admin table: Taipei date + 24h time. Extracted from
+// BindingReview when the audit timeline (Wave 2A-2) needed the identical format —
+// the repo's other Intl formatters stay put because their options genuinely differ
+// (date-only sheets, time-only check-in).
+//
+// This is DISPLAY only. It intentionally takes a string and returns a string: any
+// value round-tripped through Date loses sub-millisecond precision, which matters
+// for audit's created_at (it doubles as a keyset cursor). Never feed a Date back
+// into a query.
+export function fmtTaipeiDateTime(iso: string): string {
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(iso))
+}

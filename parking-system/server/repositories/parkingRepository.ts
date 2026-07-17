@@ -91,6 +91,28 @@ export interface MemberSearchRow {
   plates: string[]
 }
 
+// Wave 2A-2 — one row of the audit timeline, exactly as the DB holds it.
+// created_at is a RAW ISO string with microsecond precision, deliberately NOT a
+// Date: it doubles as half of the keyset cursor, and Date truncates it (see the
+// listAuditLogs comment). metadata_redacted stays `unknown` — only an action's own
+// allowlisted renderer in auditPresentation may look inside it, and the view DTO
+// never carries it.
+export interface AuditLogRow {
+  id: string
+  created_at: string
+  actor_type: 'admin' | 'staff_session' | 'member' | 'job' | 'system'
+  actor_id: string | null
+  actor_session_id: string | null
+  actor_role_snapshot: string | null
+  action: string
+  entity_type: string
+  entity_id: string | null
+  weekly_event_id: string | null
+  request_id: string
+  result: 'success' | 'denied' | 'conflict'
+  metadata_redacted: unknown
+}
+
 // Phase 8 Slice 2 — full admin member detail. Contains complete PII (phone/plates/
 // eligibility/dependents); only the session-gated detail page renders it and the
 // service DTO drops line_id in favour of a `bound` boolean.
@@ -696,6 +718,22 @@ export interface ParkingRepository {
   // inconsistency on an offboarding security surface).
   getAdminAccountById(id: string): Promise<AdminAccountRow | null>
   listAdminAccounts(): Promise<AdminAccountListRow[]>
+  // Wave 2A-2 — the audit timeline's only read path (SELECT is the only privilege
+  // the app has on this table; 0030 revoked the rest).
+  //
+  // Keyset, not offset: audit_logs is append-only and read newest-first, so every
+  // insert lands at the TOP and would shift every offset page beneath it — a
+  // duplicate across the page boundary is the systematic case, not a race.
+  // `before` is the exclusive cursor: strictly older than (created_at, id).
+  //
+  // created_at is returned as the RAW PostgREST string and MUST stay that way — it
+  // carries microseconds (…T01:31:40.355854+00:00) that a JS Date round-trip
+  // silently truncates to milliseconds, after which the cursor's equality arm
+  // matches nothing and rows are skipped. Do not parseDate() this one.
+  listAuditLogs(args: {
+    limit: number
+    before?: { createdAt: string; id: string }
+  }): Promise<{ rows: AuditLogRow[] }>
   // Wraps set_admin_disabled (0026): atomic self-guard + last-active invariant
   // (when disabling) + session revoke (on BOTH disable and enable — re-enabling
   // also forces re-login so a missed session-delete during a prior disable can't
@@ -1753,6 +1791,40 @@ export function createParkingRepository(
         locked_at: parseDate(data.locked_at as string | null),
         disabled_at: parseDate(data.disabled_at as string | null),
       }
+    },
+
+    async listAuditLogs({ limit, before }) {
+      let q = client
+        .from('audit_logs')
+        .select(
+          'id, created_at, actor_type, actor_id, actor_session_id, actor_role_snapshot,' +
+            ' action, entity_type, entity_id, weekly_event_id, request_id, result, metadata_redacted',
+        )
+
+      if (before) {
+        // Strictly older than the cursor, in (created_at desc, id desc) order:
+        //   created_at < c  OR  (created_at = c AND id < cursorId)
+        // The equality arm is what makes the order total — created_at defaults to
+        // now(), the TRANSACTION timestamp, so one RPC writing two rows ties.
+        //
+        // The timestamp is interpolated raw and MUST NOT be reformatted: PostgREST
+        // needs the exact microseconds back, and supabase-js url-encodes the `+`
+        // for us (raw curl does not — it arrives as a space and errors 22007).
+        q = q.or(
+          `created_at.lt.${before.createdAt},` +
+            `and(created_at.eq.${before.createdAt},id.lt.${before.id})`,
+        )
+      }
+
+      const { data, error } = await q
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(limit)
+      if (error) throw new Error(`listAuditLogs failed: ${error.message}`)
+
+      // No parseDate on created_at — see the interface comment. Everything else is
+      // passed through untouched; metadata_redacted stays opaque to this layer.
+      return { rows: (data ?? []) as unknown as AuditLogRow[] }
     },
 
     async listAdminAccounts() {
