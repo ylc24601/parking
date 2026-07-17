@@ -49,6 +49,23 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
   const deleteAdmins = async (ids: string[]) => {
     for (const id of ids) await sb.from('admin_accounts').delete().eq('id', id)
   }
+  // 0030 threaded an audit actor + request id through this RPC. The tests below
+  // predate audit and assert nothing about it, so those arguments take throwaway
+  // values here; the audit-specific assertions live in audit-log.db.test.ts.
+  const setDisabled = (args: {
+    targetId: string
+    actingAdminId: string
+    disabled: boolean
+    nowIso?: string
+  }) =>
+    repo.setAdminDisabled({
+      targetId: args.targetId,
+      actingAdminId: args.actingAdminId,
+      actingSessionId: randomUUID(),
+      disabled: args.disabled,
+      nowIso: args.nowIso ?? NOW.toISOString(),
+      requestId: randomUUID(),
+    })
 
   beforeAll(async () => {
     sb = (await import('@/lib/supabase/server')).getServiceClient()
@@ -71,9 +88,7 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     const target = await mkAdmin('revive')
     await mkSession(target.id, `${T}-revive-1`)
 
-    const disabled = await repo.setAdminDisabled({
-      targetId: target.id, actingAdminId: keeper.id, disabled: true, nowIso: NOW.toISOString(),
-    })
+    const disabled = await setDisabled({ targetId: target.id, actingAdminId: keeper.id, disabled: true })
     expect(disabled).toEqual({ ok: true })
     expect(await sessionCount(target.id)).toBe(0)
 
@@ -82,9 +97,7 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     await mkSession(target.id, `${T}-revive-stale`)
     expect(await sessionCount(target.id)).toBe(1)
 
-    const enabled = await repo.setAdminDisabled({
-      targetId: target.id, actingAdminId: keeper.id, disabled: false, nowIso: NOW.toISOString(),
-    })
+    const enabled = await setDisabled({ targetId: target.id, actingAdminId: keeper.id, disabled: false })
     expect(enabled).toEqual({ ok: true })
     // The stale row must be gone — re-enabling always forces a fresh login.
     expect(await sessionCount(target.id)).toBe(0)
@@ -98,9 +111,7 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     const other = await mkAdmin('idem-other')   // stays active so the FIRST disable below is legal
     const target = await mkAdmin('idem-target')
 
-    const first = await repo.setAdminDisabled({
-      targetId: target.id, actingAdminId: other.id, disabled: true, nowIso: NOW.toISOString(),
-    })
+    const first = await setDisabled({ targetId: target.id, actingAdminId: other.id, disabled: true })
     expect(first).toEqual({ ok: true })
     const disabledAtAfterFirst = (await adminRow(`${U}-idem-target`)).disabled_at
 
@@ -108,8 +119,9 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
 
     // Re-disable while ALREADY disabled: must succeed even though `other` is the
     // only currently-active admin (the exists-check is skipped for this branch).
-    const second = await repo.setAdminDisabled({
-      targetId: target.id, actingAdminId: other.id, disabled: true, nowIso: new Date(NOW.getTime() + 60_000).toISOString(),
+    const second = await setDisabled({
+      targetId: target.id, actingAdminId: other.id, disabled: true,
+      nowIso: new Date(NOW.getTime() + 60_000).toISOString(),
     })
     expect(second).toEqual({ ok: true })
     expect(await sessionCount(target.id)).toBe(0)
@@ -123,9 +135,7 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     const target = await mkAdmin('idem-enable')
     await mkSession(target.id, `${T}-idem-enable-stray`)
 
-    const res = await repo.setAdminDisabled({
-      targetId: target.id, actingAdminId: randomUUID(), disabled: false, nowIso: NOW.toISOString(),
-    })
+    const res = await setDisabled({ targetId: target.id, actingAdminId: randomUUID(), disabled: false })
     expect(res).toEqual({ ok: true })
     expect(await sessionCount(target.id)).toBe(0)
     expect((await adminRow(`${U}-idem-enable`)).disabled_at).toBeNull()
@@ -137,9 +147,7 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
 
   it('the sole active admin cannot be disabled', async () => {
     const sole = await mkAdmin('sole')
-    const res = await repo.setAdminDisabled({
-      targetId: sole.id, actingAdminId: randomUUID(), disabled: true, nowIso: NOW.toISOString(),
-    })
+    const res = await setDisabled({ targetId: sole.id, actingAdminId: randomUUID(), disabled: true })
     expect(res).toEqual({ ok: false, reason: 'last_active_admin' })
     expect((await adminRow(`${U}-sole`)).disabled_at).toBeNull()
 
@@ -151,8 +159,8 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     const b = await mkAdmin('race-b')
 
     const [resA, resB] = await Promise.all([
-      repo.setAdminDisabled({ targetId: a.id, actingAdminId: b.id, disabled: true, nowIso: NOW.toISOString() }),
-      repo.setAdminDisabled({ targetId: b.id, actingAdminId: a.id, disabled: true, nowIso: NOW.toISOString() }),
+      setDisabled({ targetId: a.id, actingAdminId: b.id, disabled: true }),
+      setDisabled({ targetId: b.id, actingAdminId: a.id, disabled: true }),
     ])
 
     const aWon = resA.ok
@@ -200,7 +208,7 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
   it('resetting a disabled admin leaves it disabled', async () => {
     const other = await mkAdmin('reset-dis-other')
     const target = await mkAdmin('reset-dis-target')
-    await repo.setAdminDisabled({ targetId: target.id, actingAdminId: other.id, disabled: true, nowIso: NOW.toISOString() })
+    await setDisabled({ targetId: target.id, actingAdminId: other.id, disabled: true })
 
     const res = await repo.resetAdminPassword({
       targetId: target.id, actingAdminId: other.id, passwordHash: hashPin('another-new-password!!'),
@@ -228,7 +236,8 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     const other = await mkAdmin('disable-self-other')
     const target = await mkAdmin('disable-self-target')
     const { data, error } = await sb.rpc('set_admin_disabled', {
-      p_target_id: target.id, p_acting_admin_id: target.id, p_disabled: true, p_now: NOW.toISOString(),
+      p_target_id: target.id, p_acting_admin_id: target.id, p_acting_session_id: randomUUID(),
+      p_disabled: true, p_now: NOW.toISOString(), p_request_id: randomUUID(),
     })
     expect(error).toBeNull()
     expect(data).toEqual({ ok: false, reason: 'cannot_target_self' })

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { ADMIN_LOGIN_LOCK_MINUTES } from '@/lib/allocation/rules'
 import { hashPin } from '@/server/http/pinHash'
 import { createParkingRepository, type ParkingRepository } from '@/server/repositories/parkingRepository'
+import { requireAdminActor, type AuditActor } from '@/server/services/auditContext'
 
 // ── Admin account management (Phase 8 Slice 3) ───────────────────────────────
 // Peer model: admin_accounts has no role hierarchy, so every state-changing action
@@ -55,19 +56,26 @@ function deriveStatus(
   return 'active'
 }
 
+// Audited (0030). The actor and requestId are passed straight through to the RPC,
+// which writes the audit row in the same transaction — this service must not build
+// metadata, must not write a second row, and must not catch an audit failure and
+// report success: an audit failure means the disable did not happen.
 export async function setAdminDisabled(
-  params: { targetId: string; actingAdminId: string; disabled: boolean },
+  params: { targetId: string; actor: AuditActor; disabled: boolean; requestId: string },
   repo: ParkingRepository = createParkingRepository(),
   now: Date = new Date(),
 ): Promise<AdminAccountActionResult> {
-  if (params.targetId === params.actingAdminId) {
+  const { adminId, sessionId } = requireAdminActor(params.actor)
+  if (params.targetId === adminId) {
     return { ok: false, reason: 'cannot_target_self' }
   }
   const result = await repo.setAdminDisabled({
     targetId: params.targetId,
-    actingAdminId: params.actingAdminId,
+    actingAdminId: adminId,
+    actingSessionId: sessionId,
     disabled: params.disabled,
     nowIso: now.toISOString(),
+    requestId: params.requestId,
   })
   if (!result.ok) {
     return { ok: false, reason: (result.reason ?? 'not_found') as AdminAccountActionReason }

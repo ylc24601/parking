@@ -8,7 +8,7 @@
 -- dev-only and is never applied by `db push`).
 --
 -- This file is NOT a replacement for supabase/tests/verify_schema.sql (the local
--- verifier, run via `npm run db:verify`): that one exercises 33 behavioral/negative
+-- verifier, run via `npm run db:verify`): that one exercises 35 behavioral/negative
 -- assertions via DML inside a rolled-back transaction and depends on seed rows — it
 -- cannot run against a fresh cloud database. The two files are COMPLEMENTS with
 -- independent assertion counts: local verifies behavior via DML, this one verifies
@@ -381,7 +381,9 @@ end $$;
 -- ── 18. Admin account management RPCs (verify_schema.sql #31) ──────────────────────────
 do $$
 begin
-  if not has_function_privilege('service_role', 'set_admin_disabled(uuid,uuid,boolean,timestamptz)', 'execute') then
+  -- Signature gained p_acting_session_id + p_request_id when 0030 made this the
+  -- audited exemplar; assertion 27 pins the audit-specific properties.
+  if not has_function_privilege('service_role', 'set_admin_disabled(uuid,uuid,uuid,boolean,timestamptz,uuid)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on set_admin_disabled';
   end if;
   if not has_function_privilege('service_role', 'reset_admin_password(uuid,uuid,text)', 'execute') then
@@ -602,7 +604,11 @@ declare
     'redact_decided_binding_pii(timestamptz,int,int,boolean)',
     'import_member(text,text,text[],p2_reason,date,date,jsonb,boolean)',
     'capture_pending_binding(text,text,text,timestamptz)',
-    'capture_liff_binding_claim(text,text,text,timestamptz)'
+    'capture_liff_binding_claim(text,text,text,timestamptz)',
+    -- 0030 made these SECURITY DEFINER (they run as the owner), which turns a stray
+    -- PUBLIC EXECUTE from a latent annoyance into privilege escalation.
+    'set_admin_disabled(uuid,uuid,uuid,boolean,timestamptz,uuid)',
+    'private.append_audit_log(audit_actor_type,uuid,uuid,text,text,text,uuid,uuid,uuid,audit_result,jsonb)'
   ];
   sig text;
 begin
@@ -627,4 +633,77 @@ begin
   raise notice 'PASS: PUBLIC holds no EXECUTE on the sensitive binding/pastoral/import/retention RPCs';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 26 assertions passed =='
+-- ── 27. Audit substrate: append-only + app-unforgeable (verify_schema.sql #34) ───
+-- Catalog-only half of local assertion 34. The behavioural half (triggers still block
+-- once DML is granted back) needs DML and stays local-only — but the properties below
+-- are exactly the ones a blanket re-grant or a careless `create or replace` would undo
+-- in production, which is where it would matter most.
+do $$
+declare
+  v_priv text;
+begin
+  perform 1 from pg_class where relname = 'audit_logs' and relkind = 'r';
+  if not found then raise exception 'FAIL: audit_logs table missing'; end if;
+
+  -- The app principal reads the log and nothing else. TRUNCATE is checked explicitly:
+  -- DELETE does not imply it, and it never fires a row-level trigger.
+  foreach v_priv in array array['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] loop
+    if has_table_privilege('service_role', 'audit_logs', v_priv) then
+      raise exception 'FAIL: service_role must not hold % on audit_logs', v_priv;
+    end if;
+  end loop;
+  if not has_table_privilege('service_role', 'audit_logs', 'SELECT') then
+    raise exception 'FAIL: service_role lacks SELECT on audit_logs';
+  end if;
+
+  -- The app cannot reach the writer, so it cannot forge a row even though it can
+  -- legitimately call the RPCs that write one.
+  if has_schema_privilege('service_role', 'private', 'usage') then
+    raise exception 'FAIL: service_role must not hold USAGE on schema private';
+  end if;
+
+  if to_regprocedure('private.append_audit_log(audit_actor_type,uuid,uuid,text,text,text,uuid,uuid,uuid,audit_result,jsonb)') is null then
+    raise exception 'FAIL: private.append_audit_log missing';
+  end if;
+
+  -- SECURITY DEFINER is what lets the audited RPC reach the writer; an unpinned
+  -- search_path would make that a privilege-escalation vector.
+  if not exists (select 1 from pg_proc where proname = 'set_admin_disabled' and prosecdef) then
+    raise exception 'FAIL: set_admin_disabled must be SECURITY DEFINER';
+  end if;
+  if exists (
+    select 1 from pg_proc
+     where proname in ('set_admin_disabled', 'append_audit_log')
+       and prosecdef
+       and (proconfig is null or array_to_string(proconfig, ',') not like '%search_path%')
+  ) then
+    raise exception 'FAIL: a SECURITY DEFINER audit function does not pin search_path';
+  end if;
+
+  if exists (
+    select 1 from pg_proc
+     where proname = 'set_admin_disabled'
+       and pg_get_function_identity_arguments(oid) = 'uuid, uuid, boolean, timestamptz'
+  ) then
+    raise exception 'FAIL: the pre-audit set_admin_disabled overload still exists';
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'audit_logs_actor_shape_ck') then
+    raise exception 'FAIL: audit_logs_actor_shape_ck missing';
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+     where table_name = 'audit_logs' and column_name = 'request_id' and is_nullable = 'YES'
+  ) then
+    raise exception 'FAIL: audit_logs.request_id must be NOT NULL';
+  end if;
+
+  perform 1 from pg_trigger where tgname = 'audit_logs_no_mutation';
+  if not found then raise exception 'FAIL: audit_logs_no_mutation trigger missing'; end if;
+  perform 1 from pg_trigger where tgname = 'audit_logs_no_truncate';
+  if not found then raise exception 'FAIL: audit_logs_no_truncate trigger missing'; end if;
+
+  raise notice 'PASS: audit substrate append-only grants, private writer, SECURITY DEFINER exemplar present';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 27 assertions passed =='
