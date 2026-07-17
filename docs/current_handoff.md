@@ -1,6 +1,6 @@
 # 教會主日停車管理系統 — 開發交接文件（Current Handoff）
 
-> 最後更新：2026-07-17 ｜ **Phase 9 已收官；production demo walkthrough 完成並清回 baseline；尚未匯入正式教會會員資料**。Post-Phase-9 功能軌進行中（[feature-triage.md](feature-triage.md)）：Wave -1/0/0.1/1 ✅、**Wave 2A-1／2A-2 ✅（剩 2A-3 retention）、Wave 2B-1 #14A ✅、Wave 2B-2a＋2B-2b #10 ✅ ⇒ 容量與 P2 資格都已不需要 SQL／CSV**；驗證見 §8。 ｜ 範圍：Phase 0–2 全部、Phase 3（Staff 現場頁 + v2 全切片）、Phase 4（notification dispatcher A–F）、Phase 5/5B（LINE webhook + binding 擷取/審核/CLI）、Phase 6（會友資料匯入）、Phase 7（會員 LIFF：登入/綁定/申請/取消/遞補確認/正在路上）、Phase 8（Admin UI Slice 1–8）、Phase 9（production deploy + prod demo-complete 收官）全數完成——詳見 §6.13–§6.36。
+> 最後更新：2026-07-18 ｜ **Phase 9 已收官；production demo walkthrough 完成並清回 baseline；尚未匯入正式教會會員資料**。Post-Phase-9 功能軌（[feature-triage.md](feature-triage.md)）：Wave -1/0/0.1/1 ✅、**Wave 2A #15 稽核全完成（2A-1／2A-2／2A-3 retention）、Wave 2B-1 #14A ✅、Wave 2B-2a＋2B-2b #10 ✅ ⇒ 容量／P2 資格不需 SQL／CSV，稽核有邊界可清理**。**「強烈建議交付前」清單已清空 ⇒ 開發面可進正式交付收尾**（剩交付後 ops，runbook §8/§13）；驗證見 §8。 ｜ 範圍：Phase 0–2 全部、Phase 3（Staff 現場頁 + v2 全切片）、Phase 4（notification dispatcher A–F）、Phase 5/5B（LINE webhook + binding 擷取/審核/CLI）、Phase 6（會友資料匯入）、Phase 7（會員 LIFF：登入/綁定/申請/取消/遞補確認/正在路上）、Phase 8（Admin UI Slice 1–8）、Phase 9（production deploy + prod demo-complete 收官）全數完成——詳見 §6.13–§6.36。
 >
 > **現況：開發全部完成、prod 已站起並跑完完整 demo（見 §6.36）。剩交付後 ops（非開發軌）**：升 Supabase Pro、換教會正式 OA/channel token、匯入真會友 CSV、通知文案 sign-off、通知 LIFF deep-link（#26）；整理於 [prod-deploy-runbook.md](prod-deploy-runbook.md) §8/§13。功能 backlog 見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
@@ -954,7 +954,29 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 2B-2b（#10 P2 覆核寫入路徑，PR #42 / squash `c536b01`）
+### Current HEAD 最近驗證：Wave 2A-3（#15 稽核記錄 retention purge，PR #43 / squash `5db33bc`）
+
+| 指令 | 結果 |
+|------|------|
+| `npx tsc --noEmit` / `npx eslint .` | ✅ exit 0 |
+| `npm test`（不接 DB） | ✅ **1277 passed** |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1560 passed**（129 檔，**同一 DB 連跑兩次不 reset 皆過**） |
+| `npm run db:verify` | ✅ **44**（42→44：#38 purge fn 鎖定＋owner-equality；#38b 逃生口行為——fn 刪得掉、直接 service_role 即使 grant＋GUC 仍擋） |
+| `verify_schema_prod.sql`（catalog-only） | ✅ **32**（31→32） |
+| `npm run build` | ✅ `ƒ /api/internal/jobs/purge-audit-logs` |
+| 手動實跑（dev + curl，`http://[::1]:3000`） | 未帶 secret→**401**；dry-run 回 `retentionMonths:24`＋`deletedBefore`≈24 個月前；**smuggled `now=2100`＋`retentionMonths=1` 被整條路徑忽略**（DB 時鐘＋24 月下限）；seed 一列 25 個月前的列→HTTP apply→`deletedCount:1`＋恰一列 marker（`keys=deleted_before,deleted_count,retention_months`）；zero-delete apply→**不寫 marker** |
+| DB schema | **migration `0034`**（`0001–0034`） |
+
+> **這一刀是 #15 的最後一塊**：稽核記錄從「append-only、無刪除路徑」變成「有 24 個月邊界、可證明、可稽核的保留政策」，並讓 `/admin/audit` 那句對幹事的文案從「將於後續啟用」翻成平述。#15 三刀（2A-1/2A-2/2A-3）全完成 ⇒ **「強烈建議交付前」清單清空**。
+> - **審查必改 1 是真的安全洞，我照抄前例照出來的**：我把 binding-PII 的 `p_now` 參數抄進 purge RPC，但兩者不對等——早刪 PII **朝隱私**（良性）、早刪 append-only audit 是**不可逆的證據銷毀**。RPC 授權給 service_role、可直接呼叫 ⇒ `p_now='2100'` 就洗掉全表，route 忽略外部 `now` 保護不了 DB。故 `purge_audit_logs` **不收 `p_now`、自己讀 `now()`、24 月下限在 SQL 內釘死**。移除 `p_now` 後**必改 3 隨之成立**：service 再也無法自算 cutoff（`new Date()` 與 DB 時鐘不同步），cutoff 必須由 RPC 回傳——審查抓到的是一個真實內部矛盾。（[[dev-lessons-retrospective]] 30/31）
+> - **逃生口＝雙鎖，且一把是正確性不只是安全**：改 `private.audit_logs_block_mutation` 只對 `DELETE` 開一道縫，需同時滿足 (1) 交易域 GUC `audit.allow_purge='on'`（只有 purge fn 用 `set_config(...,true)` 開）＋ (2) `current_user` ＝ `audit_logs` owner。**PG 17.6 實證**：SECURITY DEFINER fn 內 `current_user=postgres`（owner，過鎖2）、直接 service_role delete 時 `current_user=service_role`（≠owner，鎖2 擋）——連「trigger 在 definer 的 DELETE 中被觸發時 current_user＝owner」都先跑 probe 證明才寫 migration。鎖2 讓即使未來重演 `0004` blanket grant 也刪不掉；`UPDATE`/`TRUNCATE` 恆擋。**owner-equality 是正確性依賴**：若 fn owner ≠ table owner，連合法 purge 都永遠過不了鎖2、機制靜默失效 ⇒ verifier 釘死（審查要求）。（[[dev-lessons-retrospective]] 32/33）
+> - **DELETE 後主動 `set_config(...,'off',...)` 關回**，不只依賴交易結束——同一交易內 purge 之後任何 DELETE 都會再被擋（專門測試釘住）。
+> - **只在真的刪了才寫 marker**：頭 ~24 個月每月都刪 0 列，若每次記「purged 0」會**灌爆 log 且那些列 retention-exempt＝永久累積**（`0030:369` 的 no-op 原則）。`audit.substrate_enabled`／`audit.retention_purge` retention-exempt。marker metadata 只有 `deleted_before`/`deleted_count`/`retention_months`（無 ID、無被刪列資料）。（[[dev-lessons-retrospective]] 35）
+> - **service 有界迴圈排 backlog**：cron 每月只跑一次，單批 500 若遇大 backlog 要半年才追上 ⇒ service 迴圈呼叫（各批獨立交易、鎖只短暫持有）到 `has_more=false` 或達上限（≤20 批／≤10k），達上限仍有殘留就回 `hasMore:true`＋warning，不默默等下個月。
+> - **DB test 全程 raw-pg `BEGIN…ROLLBACK`**（硬要求）：purge 謂詞是全域 `created_at < cutoff`，若 commit＋未來時間會**真的刪掉共用 DB 上其他 suite 的 append-only 列**（比 [[dev-lessons-retrospective]] 23 更糟——真刪、append-only 無法 teardown 補回）。連「證明 TRUNCATE 被擋」都包在 rollback 交易裡，萬一沒擋住還能救整個共用 DB。（[[dev-lessons-retrospective]] 34）
+> - **UI 文案翻面的部署硬前置**（審查必改 6）：`AUDIT_BOUNDARY_NOTE` 改成「紀錄保留 24 個月，逾期後由定期維運作業清除」是在宣稱一個**正在運作的作業**；程式碼可 merge，但這句到真正有幹事在看的 prod 之前，必須先確認 prod purge cron 已設好（`vercel.pro.example.json` 有範例、但範例不等於已設定）⇒ [prod-deploy-runbook.md](prod-deploy-runbook.md) §13 加了一條 go-live 硬前置。現況 prod 為 demo、尚無真會友，merge 本身不構成對真使用者的提前宣稱。
+
+### 前一刀：Wave 2B-2b（#10 P2 覆核寫入路徑，PR #42 / squash `c536b01`）
 
 | 指令 | 結果 |
 |------|------|
