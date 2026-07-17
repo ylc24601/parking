@@ -535,8 +535,16 @@ the live demo member here and is removed in §12.3.
 (`DEMO01`–`06`) have **zero** matches in prod `users`/`vehicles` (swap the block if any
 hit). Create the demo event: `npm run job:ensure-event -- --sunday <far-future Sunday>`;
 record its `eventId`. Record the 07-19 event id + status + reservation count. Drop
-effective capacity to 2: `UPDATE weekly_events SET blocked_spaces=21 WHERE id='<demo>'`
-(record original 23/0/0). **Record the `outbox-alert` cron job's original settings
+effective capacity to 2 **via `/admin/車位設定`** (`/admin/capacity`): set 保留·停用 to 21
+on the demo Sunday, and record the original numbers first.
+
+> Since #14A (migration `0031`) capacity is an Admin-UI operation and hand-written SQL is
+> no longer the way to do it — the UI enforces `可分配 >= 已核准` inside the transaction
+> and writes an audit row, neither of which an `UPDATE` does. The old instruction was
+> `UPDATE weekly_events SET blocked_spaces=21 WHERE id='<demo>'`; it is kept here only so
+> a reader of an older runbook copy knows what replaced it. If the demo Sunday is not the
+> current or next Sunday, the UI will not offer it — use a nearer Sunday, or fall back to
+> SQL knowingly and accept that the guard and the audit row are both skipped. **Record the `outbox-alert` cron job's original settings
 (enabled / cron / timezone / notification-on-failure / next-run), then pause that cron +
 its failure notification** — synthetic members produce expected `no_line_id` failures
 during the window.

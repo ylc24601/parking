@@ -14,6 +14,22 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     // Wave 2A-2 — audit timeline read. Empty by default: an empty log is the
     // graceful case, so tests that don't care stay unaffected.
     listAuditLogs: vi.fn(async () => ({ rows: [] })),
+    // Wave 2B-1 (#14A) — capacity admin. Defaults describe the seed's shape post-fold
+    // (23 total, 3 blocked, 0 admin_reserved, 1 reserved staff ⇒ 19 effective).
+    getWeeklyCapacityAdmin: vi.fn(async () => ({
+      id: 'event-1',
+      sunday_date: '2026-06-21',
+      status: 'open',
+      total_capacity: 23,
+      blocked_spaces: 3,
+      admin_reserved: 0,
+      capacity_version: 0,
+      active_full_time_staff_reserved: 1,
+    })),
+    countPromisedReservations: vi.fn(async () => 0),
+    setWeeklyCapacity: vi.fn(async () => ({
+      ok: true, noop: false, effective_capacity: 19, promised_count: 0, capacity_version: 1,
+    })),
     // Wave 1d (#27) — notification plate lookup. Empty by default: a payload with no plate is
     // the graceful case, so tests that don't care about it stay unaffected.
     getPlatesForReservations: vi.fn(async () => new Map<string, string>()),

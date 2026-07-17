@@ -37,8 +37,12 @@ insert into user_penalties (user_id) values
   ('a0000000-0000-0000-0000-000000000005');
 
 -- ── Weekly event (fixed Sunday) ──────────────────────────────────────────────
+-- blocked_spaces was 1 + admin_reserved 2 until 0031 folded the two into a single
+-- 「保留·停用」number (admin_reserved is now CHECK-pinned to 0). Arithmetic is
+-- unchanged — 23−1−2−1staff and 23−3−0−1staff both give an effective capacity of 19 —
+-- so every downstream expectation that depended on this seed still holds.
 insert into weekly_events (id, sunday_date, total_capacity, blocked_spaces, admin_reserved, status) values
-  ('e0000000-0000-0000-0000-000000000001', '2026-06-21', 23, 1, 2, 'open');
+  ('e0000000-0000-0000-0000-000000000001', '2026-06-21', 23, 3, 0, 'open');
 
 -- ── P1 weekly state: A reserved, B skipped → active_full_time_staff_reserved = 1 ─
 insert into weekly_staff_allocations (weekly_event_id, user_id, status, skip_reason) values

@@ -91,6 +91,21 @@ export interface MemberSearchRow {
   plates: string[]
 }
 
+// Wave 2B-1 (#14A) — the editable capacity state of one week, plus the inputs the
+// preview needs. admin_reserved is carried even though 0031 pins it to 0: it is still a
+// term in computeCapacity, so passing it explicitly keeps the preview honest rather
+// than assuming a constant.
+export interface WeeklyCapacityAdminRow {
+  id: string
+  sunday_date: string
+  status: string
+  total_capacity: number
+  blocked_spaces: number
+  admin_reserved: number
+  capacity_version: number
+  active_full_time_staff_reserved: number
+}
+
 // Wave 2A-2 — one row of the audit timeline, exactly as the DB holds it.
 // created_at is a RAW ISO string with microsecond precision, deliberately NOT a
 // Date: it doubles as half of the keyset cursor, and Date truncates it (see the
@@ -716,6 +731,35 @@ export interface ParkingRepository {
   // below wrap single atomic RPCs (0026): see that migration for why a sequence of
   // separate repo calls is not safe here (partial-failure session/credential
   // inconsistency on an offboarding security surface).
+  // Wave 2B-1 (#14A) — the admin capacity card. Capacity columns reach the app ONLY
+  // via v_weekly_capacity_inputs today (WeeklyEventRow is just {id, sunday_date,
+  // status}), and that view has no capacity_version/status, so this reads the base
+  // table for the editable fields and the view supplies reserved_staff.
+  getWeeklyCapacityAdmin(sunday: string): Promise<WeeklyCapacityAdminRow | null>
+  // Seats already promised for an event. temp_approved is included deliberately: it is
+  // a held seat, not a pending one (0006:26-36 promotes a waiting row straight into it,
+  // and apply_offer_resolution later flips it to approved with no capacity check).
+  countPromisedReservations(eventId: string): Promise<number>
+  // Wraps set_weekly_capacity (0031): locks the event row, guards, and writes the audit
+  // row in the SAME transaction. Refusals come back as typed reasons, never throws.
+  setWeeklyCapacity(args: {
+    eventId: string
+    sunday: string
+    totalCapacity: number
+    blockedSpaces: number
+    expectedVersion: number
+    actingAdminId: string
+    actingSessionId: string
+    requestId: string
+  }): Promise<{
+    ok: boolean
+    reason?: string
+    noop?: boolean
+    effective_capacity?: number
+    promised_count?: number
+    capacity_version?: number
+    actual_version?: number
+  }>
   getAdminAccountById(id: string): Promise<AdminAccountRow | null>
   listAdminAccounts(): Promise<AdminAccountListRow[]>
   // Wave 2A-2 — the audit timeline's only read path (SELECT is the only privilege
@@ -1791,6 +1835,64 @@ export function createParkingRepository(
         locked_at: parseDate(data.locked_at as string | null),
         disabled_at: parseDate(data.disabled_at as string | null),
       }
+    },
+
+    async getWeeklyCapacityAdmin(sunday) {
+      const { data, error } = await client
+        .from('weekly_events')
+        .select('id, sunday_date, status, total_capacity, blocked_spaces, admin_reserved, capacity_version')
+        .eq('sunday_date', sunday)
+        .maybeSingle()
+      if (error) throw new Error(`getWeeklyCapacityAdmin failed: ${error.message}`)
+      if (!data) return null
+
+      // reserved_staff is not on weekly_events — it is a count over
+      // weekly_staff_allocations, which is exactly why the row-local CHECK in 0031
+      // cannot express the full invariant and the RPC has to.
+      const { count, error: se } = await client
+        .from('weekly_staff_allocations')
+        .select('user_id', { count: 'exact', head: true })
+        .eq('weekly_event_id', data.id as string)
+        .eq('status', 'reserved')
+      if (se) throw new Error(`getWeeklyCapacityAdmin staff count failed: ${se.message}`)
+      if (count === null) throw new Error('getWeeklyCapacityAdmin failed: staff count unavailable')
+
+      return {
+        id: data.id as string,
+        sunday_date: data.sunday_date as string,
+        status: data.status as string,
+        total_capacity: data.total_capacity as number,
+        blocked_spaces: data.blocked_spaces as number,
+        admin_reserved: data.admin_reserved as number,
+        capacity_version: data.capacity_version as number,
+        active_full_time_staff_reserved: count,
+      }
+    },
+
+    async countPromisedReservations(eventId) {
+      const { count, error } = await client
+        .from('reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('weekly_event_id', eventId)
+        .in('status', ['approved', 'temp_approved'])
+      if (error) throw new Error(`countPromisedReservations failed: ${error.message}`)
+      if (count === null) throw new Error('countPromisedReservations failed: count unavailable')
+      return count
+    },
+
+    async setWeeklyCapacity(args) {
+      const { data, error } = await client.rpc('set_weekly_capacity', {
+        p_event_id: args.eventId,
+        p_sunday: args.sunday,
+        p_total_capacity: args.totalCapacity,
+        p_blocked_spaces: args.blockedSpaces,
+        p_expected_version: args.expectedVersion,
+        p_acting_admin_id: args.actingAdminId,
+        p_acting_session_id: args.actingSessionId,
+        p_request_id: args.requestId,
+      })
+      if (error) throw new Error(`set_weekly_capacity failed: ${error.message}`)
+      return data as { ok: boolean; reason?: string; noop?: boolean }
     },
 
     async listAuditLogs({ limit, before }) {
