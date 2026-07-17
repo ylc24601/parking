@@ -23,12 +23,18 @@
 
 > 出處：[delivery-model-and-roadmap.md](delivery-model-and-roadmap.md) roadmap §5「post-delivery ops」。順序有意義：真 PII 落地前先升 Pro；真送出前先簽文案。
 
-### 1.1 Supabase Free → Pro（真 PII 落地前）
-- **Who**：dev（billing 需教會/擁有者帳號）
-- **為什麼（決策脈絡，2026-07-18）**：**升級不是為了效能或容量**——本專案規模（幾十～一兩百會友、每週一次預約）對 Free 的 500 MB DB／流量綽綽有餘。**唯一真正的理由是備份**：Free **完全沒有每日備份**，而系統存真會友 PII（姓名/車牌/電話/資格含未成年生日）＋一個 **append-only 稽核軌**（設計上不可重建）。DB 一旦壞掉/誤刪/migration 出事，Free 沒有任何還原點，且 CSV 救不回綁定/預約/稽核/手動覆核。**次要理由**：Free 一週無活動會自動暫停——平常 cron 一直打 DB 不會觸發，但 §2 rollback 第一步就是**停排程** ⇒ 停排程後 Free 可能一週後暫停、app 掛掉要人工喚醒，正好在處理事故時多一個坑。Pro 兩者都移除。
-- **替代（若要省月費）**：留 Free ＋自排 `pg_dump` 到**加密**儲存。省 ~US$25/月，但代價＝多一組要顧的 ops ＋ dump 檔含全套 PII（新開一個 PII-at-rest 攻擊面，需加密與存取控管）。對無專人維運的教會，總風險通常更高 ⇒ **預設建議走 Pro**；**若選這條**，把 dump 排程與加密儲存位置記進本檔，並在 §3 監控裡加「確認最近一次 dump 成功」。
-- **Verify**：專案未被 inactivity 暫停；**每日備份在 dashboard 顯示啟用**（Pro 內含滾動 7 天；PITR 是**額外付費 add-on、非必需**，除非要更細的還原點才開）；`SUPABASE_URL`/`SERVICE_ROLE_KEY` 不變故 Vercel env 不需改。**升級後把日期＋執行者記進 [current_handoff.md](current_handoff.md)。**
-- **Detail**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §8（就地升級、同 project ref、勿建新專案；先確認 demo/PII 已依 §12.3 清乾淨）
+### 1.1 資料保護：備份 ＋ 不被暫停（真 PII 落地前）
+
+> **決策（2026-07-18）：先不升 Pro**（省 ~US$25/月）⇒ 走 **Free ＋自管備份**。可隨時回頭改：升 Pro 是 dashboard 一鍵、就地升級（同 project ref/URL/key、資料不動、Vercel env 不需改），升完每日備份自動開。
+>
+> **為什麼這一項還在**：升 Pro 從來不是為了效能或容量（本專案規模對 Free 綽綽有餘），**唯一真正的理由是備份**——Free **零每日備份**，而系統存真會友 PII（姓名/車牌/電話/資格含未成年生日）＋不可重建的 append-only 稽核軌。所以「先不付」不會讓這個 gate 消失，只是把它從「按一下升 Pro」換成「自己顧備份」。
+
+- **Who**：dev（建置備份）＋ operator（顧它有在跑）
+- [ ] **自管加密備份上線 — 選 Free 後的新交付 gate，非可選**：真 PII ＋不可重建稽核軌若零備份，就是唯一會真痛的風險。CSV 也救不回綁定/預約/稽核/幹事手動覆核。
+  - **形狀**：排程（GitHub Action／cron-job.org）跑 `pg_dump` → 輸出到**加密、access-controlled** 的儲存；保留數份滾動。**dump 含全套 PII ⇒ 絕不進 git、絕不進未加密 bucket**（新開的 PII-at-rest 面，要加密＋存取控管）。排程與儲存位置記在這裡：`（待填）`。
+  - **Verify**：手動跑一次，且**在一個丟棄用 DB 上 restore 一次**確認 dump 真的可還原（未驗證還原的備份等於沒有備份），再排程。
+- [ ] **暫停 foot-gun 處置**：Free 一週無活動會自動暫停。平常 11+ 個 cron 一直打 DB 不會觸發；**但 §2 rollback 第一步是停排程** ⇒ 停機數日後 DB 可能暫停、app 掛掉需到 dashboard 手動喚醒。記住此點（或 rollback 時留一個輕量 keep-alive ping）。
+- **升 Pro 的替代路（日後若改主意）**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §8——就地升級、同 project ref、勿建新專案；升完 Verify＝每日備份在 dashboard 顯示啟用（Pro 內含滾動 7 天；PITR 是額外付費 add-on、非必需）；記日期＋執行者進 [current_handoff.md](current_handoff.md)。
 
 ### 1.2 教會正式 OA 接線
 - **Who**：OA token owner（提供憑證）＋ dev（換 env、repoint URL）
@@ -73,4 +79,5 @@
 
 - **通知 LIFF deep-link（#26）** — 讓通知一觸就開會員頁動作；#25 已把「回覆」死指令改成導向會員頁，deep-link 是其正解。見 [feature-triage.md](feature-triage.md) #26。
 - **監控** `/outbox-alert`（503＝不健康，外部 monitor 收信）、audit purge 每月 run 的 `hasMore` warning。
+- **確認自管備份最近一次成功**（§1.1 選 Free 後的持續責任——備份靜默失敗＝回到零備份，比沒設更危險，因為你以為有）。若日後升 Pro，此條移除。
 - **非阻擋 dev backlog**（要不要做由你決定，皆可留）：2B-2c P2 佇列列內操作、Wave 2C #19 admin 角色分級、retire `admin_reserved`、`server-only` 套件、a11y menu 語意。見 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)「可交付後迭代」。
