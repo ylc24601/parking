@@ -10,6 +10,21 @@
 -- in 0004). It is empty scaffolding, so a reshape costs nothing. The guard below
 -- turns that claim into an assertion rather than an assumption.
 --
+-- ── DEPLOY: this migration is NOT additive — it has a compatibility window ───────
+-- set_admin_disabled's signature changes (below), and the old 4-arg overload is
+-- DROPPED rather than left alongside. So the DB and the app are incompatible in
+-- BOTH orders, for the gap between them:
+--   · migration first  → the old app calls the 4-arg RPC → PostgREST PGRST202
+--   · app first        → the new 6-arg RPC does not exist yet → same failure
+-- Blast radius is admin account enable/disable ONLY. Every other route, all cron
+-- jobs, and the whole member/staff parking flow are untouched. Deploy the app
+-- immediately after the migration and exercise the exemplar route to confirm.
+--
+-- ROLLBACK is therefore NOT "revert the app". The old app cannot talk to this DB.
+-- Either forward-fix the app, or restore the 4-arg wrapper first — and note that
+-- doing so reintroduces an UNAUDITED write path, which is the thing this migration
+-- exists to remove. Forward-fix is strongly preferred.
+--
 -- Its actor model could not have worked anyway: `actor_id uuid references users(id)`
 -- can only express a MEMBER actor, but the actions worth auditing are overwhelmingly
 -- taken by admins — and admins live in admin_accounts, not users. This repo has hit
