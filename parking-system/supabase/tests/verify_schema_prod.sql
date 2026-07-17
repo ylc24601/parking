@@ -8,7 +8,7 @@
 -- dev-only and is never applied by `db push`).
 --
 -- This file is NOT a replacement for supabase/tests/verify_schema.sql (the local
--- verifier, run via `npm run db:verify`): that one exercises 35 behavioral/negative
+-- verifier, run via `npm run db:verify`): that one exercises 37 behavioral/negative
 -- assertions via DML inside a rolled-back transaction and depends on seed rows — it
 -- cannot run against a fresh cloud database. The two files are COMPLEMENTS with
 -- independent assertion counts: local verifies behavior via DML, this one verifies
@@ -608,7 +608,8 @@ declare
     -- 0030 made these SECURITY DEFINER (they run as the owner), which turns a stray
     -- PUBLIC EXECUTE from a latent annoyance into privilege escalation.
     'set_admin_disabled(uuid,uuid,uuid,boolean,timestamptz,uuid)',
-    'private.append_audit_log(audit_actor_type,uuid,uuid,text,text,text,uuid,uuid,uuid,audit_result,jsonb)'
+    'private.append_audit_log(audit_actor_type,uuid,uuid,text,text,text,uuid,uuid,uuid,audit_result,jsonb)',
+    'set_weekly_capacity(uuid,date,int,int,int,uuid,uuid,uuid)'
   ];
   sig text;
 begin
@@ -706,4 +707,50 @@ begin
   raise notice 'PASS: audit substrate append-only grants, private writer, SECURITY DEFINER exemplar present';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 27 assertions passed =='
+-- ── 28. Weekly capacity admin: folded admin_reserved + guards (verify_schema.sql #35) ─
+-- Catalog-only half. The behavioural half (the guard actually refusing a below-promised
+-- cut) needs DML and stays local — but these are the properties a careless migration
+-- would undo in production, where admin_reserved silently going non-zero would make the
+-- UI's single 「保留·停用」number disagree with what the allocator actually computes.
+do $$
+declare
+  v_sig text := 'set_weekly_capacity(uuid,date,int,int,int,uuid,uuid,uuid)';
+  v_priv text;
+begin
+  if not exists (select 1 from pg_constraint where conname = 'weekly_events_admin_reserved_folded_ck') then
+    raise exception 'FAIL: weekly_events_admin_reserved_folded_ck missing';
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'weekly_events_blocked_within_total_ck') then
+    raise exception 'FAIL: weekly_events_blocked_within_total_ck missing';
+  end if;
+
+  perform 1 from information_schema.columns
+   where table_name = 'weekly_events' and column_name = 'capacity_version';
+  if not found then raise exception 'FAIL: weekly_events.capacity_version missing'; end if;
+
+  if to_regprocedure(v_sig) is null then
+    raise exception 'FAIL: set_weekly_capacity missing';
+  end if;
+  if not exists (select 1 from pg_proc where proname = 'set_weekly_capacity' and prosecdef) then
+    raise exception 'FAIL: set_weekly_capacity must be SECURITY DEFINER';
+  end if;
+  if exists (
+    select 1 from pg_proc
+     where proname = 'set_weekly_capacity' and prosecdef
+       and (proconfig is null or array_to_string(proconfig, ',') not like '%search_path%')
+  ) then
+    raise exception 'FAIL: SECURITY DEFINER set_weekly_capacity does not pin search_path';
+  end if;
+  foreach v_priv in array array['anon', 'authenticated'] loop
+    if has_function_privilege(v_priv, v_sig, 'execute') then
+      raise exception 'FAIL: % must not execute set_weekly_capacity', v_priv;
+    end if;
+  end loop;
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception 'FAIL: service_role lacks execute on set_weekly_capacity';
+  end if;
+
+  raise notice 'PASS: weekly capacity admin columns/constraints/RPC present and locked down';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 28 assertions passed =='

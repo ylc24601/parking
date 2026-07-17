@@ -61,6 +61,59 @@ describe('renderAuditDetails — known action, valid metadata', () => {
   })
 })
 
+describe('renderAuditDetails — #14A capacity actions', () => {
+  it('renders a capacity change as from→to, reading effective capacity rather than recomputing it', () => {
+    // The formula already lives in two places on purpose (the pure computeCapacity for
+    // reads, the RPC's SQL for the transactional guard). The viewer must NOT become a
+    // third — so it reads effective_capacity_from/to off the row.
+    const r = renderAuditDetails('weekly_event.capacity_update', {
+      total_capacity_from: 23, total_capacity_to: 23,
+      blocked_spaces_from: 3, blocked_spaces_to: 5,
+      effective_capacity_from: 19, effective_capacity_to: 17,
+      promised_count: 4,
+    })
+    expect(r.fallback).toBeNull()
+    expect(r.details).toEqual([
+      { label: '總車位', value: '23 → 23' },
+      { label: '保留·停用', value: '3 → 5' },
+      { label: '可分配', value: '19 → 17' },
+    ])
+  })
+
+  it('explains a refusal in operator language, and falls back to the raw code for an unknown one', () => {
+    expect(renderAuditDetails('weekly_event.capacity_update', {
+      reason: 'capacity_below_promised', requested_effective_capacity: 1, promised_count: 2,
+    }).details).toEqual([
+      { label: '未執行原因', value: '可分配車位會少於已核准的數量' },
+      { label: '當時數字', value: '想改成可分配 1 位，但已核准 2 位' },
+    ])
+    expect(renderAuditDetails('weekly_event.capacity_update', { reason: 'future_guard' }).details)
+      .toEqual([{ label: '未執行原因', value: 'future_guard' }])
+  })
+
+  it('a wrong-typed capacity field falls back rather than rendering nonsense', () => {
+    const r = renderAuditDetails('weekly_event.capacity_update', {
+      total_capacity_from: '23', total_capacity_to: 23,
+      blocked_spaces_from: 3, blocked_spaces_to: 5,
+      effective_capacity_from: 19, effective_capacity_to: 17,
+    })
+    expect(r.fallback).toBe(UNREADABLE_DETAIL)
+    expect(r.details).toEqual([])
+  })
+
+  it('renders the one-off fold marker, and says the capacity did not move', () => {
+    // The fold rewrote a column's meaning across every row but changed no effective
+    // capacity; the timeline should say exactly that.
+    const r = renderAuditDetails('weekly_event.admin_reserved_fold', {
+      rows_affected: 12, arithmetic_preserved: true,
+    })
+    expect(r.details).toEqual([
+      { label: '調整週次', value: '12 週' },
+      { label: '可分配車位', value: '不變（僅合併顯示方式）' },
+    ])
+  })
+})
+
 describe('renderAuditDetails — the allowlist holds', () => {
   it('never renders an extra key a future writer added, and counts it instead', () => {
     // The exact hazard this registry exists for: 0030's write-side denylist would

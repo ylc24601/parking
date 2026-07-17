@@ -70,7 +70,73 @@ function renderAdminAccountToggle(metadata: Record<string, unknown>): AuditDetai
   return details
 }
 
+const CAPACITY_DENIED_REASON: Record<string, string> = {
+  capacity_below_promised: '可分配車位會少於已核准的數量',
+  event_not_editable: '這一週已不可修改',
+  allocation_in_progress: '本週分配正在執行中',
+  negative_capacity: '保留·停用數超過總車位',
+  version_conflict: '另一位管理員已先行修改',
+}
+
 const ACTIONS: Record<string, AuditActionDefinition> = {
+  // #14A. effective_capacity_from/to are read straight from the row rather than
+  // recomputed here: the formula already lives in two places on purpose (the pure
+  // computeCapacity for the read path, the RPC's SQL for the transactional guard) and
+  // presentation must not become a third.
+  'weekly_event.capacity_update': {
+    label: '修改車位容量',
+    reads: [
+      'total_capacity_from', 'total_capacity_to',
+      'blocked_spaces_from', 'blocked_spaces_to',
+      'effective_capacity_from', 'effective_capacity_to',
+      'promised_count', 'reason', 'requested_effective_capacity',
+      'expected_version', 'actual_version',
+    ],
+    render: metadata => {
+      // A refusal row carries a reason instead of a from/to pair.
+      if ('reason' in metadata) {
+        const reason = metadata.reason
+        if (typeof reason !== 'string') return 'unreadable'
+        const details: AuditDetail[] = [
+          { label: '未執行原因', value: CAPACITY_DENIED_REASON[reason] ?? reason },
+        ]
+        if (typeof metadata.requested_effective_capacity === 'number' && typeof metadata.promised_count === 'number') {
+          details.push({
+            label: '當時數字',
+            value: `想改成可分配 ${metadata.requested_effective_capacity} 位，但已核准 ${metadata.promised_count} 位`,
+          })
+        }
+        return details
+      }
+
+      const { total_capacity_from: tf, total_capacity_to: tt } = metadata
+      const { blocked_spaces_from: bf, blocked_spaces_to: bt } = metadata
+      const { effective_capacity_from: ef, effective_capacity_to: et } = metadata
+      if ([tf, tt, bf, bt, ef, et].some(v => typeof v !== 'number')) return 'unreadable'
+
+      return [
+        { label: '總車位', value: `${tf} → ${tt}` },
+        { label: '保留·停用', value: `${bf} → ${bt}` },
+        { label: '可分配', value: `${ef} → ${et}` },
+      ]
+    },
+  },
+
+  // One aggregate marker written by migration 0031, so the timeline can explain why
+  // 外賓保留 stopped being tracked separately from that instant.
+  'weekly_event.admin_reserved_fold': {
+    label: '外賓保留位併入「保留·停用」',
+    reads: ['rows_affected', 'arithmetic_preserved'],
+    render: metadata => {
+      const rows = metadata.rows_affected
+      if (typeof rows !== 'number') return 'unreadable'
+      return [
+        { label: '調整週次', value: `${rows} 週` },
+        { label: '可分配車位', value: '不變（僅合併顯示方式）' },
+      ]
+    },
+  },
+
   'admin_account.disable': {
     label: '停用管理員帳號',
     reads: ['disabled_to', 'state_changed', 'reason'],

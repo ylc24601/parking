@@ -694,6 +694,100 @@ begin
   raise notice 'PASS: audit_logs triggers block mutation even when DML is granted';
 end $$;
 
+-- ── 35. Weekly capacity admin: folded admin_reserved + guards (Wave 2B-1 / #14A) ─
+do $$
+declare
+  v_sig text := 'set_weekly_capacity(uuid,date,int,int,int,uuid,uuid,uuid)';
+  v_priv text;
+begin
+  -- The fold is what lets the UI show ONE 「保留·停用」number honestly: with
+  -- admin_reserved pinned to 0, the formula's term for it is provably inert, so the
+  -- number the 幹事 edits is provably the whole story.
+  if not exists (select 1 from pg_constraint where conname = 'weekly_events_admin_reserved_folded_ck') then
+    raise exception 'FAIL: weekly_events_admin_reserved_folded_ck missing — admin_reserved could go non-zero and the UI preview would silently disagree with the allocator';
+  end if;
+  if exists (select 1 from weekly_events where admin_reserved <> 0) then
+    raise exception 'FAIL: a weekly_events row has non-zero admin_reserved';
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'weekly_events_blocked_within_total_ck') then
+    raise exception 'FAIL: weekly_events_blocked_within_total_ck missing — manual SQL could drive computeCapacity negative, which throws and would brick Friday allocation';
+  end if;
+
+  perform 1 from information_schema.columns
+   where table_name = 'weekly_events' and column_name = 'capacity_version';
+  if not found then raise exception 'FAIL: weekly_events.capacity_version missing'; end if;
+
+  -- SECURITY DEFINER is what lets this reach private.append_audit_log; its two hazards
+  -- must stay closed (same pins as assertion 34's exemplar).
+  if not exists (select 1 from pg_proc where proname = 'set_weekly_capacity' and prosecdef) then
+    raise exception 'FAIL: set_weekly_capacity must be SECURITY DEFINER to reach the audit writer';
+  end if;
+  if not exists (
+    select 1 from pg_proc
+     where proname = 'set_weekly_capacity'
+       and array_to_string(proconfig, ',') like '%search_path%'
+  ) then
+    raise exception 'FAIL: SECURITY DEFINER set_weekly_capacity must pin search_path';
+  end if;
+  foreach v_priv in array array['anon', 'authenticated', 'public'] loop
+    if has_function_privilege(v_priv, v_sig, 'execute') then
+      raise exception 'FAIL: % must not execute set_weekly_capacity', v_priv;
+    end if;
+  end loop;
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception 'FAIL: service_role lacks execute on set_weekly_capacity';
+  end if;
+
+  raise notice 'PASS: weekly capacity admin — admin_reserved folded+pinned, guards present, RPC locked down';
+end $$;
+
+-- ── 35b. The capacity guard actually refuses (behavioural, not just present) ─────
+-- Assertion 35 proves the plumbing exists; this proves it BITES. The temp_approved
+-- case is the one worth pinning: a cancellation promotes a waiting row straight into
+-- temp_approved (0006:26-36) and apply_offer_resolution later flips it to approved
+-- with NO capacity check — so a guard counting only 'approved' would let capacity be
+-- cut during a live offer window and oversubscribe on confirm.
+do $$
+declare
+  v_event uuid := 'e0000000-0000-0000-0000-000000000001';
+  v_res   jsonb;
+begin
+  update reservations set status = 'approved', release_deadline_at = '2026-06-21T02:30:00Z'
+   where weekly_event_id = v_event and user_id = 'a0000000-0000-0000-0000-000000000001';
+  update reservations set status = 'temp_approved'
+   where weekly_event_id = v_event and user_id = 'a0000000-0000-0000-0000-000000000002';
+  -- promised = 2 (one approved + one temp_approved); approved alone would be 1.
+
+  -- 23 - 21 blocked - 0 admin_reserved - 1 reserved staff = 1 effective < 2 promised
+  v_res := set_weekly_capacity(v_event, '2026-06-21', 23, 21, 0,
+                               'a0000000-0000-0000-0000-000000000001',
+                               'a0000000-0000-0000-0000-000000000002', gen_random_uuid());
+  if (v_res->>'reason') <> 'capacity_below_promised' then
+    raise exception 'FAIL: cutting below promised was allowed (temp_approved not counted?): %', v_res;
+  end if;
+
+  -- 23 - 20 - 0 - 1 = 2 effective = 2 promised → exactly enough, allowed.
+  v_res := set_weekly_capacity(v_event, '2026-06-21', 23, 20, 0,
+                               'a0000000-0000-0000-0000-000000000001',
+                               'a0000000-0000-0000-0000-000000000002', gen_random_uuid());
+  if (v_res->>'ok') <> 'true' then
+    raise exception 'FAIL: effective == promised should be allowed: %', v_res;
+  end if;
+
+  -- A finalized event is not editable — via an ALLOWLIST, so a future status is not
+  -- silently editable either.
+  update weekly_events set status = 'finalized' where id = v_event;
+  v_res := set_weekly_capacity(v_event, '2026-06-21', 23, 19, 1,
+                               'a0000000-0000-0000-0000-000000000001',
+                               'a0000000-0000-0000-0000-000000000002', gen_random_uuid());
+  if (v_res->>'reason') <> 'event_not_editable' then
+    raise exception 'FAIL: finalized event was editable: %', v_res;
+  end if;
+
+  raise notice 'PASS: capacity guard refuses below-promised (temp_approved counted) and non-editable events';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

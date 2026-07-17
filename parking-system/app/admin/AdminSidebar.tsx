@@ -16,6 +16,7 @@ const NAV: Array<{ href: string; label: string; icon: string }> = [
   { href: '/admin/eligibility', label: '資格審查', icon: '🏷️' },
   { href: '/admin/import', label: '名單匯入', icon: '📥' },
   { href: '/admin/print', label: '列印點名表', icon: '🖨' },
+  { href: '/admin/capacity', label: '車位設定', icon: '🅿️' },
   { href: '/admin/ops', label: '營運狀態', icon: '📊' },
   { href: '/admin/audit', label: '稽核記錄', icon: '📜' },
   { href: '/admin/pastoral', label: '牧養關懷', icon: '💚' },
