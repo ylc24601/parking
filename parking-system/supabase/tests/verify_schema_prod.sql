@@ -895,4 +895,46 @@ begin
   raise notice 'PASS: P2 write RPCs present and locked down, invariants + Taipei date pinned';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 31 assertions passed =='
+-- ── 28. Audit retention purge locked down (verify_schema.sql #38) ─────────────────
+-- Catalog-only half of local assertion 38 (the behavioural delete/seam probe stays
+-- local). These are the properties a blanket re-grant or careless create-or-replace
+-- would undo in prod: the fn is SECURITY DEFINER + search_path pinned, only service_role
+-- executes it, its owner equals audit_logs' owner (or lock 2 would reject every purge),
+-- and the trigger still carries the escape hatch.
+do $$
+begin
+  if to_regprocedure('purge_audit_logs(int,int,boolean,uuid)') is null then
+    raise exception 'FAIL: purge_audit_logs missing';
+  end if;
+  if not exists (select 1 from pg_proc where proname = 'purge_audit_logs' and prosecdef) then
+    raise exception 'FAIL: purge_audit_logs must be SECURITY DEFINER';
+  end if;
+  if exists (
+    select 1 from pg_proc
+     where proname = 'purge_audit_logs'
+       and prosecdef
+       and (proconfig is null or array_to_string(proconfig, ',') not like '%search_path%')
+  ) then
+    raise exception 'FAIL: purge_audit_logs does not pin search_path';
+  end if;
+  if not has_function_privilege('service_role', 'purge_audit_logs(int,int,boolean,uuid)', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on purge_audit_logs';
+  end if;
+  if has_function_privilege('anon', 'purge_audit_logs(int,int,boolean,uuid)', 'execute')
+     or has_function_privilege('authenticated', 'purge_audit_logs(int,int,boolean,uuid)', 'execute') then
+    raise exception 'FAIL: anon/authenticated must not execute purge_audit_logs';
+  end if;
+  if (select proowner from pg_proc where proname = 'purge_audit_logs')
+     is distinct from (select relowner from pg_class where oid = 'public.audit_logs'::regclass) then
+    raise exception 'FAIL: purge_audit_logs owner <> audit_logs owner — lock 2 would reject every purge';
+  end if;
+  if not exists (
+    select 1 from pg_proc where proname = 'audit_logs_block_mutation' and prosrc like '%audit.allow_purge%'
+  ) then
+    raise exception 'FAIL: audit_logs_block_mutation lost the purge escape hatch (2A-3)';
+  end if;
+
+  raise notice 'PASS: purge_audit_logs present, locked down, owner-matched, escape hatch intact';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 32 assertions passed =='

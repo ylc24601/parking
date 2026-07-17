@@ -92,6 +92,8 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     requeueFailedOutbox: vi.fn(async () => ({ requeued: 0 })),
     // Phase 8 Slice 7 — binding PII retention
     redactDecidedBindingPii: vi.fn(async () => ({ count: 0, hasMore: false })),
+    // Wave 2A-3 — audit retention purge
+    purgeAuditLogs: vi.fn(async () => ({ count: 0, hasMore: false, deletedBefore: '2024-01-01T00:00:00+00:00', retentionMonths: 24 })),
     // Phase 5A — pending LINE binding capture
     capturePendingBinding: vi.fn(async () => ({ captured: 1, superseded: false })),
     // Phase 5B — approve / reject pending binding

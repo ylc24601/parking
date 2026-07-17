@@ -724,3 +724,12 @@ to the church's real setup. None of it is done during Phase 9 itself.
       church.
 - [ ] Confirm the 11 cron jobs still point at the Vercel domain and `JOB_TRIGGER_SECRET`
       matches.
+- [ ] **Audit retention purge cron is live (Wave 2A-3).** A 12th job was added
+      post-Phase-9: `GET /api/internal/jobs/purge-audit-logs`, monthly (Taipei intent
+      e.g. 1st @ 04:00 → the Asia/Taipei cron expression on cron-job.org, per §6.5's
+      whole-hour convention; the `vercel.pro.example.json` entry `0 4 1 * *` is the Pro
+      form). **This is a hard gate, not a nicety**: the `/admin/audit` page now tells
+      幹事「紀錄保留 24 個月，逾期後由定期維運作業清除」— that claim is only honest once
+      this cron actually runs. Verify with a `?dryRun=1` hit (must return
+      `retentionMonths: 24` and a `deletedBefore` ≈ 24 months back) before trusting the
+      copy. Same `JOB_TRIGGER_SECRET` / `Bearer $CRON_SECRET` auth as the other jobs.
