@@ -954,7 +954,31 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：Wave 2A-3（#15 稽核記錄 retention purge，PR #43 / squash `5db33bc`）
+### Current HEAD 最近驗證：DB 加密備份（交付 ops 基礎建設，PR #44 / squash `cc6b66a`）
+
+**非功能 Wave，是交付前的 ops 基礎建設**：教會決定**先不升 Supabase Pro**（沒預算，想先跑起來證明有用再爭取），
+而 Free tier **零代管備份** ⇒ 備份這個 gate 不消失、只是從「按一下升 Pro」換成「自己顧」。見
+[go-live-checklist.md](go-live-checklist.md) §1.1、[backup-restore-runbook.md](backup-restore-runbook.md)。
+
+| 指令 | 結果 |
+|------|------|
+| `shellcheck scripts/backup/*.sh` | ✅ clean |
+| `bash scripts/backup/test-backup-scripts.sh` | ✅ **17 passed / 0 failed**（假 pg_dump/age/psql/aws 的失敗路徑測試） |
+| GitHub Actions `lint-and-test` | ✅ green（shellcheck＋yamllint＋harness，14s） |
+| 真 DB 完整往返（本機 Supabase） | ✅ backup → restore **四道關卡全過**；`--clean` 重跑冪等 |
+| 負向測試 | ✅ 竄改 artifact／錯金鑰／列數不符／整張表消失／manifest 遺失／密碼外洩 **全部正確擋下** |
+
+> **架構**：排程 GitHub Action `pg_dump（public+private，schema+data）→ age 加密 → R2/B2`，**加密在離開 runner 前發生**、私鑰教會離線保管。每次產**兩個檔**：dump ＋ **manifest**（catalog 動態列舉的每張表列數＋dump 的 SHA-256）。同一支腳本設 `LOCAL_DEST` 可改走 NAS／加密硬碟。
+> - **還原四道關卡全過才算成功**（任一失敗即非零退出）：雜湊比對／pg_restore 錯誤 allowlist（只容許兩種 Supabase 代管訊息，並核對其自報的 errors-ignored 計數）／**逐表列數與 manifest 完全一致且無表消失**／`verify_schema_prod.sql` 通過（32 條，抓「資料在但安全結構沒回來」）。**外部審查的核心指正**：原版把**任何** pg_restore 非零狀態都當成 benign，只要六張表查得到就回報成功 ⇒ **備份失敗處理得好，但「還原部分失敗」會被宣告成功**，對備份系統是不可接受的失敗模式。「印出列數讓人自己判斷」不是災難復原的成功條件。
+> - **`--clean` 改為預設關閉**：它先 DROP 再建 ⇒ 錯誤被吞＋目標打錯 ＝ **把好的資料庫毀掉還回報成功**。
+> - **⚠️ 兩個「致命錯誤卻回報成功」的 shell 陷阱，都是新加的假-binary CI 抓到的、讀 code 讀不出來**：① **cleanup trap 的退出碼會蓋掉腳本的**（`rm` 成功回 0 ⇒ fatal error 後 exit 0）；② **空陣列展開 `"${arr[@]}"` 在 bash 3.2（macOS）`set -u` 下是致命錯誤**。兩者都已修並被測試釘住。⇒ 審查要求的 script CI 不是形式要求。
+> - **⚠️ 監控必須對「沒發生」告警**：GitHub 只在「有跑但失敗」時寄信；**排程停掉只產生沉默，而沉默跟成功長得一樣**。本 repo 是 **public**，GitHub 對公開 repo **無活動 60 天即自動停用排程 workflow** ⇒ 教會交付後 repo 安靜下來，備份會**無聲停止**。故必須設 `HEARTBEAT_URL`（dead-man's switch）。
+> - **`BACKUP_ENABLED` arming flag**（未 arm 什麼都不做、arm 後缺設定就硬失敗）取代「先註解排程、之後記得打開」——後者正是本專案一再踩的 promise-without-a-mechanism。故 **merge 不會在設定完成前每天噴失敗信**。
+> - **兩個 CI 之外的真地雷**：workflow 釘 `postgresql-client-17` 對齊 server（舊 client 拒絕 dump 新 server）；CI 必須用 **session-mode pooler**（GitHub runner 只有 IPv4、Supabase direct 只有 IPv6）。
+> - **誠實邊界（明寫以免誤解）**：CI **不做**真資料往返（需真 Postgres＋真 schema），由 runbook §5 **每月還原演練**負責。**CI 證明護欄會擋，演練證明資料回得來。** manifest 列數在 dump 前一刻取得，並發寫入可能造成小幅落差 ⇒ 還原會**失敗要人調查**（fail safe，不假裝沒事）。
+> - **待教會執行**（我做不了）：產 age 金鑰（私鑰離線、≥2 人各一份、與備份分開放）／建 private bucket／設 Secrets 與 Variables／設 lifecycle 保留天數／設 HEARTBEAT_URL ／全部就緒才 `BACKUP_ENABLED=true` ／**跑一次還原演練**。
+
+### 前一刀：Wave 2A-3（#15 稽核記錄 retention purge，PR #43 / squash `5db33bc`）
 
 | 指令 | 結果 |
 |------|------|
