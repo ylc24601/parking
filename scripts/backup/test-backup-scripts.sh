@@ -123,6 +123,37 @@ expect_fail "missing manifest"    "manifest not found" \
   env AGE_IDENTITY="$TMP/present.pgc.age" MANIFEST="$TMP/no.manifest.age" \
       bash "$RESTORE" "$TMP/present.pgc.age" "postgres://x/y"
 
+echo "db-restore.sh — a failure must leave the diagnostic log behind"
+# Regression guard: the failure message used to promise './restore-failed.log' while no
+# copy was ever made, and cleanup then deleted the temp dir — so a REAL restore failure
+# destroyed its own evidence, mid-disaster, which is when you need it most.
+if (
+  LOGT="$TMP/logtest"; mkdir -p "$LOGT/run"
+  printf 'FAKEDUMP' > "$LOGT/a.pgc.age"
+  if command -v sha256sum >/dev/null; then s="$(sha256sum "$LOGT/a.pgc.age" | awk '{print $1}')"
+  else s="$(shasum -a 256 "$LOGT/a.pgc.age" | awk '{print $1}')"; fi
+  { echo "artifact_sha256=$s"; echo "backup_utc=T"; echo "# schema.table<TAB>rows";
+    printf 'public.users\t9\n'; } > "$LOGT/a.manifest.age"
+  : > "$LOGT/id"
+  # age passthrough; pg_restore emits a NON-benign error so the restore is rejected
+  cat >"$FAKEBIN/pg_restore" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+echo 'pg_restore: error: could not execute query: ERROR:  relation "users" is corrupt'
+exit 1
+EOF
+  cat >"$FAKEBIN/age" <<'EOF'
+#!/usr/bin/env bash
+f=""; for a in "$@"; do [[ -f "$a" ]] && f="$a"; done
+[[ -n "$f" ]] && cat "$f" || cat
+EOF
+  chmod +x "$FAKEBIN/pg_restore" "$FAKEBIN/age"
+  cd "$LOGT/run" || exit 1
+  AGE_IDENTITY="$LOGT/id" MANIFEST="$LOGT/a.manifest.age" VERIFY_SQL="$LOGT/a.manifest.age" \
+    bash "$RESTORE" "$LOGT/a.pgc.age" 'postgresql://u:pw@h/db' >/dev/null 2>&1
+  [[ -s "$LOGT/run/restore-failed.log" ]]
+); then ok "failure preserves ./restore-failed.log"; else bad "failure preserves ./restore-failed.log"; fi
+
 echo "db-restore.sh — the target URL must never echo credentials"
 : > "$TMP/id.txt"; : > "$TMP/m.age"
 out="$(env AGE_IDENTITY="$TMP/id.txt" MANIFEST="$TMP/m.age" \

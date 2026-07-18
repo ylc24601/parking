@@ -56,7 +56,19 @@ sanitize_url() { local u="$1"; u="${u#*://}"; u="${u##*@}"; printf '%s' "${u%%\?
 # Capture and re-raise the status — a bare cleanup trap lets `rm`'s own exit code (0)
 # become the script's, turning a FATAL error into a reported success. See db-backup.sh.
 WORK="$(mktemp -d)"
-cleanup() { rc=$?; rm -rf "$WORK"; exit "$rc"; }
+cleanup() {
+  rc=$?
+  # On failure, preserve the diagnostics BEFORE the temp dir is removed. A restore that
+  # fails loudly but destroys its own evidence is only half a guard — and it destroys it
+  # at exactly the moment you need it, mid-disaster. Applies to EVERY failure path, not
+  # just the pg_restore one, so verify.log survives too.
+  if [[ $rc -ne 0 ]]; then
+    if [[ -f "$WORK/restore.log" ]]; then cp "$WORK/restore.log" ./restore-failed.log 2>/dev/null || :; fi
+    if [[ -f "$WORK/verify.log"  ]]; then cp "$WORK/verify.log"  ./restore-failed-verify.log 2>/dev/null || :; fi
+  fi
+  rm -rf "$WORK"
+  exit "$rc"
+}
 trap cleanup EXIT
 
 echo "restore: target = $(sanitize_url "$TARGET")"
@@ -107,7 +119,7 @@ UNEXPECTED="$(grep 'ERROR:' "$WORK/restore.log" | grep -Ev "$BENIGN" || true)"
 if [[ -n "$UNEXPECTED" ]]; then
   echo "restore: pg_restore reported errors outside the benign allowlist:" >&2
   echo "$UNEXPECTED" | head -20 >&2
-  fail "restore is NOT trustworthy — see $WORK/restore.log (copied to ./restore-failed.log)"
+  fail "restore is NOT trustworthy — full log preserved at ./restore-failed.log"
 fi
 # Cross-check pg_restore's own tally against what we classified, so an error shape we
 # failed to parse cannot slip through as "no unexpected errors".
@@ -141,7 +153,7 @@ if psql "$TARGET" -v ON_ERROR_STOP=1 -f "$VERIFY_SQL" >"$WORK/verify.log" 2>&1; 
   echo "restore: verify_schema_prod.sql passed ($(grep -c 'PASS:' "$WORK/verify.log" || echo '?') assertions)"
 else
   tail -15 "$WORK/verify.log" >&2
-  fail "verify_schema_prod.sql did NOT pass — data may be present but the security structure is not intact"
+  fail "verify_schema_prod.sql did NOT pass — data may be present but the security structure is not intact (full log at ./restore-failed-verify.log)"
 fi
 
 echo "restore: OK — artifact verified, restore clean, all $CHECKED table counts match, schema verified."

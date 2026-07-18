@@ -119,6 +119,10 @@ AGE_IDENTITY=./age-identity.txt \
 3. **每張表列數與 manifest 完全一致**，且**沒有表消失**
 4. **`verify_schema_prod.sql` 通過**（32 條）——抓「資料在、但安全結構沒回來」的情況，這是列數看不到的
 
+**失敗時診斷資料會留下來**：任一關卡失敗，腳本會在**當前目錄**留下 `restore-failed.log`
+（pg_restore 完整輸出）與 `restore-failed-verify.log`（結構驗證輸出）再清掉暫存目錄。
+**還原失敗卻把自己的證據刪掉，等於只做了一半的護欄**——而它銷毀證據的時機，正好是災難當下最需要它的時候。
+
 - `<TARGET_DB_URL>` **沒有預設、不猜 prod**，必須自己打 ⇒ 不會因為省略而覆蓋錯的庫。
 - **`--clean` 預設關閉**。它會**先 DROP 再建**，是破壞性的；只在對可丟棄的 scratch DB 重跑演練時才加。
 - 終端**只會印 host/database，不印帳密**。
