@@ -31,9 +31,11 @@
 
 - **Who**：dev（建置備份）＋ operator（顧它有在跑）
 - [ ] **自管加密備份上線 — 選 Free 後的新交付 gate，非可選**：真 PII ＋不可重建稽核軌若零備份，就是唯一會真痛的風險。CSV 也救不回綁定/預約/稽核/幹事手動覆核。
-  - **實作已備妥**（機制已本機實跑驗證：dump→age 加密→解密→還原後逐表列數一致、安全結構完整）：排程 GitHub Action `pg_dump（public+private）→ age 加密 → 上傳 R2/B2`。程式＋設定＋還原步驟見 **[backup-restore-runbook.md](backup-restore-runbook.md)**。
-  - **待教會填**：① 產 age 金鑰對、私鑰離線保管（≥2 人各一份）；② 建 R2/B2 private bucket；③ 設 GitHub Secrets/Variables（runbook §1.3）；④ bucket lifecycle rule（保留天數）。**dump 含全套 PII ⇒ 私鑰跟備份分開放、bucket 不公開、絕不進 git。**
-  - **Verify**：手動觸發跑一次（runbook §1.5）＋**做一次 §5 還原演練**（在丟棄用 DB restore 一次、看列數）——未驗過還原的備份等於沒有備份。
+  - **實作已備妥**：排程 GitHub Action `pg_dump（public+private）→ age 加密 → 上傳 R2/B2`，**每次產出 dump ＋ manifest 兩個檔**（manifest 記每張表列數＋dump 雜湊）。程式＋設定＋還原見 **[backup-restore-runbook.md](backup-restore-runbook.md)**。
+  - **還原有四道自動關卡**（全過才算成功，非零退出）：雜湊比對／pg_restore 錯誤 allowlist／**逐表列數與 manifest 完全一致**／`verify_schema_prod.sql` 通過。**「印出列數讓人自己看」不是災難復原的成功條件**——部分還原與整張表消失在數字裡都很正常。
+  - **待教會填**：① 產 age 金鑰對、私鑰離線保管（**≥2 人各一份、跟備份分開放**）；② 建 R2/B2 private bucket；③ 設 GitHub Secrets/Variables；④ bucket lifecycle rule；⑤ **設 `HEARTBEAT_URL`**（見下）；⑥ 全部就緒後才把 `BACKUP_ENABLED` 設成 `true`（**arm 之前 workflow 什麼都不做**，故 merge 不會每天噴失敗信）。
+  - **⚠️ 監控要對「沒發生」告警**：GitHub 只在「有跑但失敗」時寄信。本 repo 是**公開**的，而 **GitHub 對公開 repo 會在無活動 60 天後自動停用排程 workflow**——教會交付後 repo 必然安靜，屆時備份**無聲停止、不產生任何錯誤**。故必須設 dead-man's-switch heartbeat（healthchecks.io 免費即可），沒收到 ping 才會有人知道。
+  - **Verify**：arm 後手動觸發跑一次 ＋ **做一次 §5 還原演練**看到 `restore: OK`——未驗過還原的備份等於沒有備份。
   - **替代**：若治理要求 PII 不進第三方雲 ⇒ 同一支腳本設 `LOCAL_DEST` 走 NAS／加密硬碟（需 self-hosted runner 或本機 cron），見 runbook §7。
 - [ ] **暫停 foot-gun 處置**：Free 一週無活動會自動暫停。平常 11+ 個 cron 一直打 DB 不會觸發；**但 §2 rollback 第一步是停排程** ⇒ 停機數日後 DB 可能暫停、app 掛掉需到 dashboard 手動喚醒。記住此點（或 rollback 時留一個輕量 keep-alive ping）。
 - **升 Pro 的替代路（日後若改主意）**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §8——就地升級、同 project ref、勿建新專案；升完 Verify＝每日備份在 dashboard 顯示啟用（Pro 內含滾動 7 天；PITR 是額外付費 add-on、非必需）；記日期＋執行者進 [current_handoff.md](current_handoff.md)。
