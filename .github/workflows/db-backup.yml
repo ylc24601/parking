@@ -1,0 +1,60 @@
+name: Encrypted DB backup
+
+# Interim backup while on the Supabase Free tier (no managed backups). See
+# docs/backup-restore-runbook.md for setup (age keypair, bucket, secrets) and the
+# restore procedure. The dump is encrypted for the church's age key BEFORE it leaves the
+# runner, so the bucket only ever holds ciphertext.
+#
+# Runs daily; data is tiny so this stays well inside free tiers. Also runnable on demand
+# (Actions tab -> Run workflow) for the first run and the monthly restore drill.
+
+on:
+  schedule:
+    - cron: "0 18 * * *"   # 18:00 UTC = 02:00 Asia/Taipei, daily
+  workflow_dispatch: {}
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pg_dump 17 (match Supabase), age, awscli
+        run: |
+          set -euo pipefail
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 age awscli
+          pg_dump --version && age --version && aws --version
+
+      - name: Dump, encrypt, upload
+        env:
+          # SESSION-MODE POOLER connection string (port 5432, aws-*.pooler.supabase.com):
+          # GitHub runners are IPv4-only and Supabase's direct connection is IPv6-only.
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          # age PUBLIC key — not secret, but a repo Variable keeps it out of the file.
+          AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT }}
+          # S3-compatible destination (Cloudflare R2 / Backblaze B2 / S3).
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          # R2 uses "auto"; B2/S3 use their region. Set as a repo Variable.
+          AWS_DEFAULT_REGION: ${{ vars.AWS_DEFAULT_REGION }}
+        run: bash scripts/backup/db-backup.sh
+
+      # A failed run should be visible, not silent. With no external monitor, GitHub emails
+      # the repo owner on a failed scheduled workflow by default; this step makes the intent
+      # explicit and is where a Slack/webhook ping would go if you add one.
+      - name: Note on failure
+        if: failure()
+        run: echo "::error::DB backup failed — the church DB may be running without a fresh backup. See docs/backup-restore-runbook.md."

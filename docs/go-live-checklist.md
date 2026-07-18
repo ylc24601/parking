@@ -31,8 +31,10 @@
 
 - **Who**：dev（建置備份）＋ operator（顧它有在跑）
 - [ ] **自管加密備份上線 — 選 Free 後的新交付 gate，非可選**：真 PII ＋不可重建稽核軌若零備份，就是唯一會真痛的風險。CSV 也救不回綁定/預約/稽核/幹事手動覆核。
-  - **形狀**：排程（GitHub Action／cron-job.org）跑 `pg_dump` → 輸出到**加密、access-controlled** 的儲存；保留數份滾動。**dump 含全套 PII ⇒ 絕不進 git、絕不進未加密 bucket**（新開的 PII-at-rest 面，要加密＋存取控管）。排程與儲存位置記在這裡：`（待填）`。
-  - **Verify**：手動跑一次，且**在一個丟棄用 DB 上 restore 一次**確認 dump 真的可還原（未驗證還原的備份等於沒有備份），再排程。
+  - **實作已備妥**（機制已本機實跑驗證：dump→age 加密→解密→還原後逐表列數一致、安全結構完整）：排程 GitHub Action `pg_dump（public+private）→ age 加密 → 上傳 R2/B2`。程式＋設定＋還原步驟見 **[backup-restore-runbook.md](backup-restore-runbook.md)**。
+  - **待教會填**：① 產 age 金鑰對、私鑰離線保管（≥2 人各一份）；② 建 R2/B2 private bucket；③ 設 GitHub Secrets/Variables（runbook §1.3）；④ bucket lifecycle rule（保留天數）。**dump 含全套 PII ⇒ 私鑰跟備份分開放、bucket 不公開、絕不進 git。**
+  - **Verify**：手動觸發跑一次（runbook §1.5）＋**做一次 §5 還原演練**（在丟棄用 DB restore 一次、看列數）——未驗過還原的備份等於沒有備份。
+  - **替代**：若治理要求 PII 不進第三方雲 ⇒ 同一支腳本設 `LOCAL_DEST` 走 NAS／加密硬碟（需 self-hosted runner 或本機 cron），見 runbook §7。
 - [ ] **暫停 foot-gun 處置**：Free 一週無活動會自動暫停。平常 11+ 個 cron 一直打 DB 不會觸發；**但 §2 rollback 第一步是停排程** ⇒ 停機數日後 DB 可能暫停、app 掛掉需到 dashboard 手動喚醒。記住此點（或 rollback 時留一個輕量 keep-alive ping）。
 - **升 Pro 的替代路（日後若改主意）**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §8——就地升級、同 project ref、勿建新專案；升完 Verify＝每日備份在 dashboard 顯示啟用（Pro 內含滾動 7 天；PITR 是額外付費 add-on、非必需）；記日期＋執行者進 [current_handoff.md](current_handoff.md)。
 
