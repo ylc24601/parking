@@ -75,6 +75,13 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17 age
+          # The runner image preinstalls an older postgresql-client (currently 16) that
+          # resolves ahead of the version-17 package on PATH — pg_dump then refuses to
+          # run against the (newer) Supabase server ("aborting because of server version
+          # mismatch"). Force PATH to the versioned PGDG binaries, for this step and all
+          # later steps in the job.
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
           # Ubuntu's `awscli` apt package has been dropping out of the default repos on
           # GitHub-hosted runners (no installation candidate) — but the runner image
           # already ships AWS CLI v2 preinstalled, so only fall back to the official
