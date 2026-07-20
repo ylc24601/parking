@@ -41,9 +41,10 @@
 - **升 Pro 的替代路（日後若改主意）**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §8——就地升級、同 project ref、勿建新專案；升完 Verify＝每日備份在 dashboard 顯示啟用（Pro 內含滾動 7 天；PITR 是額外付費 add-on、非必需）；記日期＋執行者進 [current_handoff.md](current_handoff.md)。
 
 ### 1.2 教會正式 OA 接線
-- **Who**：OA token owner（提供憑證）＋ dev（換 env、repoint URL）
-- **Verify**：換 `LINE_CHANNEL_ACCESS_TOKEN`＋`LINE_CHANNEL_SECRET`（Messaging）、`LINE_LOGIN_CHANNEL_ID`＋`NEXT_PUBLIC_LIFF_ID`（LIFF）；LIFF endpoint＋Messaging webhook URL 指到同一 Vercel domain；`NEXT_PUBLIC_LIFF_ID` 是 build-time ⇒ **觸發一次新 build**；LINE Login channel 設 **Published**；跑一次 webhook Verify＋真機 bind/notify 冒煙。**移除舊 dev OA token**（改 `NOTIFICATION_TRANSPORT` **不會**讓舊 token 失效）。
-- **Detail**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §13、§11（token 失效語意）、[member-liff-setup.md](member-liff-setup.md)
+- [x] **已完成並驗證（2026-07-20，見 [current_handoff.md](current_handoff.md) §6.38）**
+- **Who**：OA token owner（提供憑證）＋ dev（換 env、repoint URL）——本次使用者身兼兩者。
+- **Verify**：換 `LINE_CHANNEL_ACCESS_TOKEN`＋`LINE_CHANNEL_SECRET`（Messaging）、`LINE_LOGIN_CHANNEL_ID`＋`NEXT_PUBLIC_LIFF_ID`（LIFF，本次沿用既有 channel 故值未變）；LIFF endpoint＋Messaging webhook URL 指到同一 Vercel domain；`NEXT_PUBLIC_LIFF_ID` 是 build-time ⇒ **觸發一次新 build**；LINE Login channel 設 **Published**；跑一次 webhook Verify＋真機 bind/notify 冒煙。**移除舊 dev OA token**（改 `NOTIFICATION_TRANSPORT` **不會**讓舊 token 失效；這個 token 類型 Console 無獨立 revoke 按鈕，**Reissue 本身即撤銷**，失效有數分鐘級傳播延遲，見 [oa-token-owner-runbook.md](oa-token-owner-runbook.md) §8）。
+- **Detail**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §13、§11（token 失效語意）、[member-liff-setup.md](member-liff-setup.md)、[oa-token-owner-runbook.md](oa-token-owner-runbook.md)
 
 ### 1.3 匯入真會友 CSV（P2 申請資料）
 - **Who**：church office（提供 CSV）＋ admin（走 Admin 匯入 UI）
@@ -63,7 +64,7 @@
 
 ### 1.6 開啟真實送出（`NOTIFICATION_TRANSPORT=line`）
 - **Who**：Scheduler operator（1.4 簽核後）
-- **Verify**：fail-fast 契約仍在（無 token 時 `transport=line` 會在 claim 前中止、絕不把列標 `sent`）；先對一位知情 operator 帳號送單一測試通知（`LINE_SEND_ENABLED` 一次性翻 true 再翻回），確認到達再繼續。
+- **Verify**：fail-fast 契約仍在（無 token 時 `transport=line` 會在 claim 前中止、絕不把列標 `sent`）；先對一位知情 operator 帳號送單一測試通知，確認到達再繼續。⚠️ `LINE_SEND_ENABLED` 目前**未被任何程式碼讀取**（唯一真正閘門是 `NOTIFICATION_TRANSPORT`）——單次測試改用手動插入一筆指定 `user_id` 的 outbox 列＋觸發一次 dispatch＋精確 SQL 核對該列，見 [oa-token-owner-runbook.md](oa-token-owner-runbook.md) §7。
 - **Detail**：[go-live-readiness.md](go-live-readiness.md) §2（config lock）、[dispatcher-ops.md](dispatcher-ops.md)
 
 ### 1.7 Pilot 分批放行（onboard + bind，逐步）
@@ -75,7 +76,7 @@
 
 ## 2. Rollback（隨時可用，operator runbook）
 
-先停外部排程器（dispatcher 是 pull-driven，無排程＝無送出）→ transport 壓回 `mock`/`log`（＋`LINE_SEND_ENABLED=false`）→ **根因修好後才** `requeue-failed`（手動限定、絕不 replay 進壞掉的 transport）。詳見 [go-live-readiness.md](go-live-readiness.md) §6、[dispatcher-ops.md](dispatcher-ops.md)。
+先停外部排程器（dispatcher 是 pull-driven，無排程＝無送出）→ transport 壓回 `mock`/`log`（真正生效的關鍵在這裡——`LINE_SEND_ENABLED` 目前未被任何程式碼讀取，設它不影響行為）→ **根因修好後才** `requeue-failed`（手動限定、絕不 replay 進壞掉的 transport）。詳見 [go-live-readiness.md](go-live-readiness.md) §6、[dispatcher-ops.md](dispatcher-ops.md)。
 
 ---
 

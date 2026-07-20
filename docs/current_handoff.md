@@ -932,6 +932,20 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 **驗證**：`gh run list --workflow=db-backup.yml` 三次手動觸發皆 success；`scripts/backup/db-restore.sh` 最終一輪 `restore: OK`（artifact/manifest 比對、pg_restore 乾淨、18 張表列數吻合、schema 32 項驗證通過）；輪替後的 R2 token 額外用一次手動觸發重新驗證可連線上傳。go-live-checklist.md §1.1 打勾。
 
+## 6.38 Go-live checklist §1.2 — 教會正式 OA 接線 ＋ 真機驗證（本次完成，2026-07-20）
+
+**沿用既有 LINE Login channel**：教會 Messaging API channel 建在使用者自己既有的 LINE provider 底下（使用者本人即 OA token owner，非另一位教會具名管理者），故不需新建 LINE Login channel——同 provider 下直接把原開發測試用 LINE Login channel 的 **Linked OA** 改指向新的教會 Messaging API channel，`LINE_LOGIN_CHANNEL_ID`/`NEXT_PUBLIC_LIFF_ID` 不變。Vercel 只換 `LINE_CHANNEL_SECRET`/`LINE_CHANNEL_ACCESS_TOKEN` 兩個值＋redeploy（無需 rebuild，因為沒動到 build-time 的 `NEXT_PUBLIC_LIFF_ID`）。webhook Verify 第一次 401（Vercel 上還是舊 secret，換完重驗即 200，屬預期行為，非 bug）。
+
+**真機驗證用單筆 CSV 匯入補位**：使用者自己不在既有會友名單裡，且 Admin UI 目前**沒有單筆新增會友的頁面**（已知延後項，見 [[feature-triage-backlog]]）——改用既有的 `/admin/import` 整批 CSV 上傳、放使用者自己這一列（`優先序=P3`），等同提早驗證一次 §1.3 真會友匯入的同一條路徑，不算繞過。之後走 LIFF 綁定申請 → `/admin/bindings` 核准 → 重開 LIFF 確認 auto-login 進會員狀態頁。
+
+**發現並修正兩處文件與程式碼實際行為不符**（均已修正對應文件，未動程式碼——這是文件落後於實作，不是 bug）：
+- **`LINE_SEND_ENABLED` 從未被任何程式碼讀取**：`.env.example` 該變數旁本就註明「nothing reads this yet」，但 `go-live-checklist.md`/`go-live-readiness.md`/`oa-token-owner-runbook.md` 都把它寫成「翻 true 送測試、翻回 false」的主動安全閥。真正唯一閘門是 `NOTIFICATION_TRANSPORT`。三份文件已改為：單次測試改走「手動插入一筆 `notification_outbox`（`move_car_request` 模板）＋觸發一次 `dispatch-notifications`＋精確 SQL 核對該列」，不依賴這個沒接上的變數。決策：**不補寫程式碼把它接上**——現有 rollback 的真正防線是 transport 壓回 mock/log，這個變數頂多是錦上添花的第二道鎖，在即將對真人正式送出的前一刻去動 dispatcher 送出路徑（原子 claim + 型別化失敗設計，見 [[notification-delivery-standards]]）不划算，留給日後有餘裕再排一個正式 slice。
+- **舊 dev token 撤銷方式**：`oa-token-owner-runbook.md` §8 原寫「issue 跟 revoke 是兩個分開動作」，實測＋官方文件確認：長效 channel access token 這個類型 **Console 沒有獨立 revoke 按鈕**，**Reissue 本身就是撤銷機制**（重新發行即讓舊 token 立即失效）。另外實測發現舊 token 失效有**數分鐘級的傳播延遲**（reissue 後立刻測還是 200，等幾分鐘後才 401）——已把這點也寫進文件，避免未來操作者誤判撤銷失敗。
+
+**真機驗證結果**：LIFF auto-login 進會員狀態頁 PASS；手動插入的 `move_car_request` 測試列 `status=sent`／`sent_at` 有值／`last_error` null，手機實際收到；舊 dev token reissue 後（等待傳播延遲）確認 401。go-live-checklist.md §1.2 對應項可打勾。
+
+**待辦（下一步接續）**：§1.2 相關文件修正尚未 commit（跟 §1.1 分開，等這輪真機驗證完一次 bundle 進去）；§1.3 匯入真會友完整 CSV（目前只有使用者自己這一列是真資料）。
+
 ---
 
 ## 7. 關鍵設計決策（跨切片）

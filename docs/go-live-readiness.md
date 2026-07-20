@@ -79,6 +79,12 @@ This is safe on the production OA because the risky, congregation-wide failure m
 - Keep a new **`LINE_SEND_ENABLED=false`** by default. Any real outbound call (the optional single
   test reply / test notification) is gated behind explicitly flipping `LINE_SEND_ENABLED=true` for
   that one test, then flipping it back.
+  **⚠️ Implementation note (added 2026-07-20, retroactively): this flag was never wired into any
+  code path** — `.env.example` documents it as "nothing reads this yet." The only real gate is
+  `NOTIFICATION_TRANSPORT`. Do the single-test-send step by manually inserting one
+  `notification_outbox` row targeting the consenting operator's `user_id`, triggering
+  `dispatch-notifications` once, and checking that specific row by exact SQL — see
+  [oa-token-owner-runbook.md](oa-token-owner-runbook.md) §7.
 - The existing fail-fast contract still holds: `transport=line` without a token aborts before
   claiming rows, and never marks rows `sent` without delivering.
 
@@ -122,8 +128,10 @@ Layer these:
    `LINE_SEND_ENABLED=false`. No real sends. Confirm pending records are created, approval writes
    `line_id`, dispatcher stops returning `no_line_id` for bound members, alerting/requeue behave.
 2. **Production OA, capture + single test send** — real webhook intake + signature verify + pending
-   capture on the church OA; optionally flip `LINE_SEND_ENABLED=true` for one test notification to a
-   consenting operator, then flip back. Reservation notifications stay OFF.
+   capture on the church OA; send one test notification to a consenting operator by manually
+   inserting a single `notification_outbox` row for that `user_id` and triggering
+   `dispatch-notifications` once (`LINE_SEND_ENABLED` is not wired to anything — see §2 note).
+   Reservation notifications stay OFF (`NOTIFICATION_TRANSPORT=mock`/`log`).
 3. **Small real cohort** — one small group binds via the code flow; approve them; enable delivery
    for that cohort only; watch `/outbox-alert` through at least one Sunday cycle before expanding.
 
@@ -137,9 +145,9 @@ no `line_id`/plate/body ever appears in logs or `last_error`.
 
 1. **Disable the external scheduler** first — the dispatcher is pull-driven, so no scheduler = no
    sends.
-2. **Hold transport at `mock`/`log`** (and `LINE_SEND_ENABLED=false`) to run the app without real
-   delivery. Fail-fast means removing the token also halts real sends safely — it will not mark rows
-   `sent`.
+2. **Hold transport at `mock`/`log`** to run the app without real delivery — this is the real lever
+   (`LINE_SEND_ENABLED` is not wired to anything, see §2 note). Fail-fast means removing the token
+   also halts real sends safely — it will not mark rows `sent`.
 3. **Requeue `failed` rows only after the root cause is fixed** — `requeue-failed` is manual-only by
    design. Never replay into a broken transport.
 
