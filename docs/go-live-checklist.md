@@ -30,7 +30,7 @@
 > **為什麼這一項還在**：升 Pro 從來不是為了效能或容量（本專案規模對 Free 綽綽有餘），**唯一真正的理由是備份**——Free **零每日備份**，而系統存真會友 PII（姓名/車牌/電話/資格含未成年生日）＋不可重建的 append-only 稽核軌。所以「先不付」不會讓這個 gate 消失，只是把它從「按一下升 Pro」換成「自己顧備份」。
 
 - **Who**：dev（建置備份）＋ operator（顧它有在跑）
-- [ ] **自管加密備份上線 — 選 Free 後的新交付 gate，非可選**：真 PII ＋不可重建稽核軌若零備份，就是唯一會真痛的風險。CSV 也救不回綁定/預約/稽核/幹事手動覆核。
+- [x] **自管加密備份上線 — 選 Free 後的新交付 gate，非可選**（2026-07-20 完成並驗證，見 [current_handoff.md](current_handoff.md) §6.37）：真 PII ＋不可重建稽核軌若零備份，就是唯一會真痛的風險。CSV 也救不回綁定/預約/稽核/幹事手動覆核。
   - **實作已在 main**（PR #44 / `cc6b66a`，一輪外部審查後修正）：排程 GitHub Action `pg_dump（public+private）→ age 加密 → 上傳 R2/B2`，**每次產出 dump ＋ manifest 兩個檔**（manifest 記每張表列數＋dump 雜湊）。程式＋設定＋還原見 **[backup-restore-runbook.md](backup-restore-runbook.md)**。
   - **還原有四道自動關卡**（全過才算成功，非零退出）：雜湊比對／pg_restore 錯誤 allowlist／**逐表列數與 manifest 完全一致**／`verify_schema_prod.sql` 通過。**「印出列數讓人自己看」不是災難復原的成功條件**——部分還原與整張表消失在數字裡都很正常。
   - **待教會填**：① 產 age 金鑰對、私鑰離線保管（**≥2 人各一份、跟備份分開放**）；② 建 R2/B2 private bucket；③ 設 GitHub Secrets/Variables；④ bucket lifecycle rule；⑤ **設 `HEARTBEAT_URL`**（見下）；⑥ 全部就緒後才把 `BACKUP_ENABLED` 設成 `true`（**arm 之前 workflow 什麼都不做**，故 merge 不會每天噴失敗信）。

@@ -922,6 +922,16 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 **驗證（本回合實跑）**：走查逐項 prod 打勾（見上）；repo 面 Slice 4 prep（PR #35）新增合成 CSV fixture＋sibling README＋`.gitignore` `/.local/`＋runbook §8/§12/§13，`tsc`／`eslint`／`vitest`（904 passed）全綠，無 app code／schema／migration 改動。**Phase 9 到此收官**；交付前 checklist 見 runbook §13。
 
+## 6.37 Go-live checklist §1.1 — 自管加密備份上線 ＋ 意外抓到 prod migration 落後（本次完成，2026-07-20）
+
+**備份上線**：age 金鑰對＋Cloudflare R2 private bucket（90 天 lifecycle rule）＋GitHub Secrets/Variables（`AGE_RECIPIENT`/`S3_BUCKET`/`S3_ENDPOINT`/`AWS_DEFAULT_REGION`/`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`SUPABASE_DB_URL`/`HEARTBEAT_URL`）全部設定完成，`BACKUP_ENABLED=true` 正式 arm。過程中 `.github/workflows/db-backup.yml` 修掉兩個既有 bug（runner 已不提供 `awscli` apt 套件、`pg_dump` 版本被 runner 預裝的舊版蓋過導致跟 Supabase 17.6 版本不合）——**兩個都是 workflow 本身的環境問題，跟這次金鑰/bucket 設定無關，但不修就永遠 arm 不起來**。手動觸發成功、heartbeat 有 ping 到。
+
+**還原演練意外抓到的問題**：`db-restore.sh` 的第 4 關（`verify_schema_prod.sql`）第一次跑就失敗在 `set_admin_disabled` 函式簽章對不上。追查後發現：**prod 的 schema 卡在 migration 0028、`0029`–`0034`（6 個，含 `import_member_optional_eligibility`／audit substrate／capacity admin／P2 review／audit purge）從未 `supabase db push` 上 Supabase Cloud**，儘管這 6 個早就 merge 進 main（2026-07-18，見 [[feature-triage-backlog]]）。**已現場補 push，`db:verify:remote` 32/32 通過**，重跑一次備份＋還原演練，四道關卡全過（`restore: OK`）。**這代表 checklist §1.3 匯入真會友 CSV 若在修復前執行，很可能因缺 `0029` 而失敗或行為不對**——備份的還原驗證意外提前擋下了這個問題。
+
+**安全事故（已處理，同 §6.36／§6.6 模式）**：過程中兩起 secret 誤入對話 transcript，均立即輪替——① R2 API Token（Access Key ID/Secret）使用者直接貼進對話（在建立當下，尚未建立「密鑰只在自己終端機操作」的默契前）；② age 私鑰在我用 `sed` 核對檔案行號時判斷錯誤、把私鑰整行印進工具輸出。兩者都在對話中明確承認、當場輪替（新 age 金鑰對＋新 R2 token），舊金鑰/token 對應資源（R2 上舊物件、`AGE_RECIPIENT`）同步汰換或撤銷。也額外發現一個問題：使用者自己在 repo 根目錄練習 `age-keygen -o age-identity.txt`（照 runbook 範例指令）留下未被 `.gitignore` 排除的私鑰明文檔，及時移出 repo。**教訓**：runbook 範例指令若原樣照抄、在 repo 目錄下執行,容易留下未受保護的密鑰檔——之後可考慮在 runbook example 加註「不要在 repo 目錄下執行」。
+
+**驗證**：`gh run list --workflow=db-backup.yml` 三次手動觸發皆 success；`scripts/backup/db-restore.sh` 最終一輪 `restore: OK`（artifact/manifest 比對、pg_restore 乾淨、18 張表列數吻合、schema 32 項驗證通過）；輪替後的 R2 token 額外用一次手動觸發重新驗證可連線上傳。go-live-checklist.md §1.1 打勾。
+
 ---
 
 ## 7. 關鍵設計決策（跨切片）
