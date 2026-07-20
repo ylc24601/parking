@@ -74,7 +74,13 @@ jobs:
           echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-17 age awscli
+          sudo apt-get install -y -qq postgresql-client-17 age
+          # Ubuntu's `awscli` apt package has been dropping out of the default repos on
+          # GitHub-hosted runners (no installation candidate); use AWS's official v2
+          # installer instead, which doesn't depend on apt package availability at all.
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+          unzip -q /tmp/awscliv2.zip -d /tmp
+          sudo /tmp/aws/install
           pg_dump --version && age --version && aws --version
 
       - name: Dump, encrypt, upload
