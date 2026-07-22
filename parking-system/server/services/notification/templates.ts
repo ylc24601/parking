@@ -165,9 +165,12 @@ const RENDERERS: Record<NotificationTemplate, (p: Payload) => string> = {
   // line, no sectioning, no date — this is a live on-site request, not a scheduled notice.
   // Do NOT normalize it with the scheduled member templates without updating that document and
   // obtaining copy sign-off again.
+  // (2026-07-20: re-synced to the doc's wording — this had drifted to "到地下室處理，現場有停車
+  // 同工協助" instead of the doc's "到地下室移動您的愛車", caught while prepping the copy for
+  // go-live-checklist §1.4 sign-off.)
   move_car_request: p => {
     const plate = typeof p.license_plate === 'string' && p.license_plate ? p.license_plate : '（車牌未提供）'
-    return `【教會停車】您好 🙏 您停在地下室的車（車牌 ${plate}）需要麻煩您移車，請您方便時盡快到地下室處理，現場有停車同工協助，謝謝您的配合！`
+    return `【教會停車】您好 🙏 您停在地下室的車（車牌 ${plate}）需要麻煩您移車，請您方便時盡快到地下室移動您的愛車，謝謝您的配合！`
   },
 
   // Reserved template keys not currently enqueued; render a safe generic line rather than throw.
