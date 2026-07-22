@@ -1,5 +1,7 @@
 # Go-Live Checklist（交付走查 — 單一權威清單）
 
+> **給教會 admin 的白話總覽（系統邏輯＋後台每頁怎麼用＋試營運怎麼走）在 [admin-operations-guide.md](admin-operations-guide.md)**，本檔的第 1.7 節在那邊有對應的白話說明；**勾選與驗證方式仍以本檔為準**。
+>
 > **交付日照這一份走。** 這是把分散在三處的交付待辦整合成的**唯一**權威 pre-flight：
 > [prod-deploy-runbook.md](prod-deploy-runbook.md) §8/§13、[delivery-model-and-roadmap.md](delivery-model-and-roadmap.md) roadmap、[go-live-readiness.md](go-live-readiness.md) §1/§5。
 >
@@ -52,17 +54,20 @@
 - **Detail**：[member-import-ops.md](member-import-ops.md)、[delivery-model-and-roadmap.md](delivery-model-and-roadmap.md)（CSV→schema 對照）
 
 ### 1.4 文案 sign-off（真送出前的硬 gate）
+- [x] **已完成（2026-07-20，見 [current_handoff.md](current_handoff.md) §6.39）**：3 個通知模板＋移車 A/B/C/D 變體＋取消兩種措辭全部簽核。過程中抓到 `move_car_request` code 跟 doc 已經分岔（code 誤植「處理，現場有停車同工協助」，非簽核過的「移動您的愛車」）並修正，另把 `reservation_released`／`reservation_cancelled` 從未進過 doc 的「暫定文案」正式定稿；4 個 pin test 釘住確切文字，日後任一邊改動未同步會直接讓 CI 失敗。
 - **Who**：Copy approver
 - **Verify**：3 個通知模板＋移車 A/B/C/D 變體全部簽核。**未簽核前 1.6 不得開。**
 - **Detail**：[oa-onboarding-and-move-car-copy.md](oa-onboarding-and-move-car-copy.md)、[go-live-readiness.md](go-live-readiness.md) §1
 
 ### 1.5 排程上線 — dispatcher（11）＋ audit purge cron（第 12，本輪新增）
+- [x] **已完成並驗證（2026-07-21，見 [current_handoff.md](current_handoff.md) §6.40）**：既有 11 個 cron 逐一 test run 全數 200、URL host 仍為 prod domain，secret 未漂移；新增第 12 個 job（`purge-audit-logs`，cron-job.org `0 4 1 * *` Asia/Taipei＝每月 1 號 04:00）已建立並排程。`?dryRun=1` 驗證回 `retentionMonths:24`、`deletedBefore:"2024-07-21 14:25:15+00"`（今天往前推 24 個月，剛好對上）、`wouldPurge:0`（prod 資料還新，無超期紀錄本屬正常）——第二個硬 gate 過關，`/admin/audit` 的 24 個月保留文案自此誠實。
 - **Who**：Scheduler operator
 - **Verify**：11 個既有 cron 指到 Vercel domain 且 `JOB_TRIGGER_SECRET` 相符（[prod-deploy-runbook.md](prod-deploy-runbook.md) §6.5）。**新增第 12 個：`GET /api/internal/jobs/purge-audit-logs`，每月一次**（cron-job.org Asia/Taipei 整點慣例，或 Vercel Pro `0 4 1 * *`）。
   - ⚠️ **這是 1.4 之外的第二個硬 gate**：`/admin/audit` 現在對幹事宣稱「紀錄保留 24 個月，逾期後由定期維運作業清除」——**這句只有在這個 cron 真的在跑時才誠實**。上線前先用 `?dryRun=1` 打一次，必須回 `retentionMonths: 24` 且 `deletedBefore` ≈ 24 個月前，才可信任該文案。
 - **Detail**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §13（audit purge cron 條目）、§6.5、[dispatcher-ops.md](dispatcher-ops.md)
 
 ### 1.6 開啟真實送出（`NOTIFICATION_TRANSPORT=line`）
+- [x] **已完成並驗證（2026-07-22，見 [current_handoff.md](current_handoff.md) §6.41）**：驗證途中發現 1.4 的 `templates.ts` 修正其實從未 commit／push，prod 仍在送舊文案——已修正並部署，重測後手機收到的文字精確符合簽核版本（「…移動您的愛車…」），`status=sent`／`last_error` null。
 - **Who**：Scheduler operator（1.4 簽核後）
 - **Verify**：fail-fast 契約仍在（無 token 時 `transport=line` 會在 claim 前中止、絕不把列標 `sent`）；先對一位知情 operator 帳號送單一測試通知，確認到達再繼續。⚠️ `LINE_SEND_ENABLED` 目前**未被任何程式碼讀取**（唯一真正閘門是 `NOTIFICATION_TRANSPORT`）——單次測試改用手動插入一筆指定 `user_id` 的 outbox 列＋觸發一次 dispatch＋精確 SQL 核對該列，見 [oa-token-owner-runbook.md](oa-token-owner-runbook.md) §7。
 - **Detail**：[go-live-readiness.md](go-live-readiness.md) §2（config lock）、[dispatcher-ops.md](dispatcher-ops.md)

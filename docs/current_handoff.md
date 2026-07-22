@@ -946,6 +946,44 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 **待辦（下一步接續）**：§1.2 相關文件修正尚未 commit（跟 §1.1 分開，等這輪真機驗證完一次 bundle 進去）；§1.3 匯入真會友完整 CSV（目前只有使用者自己這一列是真資料）。
 
+## 6.39 Go-live checklist §1.4 — 文案 sign-off（本次完成，2026-07-20）
+
+準備簽核材料時發現 **`move_car_request` 的 code 跟已核准的 doc 已經分岔**：`templates.ts` renderer 誤植成「…盡快到地下室**處理，現場有停車同工協助**…」，但 [oa-onboarding-and-move-car-copy.md](oa-onboarding-and-move-car-copy.md) §二版本 A 寫的是「…盡快到地下室**移動您的愛車**…」；renderer 旁的註解還宣稱兩者「byte-for-byte」一致——實際不是。已改回 doc 版本的措辭。另外 `reservation_released`／`reservation_cancelled`（`cancelled_late`／`cancelled_by_user` 兩種措辭）從建立時（§6.16／§6.17）就標「暫定文案（教會定稿前）」、從未被搬進 copy doc 給人審——這次一併從 `templates.ts` 實際 render 邏輯摘出、寫進新增的 doc §三，湊齊 1.4 要簽的完整範圍。
+
+**同時新增 4 個 pin test**（`notificationTemplates.test.ts`）用 `toBe` 釘住這 4 段文字的精確內容（`move_car_request`、`reservation_released`、`reservation_cancelled` 兩種措辭），日後 code 或 doc 任一邊改動沒同步，CI 會直接紅——這正是這次意外分岔沒被抓到的原因（既有測試只驗證關鍵字子字串，不驗證完整措辭）。
+
+**驗證**：`npm test` 全綠（1281 passed / 93 files，含新增 4 個 pin test）。3 個模板＋移車 A/B/C/D＋取消兩種措辭，全數經 Copy approver 簽核。go-live-checklist.md §1.4 打勾。
+
+## 6.40 Go-live checklist §1.5 — 排程上線：既有 11 個 cron 覆核 ＋ 第 12 個 audit purge cron（本次完成，2026-07-21）
+
+密鑰操作全程留在使用者自己的終端機／cron-job.org 網頁，對話裡只交換不含密鑰的結果（沿用 §6.6／handoff 919 的教訓，避免第三次密鑰貼進對話）。
+
+**A. 既有 11 個 job 覆核**：逐一 test run，最新一次執行全數回 200（無 401），確認 `JOB_TRIGGER_SECRET` 沒有跟 Vercel Production 漂移；URL host 仍是 `https://parking-omega-one.vercel.app/...`，沒有指到 preview 網域。
+
+**B. 新增第 12 個 job**：`purge-audit-logs`，`GET /api/internal/jobs/purge-audit-logs`，cron-job.org schedule `0 4 1 * *`（帳號時區 Asia/Taipei＝每月 1 號 04:00），header 沿用同一套 `x-job-secret` 慣例。GET 是排程進入點、預設即為真的 apply（非預覽），符合設計。
+
+**C. 上線前第二硬 gate — 手動 `?dryRun=1` 驗證**：
+```json
+{"ok":true,"dryRun":true,"wouldPurge":0,"deletedBefore":"2024-07-21 14:25:15.620839+00","retentionMonths":24}
+```
+`retentionMonths:24` 正確；`deletedBefore` 落在今天（2026-07-21）往前推 24 個月，精確對上；`wouldPurge:0` 是預期內——prod 資料還新，尚無真的超過 24 個月的稽核紀錄。三項都過，`/admin/audit` 頁面「紀錄保留 24 個月，逾期後由定期維運作業清除」這句話自此才是誠實的。
+
+**結果**：go-live-checklist.md §1.5 打勾。下一步是 §1.6（開啟真實送出 `NOTIFICATION_TRANSPORT=line`）。
+
+## 6.41 Go-live checklist §1.6 — 開啟真實送出，途中抓到 §1.4 修正從未部署（本次完成，2026-07-22）
+
+`NOTIFICATION_TRANSPORT=line` 從 Phase 9 wiring 起在 prod 就已是 `line`（非本次才切），本項剩下的工作是拿 1.4 剛簽核的文案重跑一次端到端驗證。
+
+**第一次手動測試（沿用 §6.38 手法：手動插入一筆 `move_car_request` 測試列＋觸發 dispatch＋精確 SQL 核對）跑出 `status=sent` 但手機收到的還是舊文案**（「…到地下室處理，現場有停車同工協助…」，不是簽核過的「…移動您的愛車…」）。查 `git log`／`git diff` 發現：§6.39（1.4）當時對 `templates.ts` 的修正＋新增的 4 個 pin test，**從頭到尾只是本機未 commit 的變更**——本機 `main` 當時比 `origin/main` 多一個 docs-only commit，這支 template 修正沒進過那個 commit，沒 push，Vercel 自然沒重新部署。1.4 打勾本身沒錯（文案簽核、本機 `npm test` 確實綠燈），但「已完成」的敘述漏了一環：**本機測試通過 ≠ 已部署到 prod**。
+
+**影響範圍確認為零**：這個舊文案只送到過開發者自己的測試帳號（§6.38 那次＋這次第一次嘗試），pilot（§1.7）尚未開始，沒有任何真會友收到過錯誤文案。
+
+**處理**：把 `templates.ts` 修正＋4 個 pin test 單獨 commit（跟其他 docs-only 變更分開，先解決最急的部署缺口）、`npm test` 重跑確認 57 個通過、push 到 `origin/main`（連同 §1.2 那筆先前已 commit 未 push 的 docs commit 一起上）、等 Vercel 部署到 **Ready** 後，用新的 `dedupe_key` 重跑一次同一套手動測試流程。
+
+**第二次驗證結果**：`status=sent`、`sent_at` 有值、`last_error` null；手機實際收到「【教會停車】您好 🙏 您停在地下室的車（車牌 TEST-1234）需要麻煩您移車，請您方便時盡快到地下室移動您的愛車，謝謝您的配合！」——精確符合簽核文字。fail-fast 契約（無 token 時 `transport=line` 在 claim 前中止、絕不標 `sent`）屬既有程式碼保證＋單元測試釘住，未在 prod 特意破壞真 token 重演。
+
+**結果**：go-live-checklist.md §1.6 打勾。**教訓**：go-live 走查裡任何「本機修正＋npm test 綠燈」都不能等同「已生效」，收尾前一定要確認 `git log`／`origin` 有沒有真的收到那個 commit。下一步是 §1.7（pilot 分批放行）。
+
 ---
 
 ## 7. 關鍵設計決策（跨切片）
