@@ -1,5 +1,7 @@
 # Notification Dispatcher — Ops Runbook (Phase 4 Slice C)
 
+> 給教會 admin 的白話總覽（系統邏輯＋後台每頁怎麼用＋試營運怎麼走）：[admin-operations-guide.md](admin-operations-guide.md)。
+
 How to schedule, preview, and monitor the LINE notification dispatcher that drains
 `notification_outbox` (move-car requests, allocation/offer/release/reminder notices).
 

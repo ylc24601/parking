@@ -1,6 +1,6 @@
 # Binding operator runbook（LINE 綁定審核）
 
-> 用途：把「已知會友」的 LINE 帳號綁定到 `users.line_id`，讓移車/通知送得到本人。
+> 用途：把「已知會友」的 LINE 帳號綁定到 `users.line_id`，讓移車/通知送得到本人。整體系統邏輯與 Admin 後台其他頁面總覽見 [admin-operations-guide.md](admin-operations-guide.md)。
 > 兩條進件路徑：**LIFF 申請**（Phase 7 Slice 2，會友自助）與 **`綁定 <code>` 發碼**（Phase 5B，fallback／同工協助）。
 > schema/RPC 見 handoff §6.20 / §6.24；擷取端見 §6.19；規劃背景 [go-live-readiness.md](go-live-readiness.md)。
 >

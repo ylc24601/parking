@@ -1,5 +1,7 @@
 # Admin account operator runbook（admin 帳號管理）
 
+> 整體系統邏輯與 Admin 後台其他頁面總覽見 [admin-operations-guide.md](admin-operations-guide.md)。
+>
 > 管理 `admin_accounts`（Admin UI 操作者帳號，與 `users.role='admin'` 無關，見 handoff §6.27）的生命週期：
 > 建立走 CLI、日常管理（停用/重啟/重設密碼/強制登出）走 **Admin UI**（Phase 8 Slice 3，handoff §6.30）。
 

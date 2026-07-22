@@ -1,58 +1,84 @@
 # Member import operator runbook（會友資料匯入）
 
-> 把教會 **P2 申請表 CSV** 匯入為會友資料（`users` + `vehicles` + `user_eligibility` + `eligibility_dependents`）。
-> Phase 6 CLI（Admin UI 之後包裝）。**只匯入資料紀錄，`line_id` 不動**（綁定另外走 Phase 5A/5B）。
-> 背景與 CSV→schema 對照見 [delivery-model-and-roadmap.md](delivery-model-and-roadmap.md)；欄位定義見
-> [parking-application-form-fields.csv](parking-application-form-fields.csv)。
+> **這份文件給誰**：負責把教會提供的會友名單/申請表 CSV，透過 Admin UI 實際匯入系統的人（[go-live-checklist.md](go-live-checklist.md) §1.3 的 **admin** 角色）。不需要懂程式或資料庫，跟著本文的步驟操作即可；CSV 資料本身由**教會辦公室**準備提供。整體系統邏輯與 Admin 後台其他頁面總覽見 [admin-operations-guide.md](admin-operations-guide.md)。
 >
-> ⚠️ **CSV 是真實會友個資（PII）。** 放在 repo 外的 `parking-system/members-data/`（已 `.gitignore`），
-> **不要 commit**、**不要**把報表（可能含姓名/車牌）貼到共用日誌。合成範例在 `tests/fixtures/`（可 commit）。
+> **來源**：整合自 [import-templates/README.md](import-templates/README.md)（範本欄位定義，已對齊現行實作）、`app/admin/import/MemberImport.tsx`（畫面實際文字）、[go-live-checklist.md](go-live-checklist.md) §1.3。若本檔與來源衝突，以來源為準。
+>
+> ⚠️ **CSV／匯入報表都是真實會友個資（PII）。** 只在 Admin UI 操作，不要另存到別的地方、不要把畫面截圖或報表內容貼到聊天工具/共用文件/公開頻道。
 
 ---
 
-## 入口
+## 0. 前置準備
 
-**主要：Admin UI `/admin/import`**（Phase 8 Slice 5，handoff §6.32）——登入後選 CSV → **上傳並預覽**（不寫入、顯示報表）→ 核對後**確認寫入**。兩段式以簽章 token 綁定「預覽的那份檔＝寫入的那份檔」（換檔／逾時會擋，要求重新預覽）。上限 2 MiB、5000 列、UTF-8；缺表頭/重複表頭/編碼錯誤會擋下並提示。**整份匯入非單一 transaction**：若中途失敗會顯示「可能已部分寫入」，此時保留原檔重新預覽再匯入即可（匯入具冪等性、不會重複建車）。CSV 含個資，勿另存他處或貼共用日誌。
+- [ ] 你有一組**已啟用的 Admin 帳號**（能登入 `/admin`）。
+- [ ] 教會辦公室已經提供 CSV 檔——確認是**下列兩份範本之一**填寫的，欄位對不上會被系統擋下：
+  - **會友簡易名單範本.csv**：適合「整個教會的一般會友名單」，多數人填這份。
+  - **P2資格申請範本.csv**：適合「有停車資格申請（行動不便／孕婦／幼兒同行／長者同行）的申請表」。
+  - 兩份範本＋完整欄位說明在 [import-templates/README.md](import-templates/README.md)；技術欄位對照表在 [parking-application-form-fields.csv](parking-application-form-fields.csv)（給開發者查，操作本身不需要看這份）。
+  - CSV 檔要用 **UTF-8** 編碼存檔（Excel／Numbers 另存新檔時選 UTF-8 CSV）。
+  - **手機號碼欄位務必設成「文字」格式**（不是「數字」）——用 Excel 打開再存檔，開頭的 `0` 常常會被吃掉，系統對 9 碼的號碼會自動補回一個 `0`，但如果 Excel 已經把號碼存成像 `9.12346E+8` 這種科學記號，就救不回來了，只能請教會辦公室改成文字格式後重新提供。
 
-**Fallback：CLI**（需伺服器/檔案存取）：
+---
 
-```bash
-cd parking-system
-# 乾跑（預設）：印驗證 + 投影報表，不寫入
-npm run members:import -- --file ./members-data/applications.csv
-# 確認報表無誤後，實際寫入
-npm run members:import -- --file ./members-data/applications.csv --apply
-```
+## 1. 操作步驟（Admin UI，`/admin/import`）
 
-- **預設 dry-run**；`--apply` 才寫。
-- 有衝突或驗證錯誤時 exit code = 2（報表照印），方便腳本捕捉。
+1. 登入 `/admin` → 進到**「名單匯入」**頁（`/admin/import`）。
+2. 點選檔案 → 選教會提供的那份 CSV。
+3. 按**「上傳並預覽」**——這一步**不會寫入任何資料**，只會產生一份報表讓你檢查。
+4. **仔細看報表**（下一節逐項說明每個區塊是什麼意思、該怎麼處理）。
+5. 如果報表有標記「將略過」的項目，畫面會出現一個確認勾選：「上方標記為錯誤/衝突的列會被略過，其餘合法會友仍會寫入。我已了解並仍要匯入。」——**看懂那些會被略過的項目、確認沒問題之後才勾選**。
+6. 按**「確認寫入」**。畫面會顯示「匯入完成：新增 X 位、更新 X 位、車輛 +X」。
+7. 如果中途發生錯誤，畫面會顯示「匯入中途發生錯誤，可能已寫入部分資料」——**不用慌，也不用手動清資料**：保留原始檔案、重新跑一次「上傳並預覽→確認寫入」即可，系統設計成重複匯入同一份檔案不會建立重複的人或車。
 
-## CSV 規則
+---
 
-- 表頭用欄位英文 `field_name`（見欄位定義檔）。UTF-8。
-- **會友識別鍵 = `mobile_phone`**（去除非數字）。**同一支手機的多列 = 同一位會友、多台車**（`license_plate` 逐列）。
-- `reason_type`：1→`mobility_long`、2→`mobility_short`、4→`elderly_companion`、3→`child_companion`（或 `remarks` 註明懷孕且無孩童 → `pregnancy`）。
-- **效期（`p2_valid_until`）**：長期行動不便 / 長者 → 永久（null）；短期行動不便 / 懷孕 → **申請日 + 6 個月**；孩童 → **最晚孩童生日 + 5 年**；**缺日期 → review_required**（`valid_until` 留 null、`review_date` 設為匯入日，報表列出）。
+## 2. 報表看到的各種標記是什麼意思
 
-## 報表欄位
+上傳並預覽後，畫面依序可能出現以下區塊（沒有問題的區塊不會顯示）：
 
-`rows`/`members`/`imported`/`updated`/`vehiclesAdded`/`dependentsAdded` 為計數；另有需要人工處理的清單：
+| 畫面上的標題 | 意思 | 該怎麼處理 |
+|---|---|---|
+| **格式錯誤（將略過）** | 那一列資料本身有問題（例如缺姓名、日期格式錯） | 回頭修正 CSV 那一列，重新預覽 |
+| **同號不同名（將略過）** | 同一個手機號碼，在檔案裡或跟系統既有資料，姓名對不起來 | 通常是同一人姓名打法不同，或號碼打錯——跟教會辦公室核對後再重新匯入 |
+| **車牌衝突（DB 已有他人此車牌，該車牌略過）** | 這個車牌已經登記在別人名下 | 確認是不是同一台車重複登記，或車牌打錯字，核對後處理 |
+| **檔案內車牌重複（同車牌多人，整位略過）** | 同一份 CSV 裡，同一個車牌被填給兩個不同的人 | 檔案本身的錯字/重複，修正後重新匯入 |
+| **同手機資料不一致（整位略過）** | 同一支手機的多列資料互相矛盾（例如申請原因寫得不一樣） | 跟教會辦公室確認正確版本，修正 CSV |
+| **待覆核（已建立、需人工補核）** | 這個人已經正常建立了，但資格效期缺資料算不出來（例如短期不便沒填日期），先標成「待覆核」 | 這步驟**不用你處理**——匯入完成後請幹事到「資格審查」頁（畫面上有直接連結）人工確認 |
+| **已保留既有 P2 資格（本次標一般會友、未變更）** | 這個人系統裡本來就有停車資格，這次名單雖然沒特別標，但系統**不會**把資格拿掉 | 不用處理，這是系統保護既有資格的正常行為 |
+| **已撤銷資格未被復原（名單標 P2，但曾由同工撤銷）** | 這個人的資格之前被同工撤銷過，這次名單雖然又標了 P2，匯入**不會**自動恢復 | 如果確定要恢復，要到這個人的明細頁手動重新核准，不是靠重新匯入 |
+| **人工管理的資格未被更新（名單標 P2，但已經同工覆核）** | 這個人的資格已經被同工人工審過，這次匯入只更新他的姓名/車輛，不會動資格 | 不用處理；要改資格請到明細頁 |
 
-| 清單 | 意義 / 處置 |
-|---|---|
-| `validationErrors` | 逐列缺必填 / 格式錯（如 `reason_type`、生日）→ 修 CSV 重跑；該列不匯入 |
-| `phoneNameConflicts` | 同手機出現**不同姓名**（CSV 內或與既有資料）→ 該手機不匯入，人工釐清是否同人 |
-| `plateConflicts` | 車牌已屬**其他會友** → 該車牌略過（會友本身仍建立），人工釐清是否重複/錯號 |
-| `reviewRequired` | 暫時性資格缺日期無法算效期 → 已建立但標 `p2_review_date=匯入日`，之後於 Admin UI **資格審查**（`/admin/eligibility`，handoff §6.31）以「待覆核」列出供人工補核 |
+**簡單原則**：凡是寫「將略過」的，那幾筆這次**不會**寫入系統，其餘沒問題的人照樣正常匯入，你可以先讓沒問題的人過、被略過的那幾筆之後修正 CSV 再補匯一次即可（不會造成重複）。
 
-## 特性
+---
 
-- **冪等**：以手機 upsert 會友、車牌去重、`(kind+姓名+生日)` 去重 dependents、`user_eligibility` 依 user upsert。重跑不會重複。
-- **原子**：每位會友一次 `import_member` RPC（單交易），typed 結果，不 throw。
-- **dry-run 限制**：同一批次內「後面的車牌撞到前面剛建立的會友」只有 `--apply` 時才偵測得到（dry-run 不寫入，看不到批內剛建的車）。
+## 3. 匯入之後，還要做什麼
 
-## 之後
+- **這一步只建立資料紀錄，不會讓會友收得到 LINE 通知。** 要讓會友收到通知，需要另外走「綁定」流程（他本人用 LINE 加入教會官方帳號、走綁定申請、由 Admin 審核），細節見 [binding-ops.md](binding-ops.md)。
+- **「待覆核」名單**：請到 `/admin/eligibility`（資格審查頁）逐項人工確認。
+- CSV 原始檔案用完後，不要留在容易被別人看到的地方（雲端硬碟公開資料夾、聊天工具附件等）。
 
-- 匯入建立的是**資料紀錄**；會友要收得到通知，還需**綁定 `line_id`**（見 [binding-ops.md](binding-ops.md)）。
-- P3/一般會友不走此表，改由 member UI 自助建立（Phase 7）。
-- 教會若另提供一般會友 CSV，可再加一條匯入路徑。
+---
+
+## 4. 出錯了找誰
+
+- 畫面出現看不懂的錯誤訊息、或報表結果跟預期差很多 → 先**不要**按「確認寫入」，把畫面截圖（截圖只在你自己與開發者之間，不要外流），聯絡開發者確認。
+- CSV 檔案本身有問題（教會辦公室提供的資料有誤）→ 回頭跟教會辦公室核對，不要自己在 CSV 上用猜的方式修改會友個資。
+
+---
+
+## 給開發者的技術備忘（操作本身不需要看這節）
+
+- **CLI fallback**（需伺服器/檔案存取，一般操作走 Admin UI 即可）：
+  ```bash
+  cd parking-system
+  npm run members:import -- --file ./members-data/applications.csv          # 乾跑，預設
+  npm run members:import -- --file ./members-data/applications.csv --apply  # 確認無誤後才寫入
+  ```
+  CSV 放在 repo 外的 `parking-system/members-data/`（已 `.gitignore`），不要 commit；合成測試範例在 `tests/fixtures/`（可 commit）。有衝突/驗證錯誤時 exit code = 2。
+- **會友識別鍵 = 手機號碼**（去除非數字，9 碼自動補開頭 `0`，科學記號拒絕不還原）。同一支手機的多列 = 同一位會友、多台車。
+- **中文表頭自動對照＋雙格式自動辨識**（Wave 0，`lib/memberImportSchema.ts`）：有「優先序」欄＝全體名單、有「申請原因」欄＝P2 申請表；兩者皆有則擋下（`ambiguous_profile`）。
+- **冪等**：以手機 upsert 會友、車牌去重、`(kind+姓名+生日)` 去重 dependents、`user_eligibility` 依 user upsert；重跑不會重複。
+- **原子**：每位會友一次 `import_member` RPC（單交易），typed 結果，不 throw；整份匯入非單一 transaction，中途失敗時已寫入的部分具冪等性，重新預覽＋匯入即可安全續跑。
+- **匯入永不撤銷既有 P2 資格**：既有 P2 資格採「三態權威」保護（見 `p2Retained`/`revokedRetained`/`governedRetained` 三種 retained 分類），資格異動一律走明細頁，不靠重新匯入。
+- 完整報表欄位型別見 `server/services/memberImportService.ts` 的 `ImportReport`。
