@@ -54,7 +54,7 @@ async function main() {
   if (!confirmed) {
     throw new Error(
       `這個指令只會建立「系統管理員」（superadmin）帳號——擁有帳號管理、營運狀態與稽核記錄的完整權限。\n` +
-        `幹事帳號請改由後台「帳號管理」新增。\n` +
+        `本指令無法建立幹事帳號；幹事帳號的新增功能將於 Wave 2C-2 在後台提供。\n` +
         `確認要建立系統管理員，請重跑並加上：${CONFIRM_ENV}=1`,
     )
   }

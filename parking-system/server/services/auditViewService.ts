@@ -11,10 +11,19 @@ import {
 } from '@/server/repositories/parkingRepository'
 
 // ── Audit timeline read model (Wave 2A-2 / #15) ──────────────────────────────
-// Turns raw audit rows into something a 幹事 can read, and is the ONLY place raw
+// Turns raw audit rows into something a person can read, and is the ONLY place raw
 // audit data is touched: the DTO below deliberately has no metadata field, so the
 // page cannot reach metadata_redacted even by accident. That is a type-level
 // guarantee, not a convention.
+//
+// Its reader is a 系統管理員, not a 幹事 (Wave 2C-1 / #19 closed /admin/audit to
+// superadmins — the log carries every operator's governance actions).
+//
+// ⚠️ Gap, deliberate for 2C-1: rows now carry actor_role_snapshot, but actorLabel
+// below still renders only the name — so "what were they at the time" is currently
+// answerable only in SQL. Surfacing it (「王姐妹（當時身分：幹事）」, and 「角色制度
+// 建立前」 for the honest pre-0035 nulls) belongs to 2C-2, with the same treatment
+// unknown values already get elsewhere here: show the raw code rather than hide it.
 //
 // The log stores IDs and never names (0030). Names are resolved HERE, at display
 // time, which is why a deleted actor is a normal outcome rather than an error —

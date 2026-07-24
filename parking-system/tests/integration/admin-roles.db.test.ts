@@ -192,6 +192,57 @@ describe.skipIf(!RUN)('admin role tiers (2C-1 / #19) — local DB integration', 
     expect(await disabledAt(target2)).not.toBeNull()
   })
 
+  // ── deadlock: every account mutation must hold the SAME lock ─────────────────
+  // Each of these RPCs locks the ACTING row (FOR SHARE) and then a TARGET row (FOR
+  // UPDATE). Two concurrent calls with mirrored actor/target can interleave BETWEEN
+  // those two acquisitions —
+  //     backend 1: share(A) … wants update(B)
+  //     backend 2: share(B) … wants update(A)
+  // — and Postgres breaks the cycle with 40P01, which the API reports as a 500. Taking
+  // the shared advisory lock before any row lock makes the pair strictly sequential, so
+  // the interleaving cannot happen.
+  //
+  // That window is microseconds wide, so a test that fires both RPCs and hopes to land
+  // in it is a coin flip, not a regression test. (An earlier version of this test held
+  // one transaction open across a completed RPC call instead — which never reproduces
+  // the cycle, because by then that backend already holds BOTH locks. It passed with
+  // the lock removed, i.e. it asserted nothing.) So assert the mechanism directly:
+  // while the RPC's transaction is open, the lock must be unavailable to anyone else.
+  // Mutation-verified — remove the perform from either RPC and its case goes red.
+  const holdsSharedLock = async (call: (actor: string, target: string) => Promise<unknown>) => {
+    const actor = await mkAdmin(`lk-${randomUUID().slice(0, 6)}-a`, 'superadmin')
+    const target = await mkAdmin(`lk-${randomUUID().slice(0, 6)}-t`, 'clerk')
+
+    const free = async () => (await b.query(
+      `select pg_try_advisory_xact_lock(hashtext('active_superadmin_invariant')) as got`,
+    )).rows[0].got as boolean
+
+    expect(await free()).toBe(true)          // nobody holds it before we start
+
+    await a.query('begin')
+    await call(actor, target)
+    expect(await free()).toBe(false)         // the RPC took it, and still holds it
+
+    await a.query('commit')
+    expect(await free()).toBe(true)          // xact-scoped: released on commit
+  }
+
+  it('set_admin_disabled holds the shared account lock for its whole transaction', async () => {
+    await holdsSharedLock((actor, target) => setDisabled(a, {
+      targetId: target, actingAdminId: actor, disabled: true, requestId: randomUUID(),
+    }))
+  })
+
+  it('reset_admin_password holds it too — it locks two rows, so it can deadlock without it', async () => {
+    // The cross-RPC case the review caught: before this, only set_admin_disabled took
+    // the advisory lock, so "A resets B's password" against "B disables A" was serialized
+    // by nothing and the row locks alone formed the cycle.
+    await holdsSharedLock((actor, target) => a.query(
+      `select reset_admin_password($1,$2,$3,$4,$5) as r`,
+      [target, actor, randomUUID(), 'scrypt$dl$dl', randomUUID()],
+    ))
+  })
+
   // ── the role guard ───────────────────────────────────────────────────────────
 
   it('a 幹事 cannot disable an account, and the refusal is recorded against their real role', async () => {

@@ -181,19 +181,35 @@ revoke all on function private.append_audit_log(
   audit_actor_type, uuid, uuid, text, text, text, uuid, uuid, uuid, audit_result, jsonb
 ) from public, anon, authenticated, service_role;
 
--- ── The invariant every account operation must preserve ──────────────────────────
---   At least one row with disabled_at is null AND role = 'superadmin' exists.
+-- ── One lock for every admin-account mutation ────────────────────────────────────
+-- It exists for two distinct reasons, and BOTH are load-bearing:
 --
--- 0026/0030 serialized only the disable path, under hashtext('admin_disable_guard').
--- With roles that name is too narrow AND the single-path guard is unsound: A demoting
--- superadmin X while B disables superadmin Y would have each transaction see the
--- other's account still active, both succeed, and leave zero. So the key is renamed,
--- and EVERY RPC capable of SHRINKING the active-superadmin set takes this same one,
--- unconditionally, at its entry point — before any row lock, which also fixes the
--- lock order and rules out A↔B deadlock.
+-- (1) The invariant: at least one row with disabled_at is null AND role = 'superadmin'
+--     must exist. 0026/0030 serialized only the disable path, under
+--     hashtext('admin_disable_guard'). With roles that name is too narrow AND the
+--     single-path guard is unsound: A demoting superadmin X while B disables
+--     superadmin Y would have each transaction see the other's account still active,
+--     both succeed, and leave zero.
 --
--- Applies to: set_admin_disabled (here) and set_admin_role (0036). A pure create path
--- does NOT take it: adding an account can only grow the set.
+-- (2) Deadlock. Every one of these RPCs locks the ACTING row (FOR SHARE) and then a
+--     TARGET row (FOR UPDATE) — two admin_accounts rows, in an order chosen by whoever
+--     is being acted on. Two such transactions with mirrored actor/target therefore
+--     form a cycle:
+--         A resets B's password : share(A) → wants update(B)
+--         B resets A's password : share(B) → wants update(A)
+--     Postgres breaks it with 40P01 and the API answers 500. Not corruption, but a
+--     reproducible failure of an ordinary admin action. Taking this lock FIRST — before
+--     any row lock — makes the pair strictly sequential, so the cycle cannot form. The
+--     alternative (locking the two rows in a canonical id order) is more machinery for
+--     a rarer path and one more thing to get wrong.
+--
+-- ⇒ RULE: every RPC that mutates admin_accounts takes this lock at its entry point,
+--   unconditionally — including ones that cannot shrink the superadmin set, because
+--   reason (2) applies to them too. Applies to set_admin_disabled and
+--   reset_admin_password (here) and set_admin_role + create_admin_account (0036). These
+--   are rare, human-driven operations; serializing all of them costs nothing and
+--   removes a whole category of reasoning error.
+--
 -- (Advisory locks are transient, so renaming the key is safe — there is no persisted
 -- state and set_admin_disabled was its only holder.)
 
@@ -367,8 +383,11 @@ declare
   v_disabled_at        timestamptz;
   v_action             text := 'admin_account.password_reset';
 begin
-  -- No invariant lock: a password reset never changes disabled_at or role, so it
-  -- cannot shrink the active-superadmin set.
+  -- Yes, even though a password reset cannot shrink the active-superadmin set: it locks
+  -- an acting row and then a target row, so without this it deadlocks against any other
+  -- account mutation with mirrored actor/target (see reason (2) above).
+  perform pg_advisory_xact_lock(hashtext('active_superadmin_invariant'));
+
   select role, disabled_at into v_acting_role, v_acting_disabled_at
     from admin_accounts where id = p_acting_admin_id for share;
   if not found then
