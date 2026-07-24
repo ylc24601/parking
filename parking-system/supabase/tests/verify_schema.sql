@@ -521,7 +521,9 @@ begin
   if not has_function_privilege('service_role', 'set_admin_disabled(uuid,uuid,uuid,boolean,timestamptz,uuid)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on set_admin_disabled';
   end if;
-  if not has_function_privilege('service_role', 'reset_admin_password(uuid,uuid,text)', 'execute') then
+  -- Signature gained p_acting_session_id + p_request_id in 0035, when the success path
+  -- became audited (assertion 39 pins the rest).
+  if not has_function_privilege('service_role', 'reset_admin_password(uuid,uuid,uuid,text,uuid)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on reset_admin_password';
   end if;
 
@@ -751,8 +753,15 @@ end $$;
 do $$
 declare
   v_event uuid := 'e0000000-0000-0000-0000-000000000001';
+  v_admin uuid;
   v_res   jsonb;
 begin
+  -- A REAL admin row: since 0035 the audit writer resolves the actor's role in the
+  -- business transaction and raises for an id it cannot find, so a seed-style
+  -- placeholder uuid would abort the capacity write it is supposed to be probing.
+  insert into admin_accounts (username, password_hash)
+  values ('verify.capacity.probe', 'scrypt$00$00') returning id into v_admin;
+
   update reservations set status = 'approved', release_deadline_at = '2026-06-21T02:30:00Z'
    where weekly_event_id = v_event and user_id = 'a0000000-0000-0000-0000-000000000001';
   update reservations set status = 'temp_approved'
@@ -761,16 +770,14 @@ begin
 
   -- 23 - 21 blocked - 0 admin_reserved - 1 reserved staff = 1 effective < 2 promised
   v_res := set_weekly_capacity(v_event, '2026-06-21', 23, 21, 0,
-                               'a0000000-0000-0000-0000-000000000001',
-                               'a0000000-0000-0000-0000-000000000002', gen_random_uuid());
+                               v_admin, gen_random_uuid(), gen_random_uuid());
   if (v_res->>'reason') <> 'capacity_below_promised' then
     raise exception 'FAIL: cutting below promised was allowed (temp_approved not counted?): %', v_res;
   end if;
 
   -- 23 - 20 - 0 - 1 = 2 effective = 2 promised → exactly enough, allowed.
   v_res := set_weekly_capacity(v_event, '2026-06-21', 23, 20, 0,
-                               'a0000000-0000-0000-0000-000000000001',
-                               'a0000000-0000-0000-0000-000000000002', gen_random_uuid());
+                               v_admin, gen_random_uuid(), gen_random_uuid());
   if (v_res->>'ok') <> 'true' then
     raise exception 'FAIL: effective == promised should be allowed: %', v_res;
   end if;
@@ -779,8 +786,7 @@ begin
   -- silently editable either.
   update weekly_events set status = 'finalized' where id = v_event;
   v_res := set_weekly_capacity(v_event, '2026-06-21', 23, 19, 1,
-                               'a0000000-0000-0000-0000-000000000001',
-                               'a0000000-0000-0000-0000-000000000002', gen_random_uuid());
+                               v_admin, gen_random_uuid(), gen_random_uuid());
   if (v_res->>'reason') <> 'event_not_editable' then
     raise exception 'FAIL: finalized event was editable: %', v_res;
   end if;
@@ -1105,6 +1111,122 @@ begin
   revoke delete on audit_logs from service_role;
 
   raise notice 'PASS: audit purge deletes via the fn, and the DELETE seam does not leak to the app principal';
+end $$;
+
+-- ── 39. Admin role tiers (Wave 2C-1 / #19) ──────────────────────────────────────
+do $$
+declare
+  v_rpc_sig text := 'reset_admin_password(uuid,uuid,uuid,text,uuid)';
+  v_priv    text;
+  v_default text;
+begin
+  -- Exactly two values. A third (e.g. a read-only tier) added without wiring
+  -- lib/adminRoles.ts's capability matrix would fail OPEN at every clerk-level check.
+  if (select count(*) from pg_enum e join pg_type t on t.oid = e.enumtypid
+       where t.typname = 'admin_role') <> 2 then
+    raise exception 'FAIL: admin_role must have exactly the two implemented values';
+  end if;
+  perform 1 from pg_enum e join pg_type t on t.oid = e.enumtypid
+    where t.typname = 'admin_role' and e.enumlabel = 'superadmin';
+  if not found then raise exception 'FAIL: admin_role is missing superadmin'; end if;
+  perform 1 from pg_enum e join pg_type t on t.oid = e.enumtypid
+    where t.typname = 'admin_role' and e.enumlabel = 'clerk';
+  if not found then raise exception 'FAIL: admin_role is missing clerk'; end if;
+
+  -- default clerk: a future write path that forgets to name a role must land on the
+  -- least-privileged side, never on superadmin.
+  select column_default into v_default from information_schema.columns
+    where table_name = 'admin_accounts' and column_name = 'role';
+  if v_default is null or v_default not like '%clerk%' then
+    raise exception 'FAIL: admin_accounts.role must default to clerk (got %)', coalesce(v_default, '<none>');
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+     where table_name = 'admin_accounts' and column_name = 'role' and is_nullable = 'YES'
+  ) then
+    raise exception 'FAIL: admin_accounts.role must be NOT NULL';
+  end if;
+
+  -- NOT VALID on purpose and FOREVER: pre-0035 admin rows have null snapshots because
+  -- roles did not exist. Validating it would fail on that honest history — so the
+  -- un-validated state is the assertion, not a leftover to be tidied up.
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'audit_logs_admin_role_snapshot_ck' and contype = 'c'
+  ) then
+    raise exception 'FAIL: audit_logs_admin_role_snapshot_ck missing';
+  end if;
+  if (select convalidated from pg_constraint where conname = 'audit_logs_admin_role_snapshot_ck') then
+    raise exception 'FAIL: audit_logs_admin_role_snapshot_ck was validated — pre-0035 rows are legitimately null';
+  end if;
+
+  -- reset_admin_password is now audited, so it is SECURITY DEFINER with the same two
+  -- hazards closed as the other audited RPCs.
+  if not exists (select 1 from pg_proc where proname = 'reset_admin_password' and prosecdef) then
+    raise exception 'FAIL: reset_admin_password must be SECURITY DEFINER to reach the audit writer';
+  end if;
+  if not exists (
+    select 1 from pg_proc
+     where proname = 'reset_admin_password'
+       and array_to_string(proconfig, ',') like '%search_path%'
+  ) then
+    raise exception 'FAIL: SECURITY DEFINER reset_admin_password must pin search_path';
+  end if;
+  foreach v_priv in array array['anon', 'authenticated', 'public'] loop
+    if has_function_privilege(v_priv, v_rpc_sig, 'execute') then
+      raise exception 'FAIL: % must not execute reset_admin_password', v_priv;
+    end if;
+  end loop;
+  if exists (
+    select 1 from pg_proc
+     where proname = 'reset_admin_password'
+       and pg_get_function_identity_arguments(oid) = 'uuid, uuid, text'
+  ) then
+    raise exception 'FAIL: the pre-audit 3-arg reset_admin_password overload still exists';
+  end if;
+
+  raise notice 'PASS: admin_role enum + column defaults + audited reset_admin_password are in place';
+end $$;
+
+-- ── 39b. The role snapshot is filled, and refuses to be guessed (behavioural) ────
+-- Two halves of one rule: an admin row must carry the actor's role, and an admin
+-- actor that cannot be resolved must take the business transaction down with it
+-- rather than quietly writing an incomplete governance record.
+do $$
+declare
+  v_admin uuid;
+  v_id    uuid;
+  v_role  text;
+begin
+  insert into admin_accounts (username, password_hash, role)
+  values ('verify.role.probe', 'scrypt$00$00', 'clerk')
+  returning id into v_admin;
+
+  -- Caller passes null (the pre-2C RPCs' shape) → the writer resolves it in-transaction.
+  select private.append_audit_log(
+    'admin', v_admin, gen_random_uuid(), null,
+    'probe.verify', 'admin_account', v_admin, null,
+    gen_random_uuid(), 'success', '{}'::jsonb
+  ) into v_id;
+  select actor_role_snapshot into v_role from audit_logs where id = v_id;
+  if v_role is distinct from 'clerk' then
+    raise exception 'FAIL: append_audit_log did not resolve the admin role (got %)', coalesce(v_role, '<null>');
+  end if;
+
+  -- An admin actor pointing at no account is a threading bug, not a governance
+  -- refusal — it must raise so the business change rolls back with it.
+  begin
+    perform private.append_audit_log(
+      'admin', gen_random_uuid(), gen_random_uuid(), null,
+      'probe.verify', 'admin_account', null, null,
+      gen_random_uuid(), 'success', '{}'::jsonb
+    );
+    raise exception 'FAIL: append_audit_log wrote an admin row with an unresolvable role';
+  exception when others then
+    if sqlerrm not like '%no resolvable role%' then raise; end if;
+  end;
+
+  raise notice 'PASS: admin audit rows carry a role snapshot, and an unresolvable actor fails loud';
 end $$;
 
 rollback;

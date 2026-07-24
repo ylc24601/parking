@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { AdminRole } from '@/lib/adminRoles'
 import { getServiceClient } from '@/lib/supabase/server'
 import type {
   EffectivePriority,
@@ -57,16 +58,19 @@ export interface AdminAccountRow {
   failed_attempts: number
   locked_at: Date | null
   disabled_at: Date | null
+  role: AdminRole
 }
 
 // Phase 8 Slice 1 — admin session joined with its account so the auth layer can kill
-// live sessions of a disabled account on every request.
+// live sessions of a disabled account on every request. Wave 2C-1 (#19) adds the role
+// to that same join: it is re-read per request, so a demotion bites immediately.
 export interface AdminSessionRow {
   id: string
   admin_id: string
   expires_at: Date
   username: string
   account_disabled_at: Date | null
+  role: AdminRole
 }
 
 // Phase 8 Slice 3 — admin account list row. Deliberately omits password_hash and
@@ -78,6 +82,7 @@ export interface AdminAccountListRow {
   locked_at: Date | null
   disabled_at: Date | null
   created_at: Date
+  role: AdminRole
 }
 
 // Phase 8 Slice 2 — admin member search result (raw; the SERVICE masks phone before
@@ -740,10 +745,14 @@ export interface ParkingRepository {
   // disabled_at can evict live sessions.
   getAdminAccountByUsername(username: string): Promise<AdminAccountRow | null>
   // `inserted:false` iff the username already exists (unique conflict); other errors throw.
+  // role is required rather than defaulted: the column defaults to the least-privileged
+  // value, so a caller that silently omitted it would create a clerk while believing
+  // otherwise. The one caller today is the CLI, which always provisions a superadmin.
   insertAdminAccount(args: {
     username: string
     passwordHash: string
     displayName?: string | null
+    role: AdminRole
   }): Promise<{ inserted: boolean }>
   resetAdminLoginFailures(id: string): Promise<void>
   // Atomic lock-cycle counter (apply_admin_login_failure, 0025): active lock → no-op,
@@ -825,13 +834,16 @@ export interface ParkingRepository {
     nowIso: string
     requestId: string
   }): Promise<{ ok: boolean; reason?: string }>
-  // Wraps reset_admin_password (0026): atomic hash update + failed_attempts/locked_at
-  // clear + session revoke. Receives only the already-hashed password; never sees
-  // or returns plaintext. Leaves disabled_at untouched.
+  // Wraps reset_admin_password (0026, audited + role-guarded in 0035): atomic hash
+  // update + failed_attempts/locked_at clear + session revoke. Receives only the
+  // already-hashed password; never sees or returns plaintext. Leaves disabled_at
+  // untouched. Same actor/requestId contract as setAdminDisabled above.
   resetAdminPassword(args: {
     targetId: string
     actingAdminId: string
+    actingSessionId: string
     passwordHash: string
+    requestId: string
   }): Promise<{ ok: boolean; reason?: string; username?: string; disabled?: boolean }>
   // Single-table, single-statement — already atomic without an RPC.
   deleteAdminSessionsByAdminId(id: string): Promise<{ deleted: number }>
@@ -1806,7 +1818,7 @@ export function createParkingRepository(
     async getAdminAccountByUsername(username) {
       const { data, error } = await client
         .from('admin_accounts')
-        .select('id, username, password_hash, failed_attempts, locked_at, disabled_at')
+        .select('id, username, password_hash, failed_attempts, locked_at, disabled_at, role')
         .eq('username', username)
         .maybeSingle()
       if (error) throw new Error(`getAdminAccountByUsername failed: ${error.message}`)
@@ -1818,14 +1830,16 @@ export function createParkingRepository(
         failed_attempts: data.failed_attempts as number,
         locked_at: parseDate(data.locked_at as string | null),
         disabled_at: parseDate(data.disabled_at as string | null),
+        role: data.role as AdminRole,
       }
     },
 
-    async insertAdminAccount({ username, passwordHash, displayName = null }) {
+    async insertAdminAccount({ username, passwordHash, displayName = null, role }) {
       const { error } = await client.from('admin_accounts').insert({
         username,
         password_hash: passwordHash,
         display_name: displayName,
+        role,
       })
       if (error) {
         if (error.code === '23505') return { inserted: false } // duplicate username → caller reports
@@ -1868,20 +1882,26 @@ export function createParkingRepository(
 
     async getAdminSessionByTokenHash(tokenHash) {
       // Join the account so a disabled admin's live sessions die on their next request.
+      // The role rides the same join (2C-1 / #19): per-request, so a demotion bites now.
       const { data, error } = await client
         .from('admin_sessions')
-        .select('id, admin_id, expires_at, admin_accounts!inner(username, disabled_at)')
+        .select('id, admin_id, expires_at, admin_accounts!inner(username, disabled_at, role)')
         .eq('token_hash', tokenHash)
         .maybeSingle()
       if (error) throw new Error(`getAdminSessionByTokenHash failed: ${error.message}`)
       if (!data) return null
-      const account = data.admin_accounts as unknown as { username: string; disabled_at: string | null }
+      const account = data.admin_accounts as unknown as {
+        username: string
+        disabled_at: string | null
+        role: AdminRole
+      }
       return {
         id: data.id as string,
         admin_id: data.admin_id as string,
         expires_at: new Date(data.expires_at as string),
         username: account.username,
         account_disabled_at: parseDate(account.disabled_at),
+        role: account.role,
       }
     },
 
@@ -1902,7 +1922,7 @@ export function createParkingRepository(
     async getAdminAccountById(id) {
       const { data, error } = await client
         .from('admin_accounts')
-        .select('id, username, password_hash, failed_attempts, locked_at, disabled_at')
+        .select('id, username, password_hash, failed_attempts, locked_at, disabled_at, role')
         .eq('id', id)
         .maybeSingle()
       if (error) throw new Error(`getAdminAccountById failed: ${error.message}`)
@@ -1914,6 +1934,7 @@ export function createParkingRepository(
         failed_attempts: data.failed_attempts as number,
         locked_at: parseDate(data.locked_at as string | null),
         disabled_at: parseDate(data.disabled_at as string | null),
+        role: data.role as AdminRole,
       }
     },
 
@@ -2012,7 +2033,7 @@ export function createParkingRepository(
     async listAdminAccounts() {
       const { data, error } = await client
         .from('admin_accounts')
-        .select('id, username, display_name, locked_at, disabled_at, created_at')
+        .select('id, username, display_name, locked_at, disabled_at, created_at, role')
         .order('username', { ascending: true })
       if (error) throw new Error(`listAdminAccounts failed: ${error.message}`)
       return (data ?? []).map(row => ({
@@ -2022,6 +2043,7 @@ export function createParkingRepository(
         locked_at: parseDate(row.locked_at as string | null),
         disabled_at: parseDate(row.disabled_at as string | null),
         created_at: new Date(row.created_at as string),
+        role: row.role as AdminRole,
       }))
     },
 
@@ -2038,11 +2060,13 @@ export function createParkingRepository(
       return data as { ok: boolean; reason?: string }
     },
 
-    async resetAdminPassword({ targetId, actingAdminId, passwordHash }) {
+    async resetAdminPassword({ targetId, actingAdminId, actingSessionId, passwordHash, requestId }) {
       const { data, error } = await client.rpc('reset_admin_password', {
         p_target_id: targetId,
         p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
         p_password_hash: passwordHash,
+        p_request_id: requestId,
       })
       if (error) throw new Error(`reset_admin_password failed: ${error.message}`)
       return data as { ok: boolean; reason?: string; username?: string; disabled?: boolean }

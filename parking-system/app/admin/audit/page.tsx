@@ -1,10 +1,12 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { can } from '@/lib/adminRoles'
 import { getAdminSession } from '@/server/http/adminAuth'
 import { AUDIT_BOUNDARY_NOTE } from '@/server/services/auditPresentation'
 import { idSuffix, listAuditTimeline } from '@/server/services/auditViewService'
 import Badge, { type BadgeTone } from '../../ui/Badge'
+import NoPermission from '../NoPermission'
 
 export const metadata: Metadata = {
   title: '稽核記錄 · 管理後台',
@@ -26,7 +28,11 @@ export default async function AdminAuditPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
-  if (!(await getAdminSession())) redirect('/admin')
+  const session = await getAdminSession()
+  if (!session) redirect('/admin')
+  // Before the timeline is read: the log records every operator's governance actions,
+  // so a clerk must not be able to pull a page of it at all.
+  if (!can(session.role, 'view_audit')) return <NoPermission />
 
   const raw = (await searchParams).cursor
   // A malformed/stale cursor is not an error: the service falls back to the newest

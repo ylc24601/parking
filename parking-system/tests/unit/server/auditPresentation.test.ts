@@ -45,10 +45,37 @@ describe('renderAuditDetails — known action, valid metadata', () => {
   })
 
   it('maps a denied reason to operator language, unknown reason falls back to the code', () => {
-    expect(renderAuditDetails('admin_account.disable', { reason: 'last_active_admin' }).details)
+    expect(renderAuditDetails('admin_account.disable', { reason: 'last_active_superadmin' }).details)
       .toEqual([{ label: '結果原因', value: '不可停用最後一位系統管理員' }])
     expect(renderAuditDetails('admin_account.disable', { reason: 'future_guard' }).details)
       .toEqual([{ label: '結果原因', value: 'future_guard' }])
+  })
+
+  it('names the 2C-1 role guards in operator language', () => {
+    // These reasons are shared across every admin_account.* action via one map, so a
+    // rename that misses a call site would surface here.
+    expect(renderAuditDetails('admin_account.disable', { reason: 'forbidden_role' }).details)
+      .toEqual([{ label: '結果原因', value: '權限不足（需系統管理員）' }])
+    expect(renderAuditDetails('admin_account.disable', { reason: 'acting_admin_disabled' }).details)
+      .toEqual([{ label: '結果原因', value: '操作者帳號已停用' }])
+  })
+
+  it('renders a password reset as a session-revoke, never a credential', () => {
+    const ok = renderAuditDetails('admin_account.password_reset', {
+      sessions_revoked: true, target_disabled: false,
+    })
+    expect(ok.fallback).toBeNull()
+    expect(ok.details).toEqual([{ label: '登入狀態', value: '已強制登出所有裝置' }])
+
+    // A disabled target says so — a reset does not re-enable an account.
+    const disabled = renderAuditDetails('admin_account.password_reset', {
+      sessions_revoked: true, target_disabled: true,
+    })
+    expect(disabled.details).toContainEqual({ label: '帳號狀態', value: '此帳號目前為停用狀態' })
+
+    // A refusal reads through the shared reason map.
+    expect(renderAuditDetails('admin_account.password_reset', { reason: 'forbidden_role' }).details)
+      .toEqual([{ label: '結果原因', value: '權限不足（需系統管理員）' }])
   })
 
   it('renders the bootstrap marker as "the trail starts here"', () => {

@@ -386,7 +386,9 @@ begin
   if not has_function_privilege('service_role', 'set_admin_disabled(uuid,uuid,uuid,boolean,timestamptz,uuid)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on set_admin_disabled';
   end if;
-  if not has_function_privilege('service_role', 'reset_admin_password(uuid,uuid,text)', 'execute') then
+  -- Signature gained p_acting_session_id + p_request_id in 0035, when the success path
+  -- became audited (assertion 29 pins the rest).
+  if not has_function_privilege('service_role', 'reset_admin_password(uuid,uuid,uuid,text,uuid)', 'execute') then
     raise exception 'FAIL: service_role lacks execute on reset_admin_password';
   end if;
   raise notice 'PASS: admin account management RPCs (set_admin_disabled, reset_admin_password) present';
@@ -937,4 +939,69 @@ begin
   raise notice 'PASS: purge_audit_logs present, locked down, owner-matched, escape hatch intact';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 32 assertions passed =='
+-- ── 29. Admin role tiers (verify_schema.sql #39) ──────────────────────────────────
+-- Catalog-only half of local assertion 39 (the behavioural role-snapshot probe stays
+-- local — it writes audit rows, which are append-only and could not be cleaned up here).
+-- ⚠️ This is the assertion to check FIRST after applying 0035 to prod: the app selects
+-- admin_accounts.role on every admin request, so it must be deployed DB-first.
+do $$
+declare
+  v_default text;
+begin
+  if (select count(*) from pg_enum e join pg_type t on t.oid = e.enumtypid
+       where t.typname = 'admin_role') <> 2 then
+    raise exception 'FAIL: admin_role must have exactly the two implemented values';
+  end if;
+
+  select column_default into v_default from information_schema.columns
+    where table_name = 'admin_accounts' and column_name = 'role';
+  if v_default is null or v_default not like '%clerk%' then
+    raise exception 'FAIL: admin_accounts.role must default to clerk (got %)', coalesce(v_default, '<none>');
+  end if;
+  if exists (
+    select 1 from information_schema.columns
+     where table_name = 'admin_accounts' and column_name = 'role' and is_nullable = 'YES'
+  ) then
+    raise exception 'FAIL: admin_accounts.role must be NOT NULL';
+  end if;
+
+  -- The backfill: prod must not be left with an account that silently became a clerk.
+  if exists (select 1 from admin_accounts where disabled_at is null) and not exists (
+    select 1 from admin_accounts where disabled_at is null and role = 'superadmin'
+  ) then
+    raise exception 'FAIL: no active superadmin remains — nobody can manage accounts';
+  end if;
+
+  -- NOT VALID on purpose and FOREVER (pre-0035 admin rows legitimately have no role).
+  if not exists (
+    select 1 from pg_constraint where conname = 'audit_logs_admin_role_snapshot_ck' and contype = 'c'
+  ) then
+    raise exception 'FAIL: audit_logs_admin_role_snapshot_ck missing';
+  end if;
+  if (select convalidated from pg_constraint where conname = 'audit_logs_admin_role_snapshot_ck') then
+    raise exception 'FAIL: audit_logs_admin_role_snapshot_ck was validated — pre-0035 rows are legitimately null';
+  end if;
+
+  if not exists (select 1 from pg_proc where proname = 'reset_admin_password' and prosecdef) then
+    raise exception 'FAIL: reset_admin_password must be SECURITY DEFINER to reach the audit writer';
+  end if;
+  if exists (
+    select 1 from pg_proc
+     where proname = 'reset_admin_password'
+       and prosecdef
+       and (proconfig is null or array_to_string(proconfig, ',') not like '%search_path%')
+  ) then
+    raise exception 'FAIL: reset_admin_password does not pin search_path';
+  end if;
+  if exists (
+    select 1 from pg_proc
+     where proname = 'reset_admin_password'
+       and pg_get_function_identity_arguments(oid) = 'uuid, uuid, text'
+  ) then
+    raise exception 'FAIL: the pre-audit 3-arg reset_admin_password overload still exists';
+  end if;
+
+  raise notice 'PASS: admin_role enum + column + backfill + audited reset_admin_password are in place';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 33 assertions passed =='

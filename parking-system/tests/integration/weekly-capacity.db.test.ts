@@ -23,7 +23,11 @@ type Sb = import('@supabase/supabase-js').SupabaseClient
 // while move-car.db.test.ts already had it — the claim was written, not checked, and the
 // collision only surfaced when file order put move-car second.
 const SUNDAY = '2099-08-23'
-const ADMIN = '11111111-1111-4111-8111-111111111111'
+// A REAL admin_accounts row, not a made-up uuid: since 0035 the audit writer resolves
+// the actor's role in-transaction and RAISES for an admin id it cannot find, so a
+// fictional actor now takes the whole capacity write down with it (which is the point —
+// an audit row claiming an admin acted, where no such admin exists, is not a record).
+let ADMIN = ''
 const SESSION = '22222222-2222-4222-8222-222222222222'
 
 describe.skipIf(!RUN)('weekly capacity admin (#14A) — local DB integration', () => {
@@ -62,6 +66,15 @@ describe.skipIf(!RUN)('weekly capacity admin (#14A) — local DB integration', (
     sb = (await import('@/lib/supabase/server')).getServiceClient()
     repo = (await import('@/server/repositories/parkingRepository')).createParkingRepository(sb)
 
+    const { data: admin } = await sb.from('admin_accounts')
+      .insert({
+        username: `cap-admin-${randomUUID().slice(0, 8)}`,
+        password_hash: 'scrypt$notarealhash',
+      })
+      .select('id')
+      .single()
+    ADMIN = (admin as { id: string }).id
+
     // Reuse this file's Sunday if it already exists rather than insert-or-die.
     //
     // Once this suite runs, its event is PERMANENT: audit_logs.weekly_event_id carries a
@@ -94,6 +107,9 @@ describe.skipIf(!RUN)('weekly capacity admin (#14A) — local DB integration', (
     await sb.from('job_runs').delete().eq('weekly_event_id', eventId)
     await sb.from('weekly_staff_allocations').delete().eq('weekly_event_id', eventId)
     await sb.from('weekly_events').update({ status: 'finalized' }).eq('id', eventId)
+    // audit_logs has no FK to admin_accounts by design, so the actor row can go even
+    // though the rows it wrote cannot.
+    if (ADMIN) await sb.from('admin_accounts').delete().eq('id', ADMIN)
   })
 
   // ── the two formulas must agree ──────────────────────────────────────────────

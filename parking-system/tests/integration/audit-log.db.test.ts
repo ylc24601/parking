@@ -125,21 +125,25 @@ describe.skipIf(!RUN)('audit substrate (Wave 2A-1 / #15) — local DB integratio
   // ── governance refusals must COMMIT, not roll back ───────────────────────────
 
   it('a denied guard trip leaves the account untouched but still records the refusal', async () => {
-    const sole = await mkAdmin('denied-sole')
-    // last_active_admin only triggers when this is genuinely the last active admin,
-    // so clear the ones the tests above left behind. Their audit rows survive the
-    // delete (no FK on actor_id/entity_id) — which is the behaviour asserted below.
-    await sb.from('admin_accounts').delete().neq('id', sole.id)
+    // 2C-1 (#19) changed which guard is reachable here. This used to use the
+    // last-active refusal, reached by passing a fictional acting admin id — now that
+    // the RPC verifies the actor, that path returns acting_admin_not_found and writes
+    // NO row (no account means no role, so no conformant admin audit row exists, and
+    // it is a bad request rather than a governed refusal). A clerk being refused is
+    // the same shape of governance denial and is genuinely reachable.
+    const clerk = await mkAdmin('denied-clerk')
+    await sb.from('admin_accounts').update({ role: 'clerk' }).eq('id', clerk.id).throwOnError()
+    const target = await mkAdmin('denied-target')
     // Asserted rather than assumed: without this the test could "pass" against the
     // wrong precondition and prove nothing.
-    expect(await activeAdminCount()).toBe(1)
+    expect(await activeAdminCount()).toBeGreaterThanOrEqual(2)
 
     const requestId = randomUUID()
     const res = await setDisabled({
-      targetId: sole.id, actingAdminId: randomUUID(), disabled: true, requestId,
+      targetId: target.id, actingAdminId: clerk.id, disabled: true, requestId,
     })
-    expect(res).toEqual({ ok: false, reason: 'last_active_admin' })
-    expect((await adminRow(`${U}-denied-sole`)).disabled_at).toBeNull()
+    expect(res).toEqual({ ok: false, reason: 'forbidden_role' })
+    expect((await adminRow(`${U}-denied-target`)).disabled_at).toBeNull()
 
     // The row survives the call, which is the point: had the RPC raised instead of
     // returning a typed refusal, the rollback would have erased the evidence that
@@ -148,7 +152,10 @@ describe.skipIf(!RUN)('audit substrate (Wave 2A-1 / #15) — local DB integratio
     expect(rows.length).toBe(1)
     expect(rows[0].result).toBe('denied')
     expect(rows[0].action).toBe('admin_account.disable')
-    expect(rows[0].metadata_redacted).toEqual({ reason: 'last_active_admin' })
+    expect(rows[0].metadata_redacted).toEqual({ reason: 'forbidden_role' })
+    // The refusal is attributed to the role the RPC itself read, not one the caller
+    // asserted — a clerk cannot log itself as a superadmin.
+    expect(rows[0].actor_role_snapshot).toBe('clerk')
   })
 
   // ── the success path ─────────────────────────────────────────────────────────
@@ -170,7 +177,9 @@ describe.skipIf(!RUN)('audit substrate (Wave 2A-1 / #15) — local DB integratio
       actor_type: 'admin',
       actor_id: keeper.id,
       actor_session_id: actingSessionId,
-      actor_role_snapshot: null,        // until #19
+      // 2C-1 (#19): the role the RPC read for THIS action, resolved inside the same
+      // transaction. mkAdmin goes through the CLI service, which provisions superadmins.
+      actor_role_snapshot: 'superadmin',
       action: 'admin_account.disable',
       entity_type: 'admin_account',
       entity_id: target.id,

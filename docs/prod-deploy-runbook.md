@@ -71,15 +71,19 @@ npx supabase db push
 npx supabase migration list          # AFTER push — compare against the line below
 ```
 
-**Acceptance: every one of the 28 local migration files (`0001`–`0028`) appears as an
+**Acceptance: every one of the 35 local migration files (`0001`–`0035`) appears as an
 applied remote entry, in the same order, with matching version ids.** No remote-only
 entries, no local-only entries, no pending entries. If there is any discrepancy, **stop
 and investigate the cause — do not run `supabase migration repair` to force the list
 green.**
 
 ```bash
-ls supabase/migrations/*.sql | wc -l   # sanity: should print 28
+ls supabase/migrations/*.sql | wc -l   # sanity: should print 35
 ```
+
+> ⚠️ **`0035` (admin roles) must be applied BEFORE the app that goes with it.** It is not
+> bidirectionally compatible — the new app selects `admin_accounts.role` on every admin
+> request, and the column does not exist until this migration lands. See §1.6.
 
 **Never run `supabase db reset` against a linked remote project.** That command is
 local-stack-only; it drops and rebuilds the database and applies `supabase/seed.sql`
@@ -101,7 +105,7 @@ npm run db:verify:remote
 unset SUPABASE_DB_URL
 ```
 
-Expect **`verify_schema_prod.sql: all 26 assertions passed`**. This is a **different,
+Expect **`verify_schema_prod.sql: all 33 assertions passed`**. This is a **different,
 independent check** from the local `npm run db:verify` (33/33) — the local one exercises
 behavior via DML inside a rolled-back transaction and depends on seed data (so it cannot
 run against a fresh cloud database); this one is catalog-only (tables/indexes/
@@ -111,6 +115,36 @@ comparable and neither supersedes the other.
 **Operational hygiene for `SUPABASE_DB_URL`:** keep it in a shell session variable only.
 Never paste it into Vercel env, `.env.local`, or any committed file. Avoid it appearing
 in a terminal screenshot. `unset` it when done, as above.
+
+### 1.5 Deploy order when a migration is not bidirectionally compatible
+
+Most migrations in this repo are additive and either order works. **`0035` (admin roles,
+Wave 2C-1 / #19) is not**, and any future migration that adds a column the app reads on
+every request has the same shape. The order is fixed:
+
+1. **Apply the migration** (§1.3).
+2. **Verify it landed** — `npm run db:verify:remote` (§1.4). Its last assertion is the
+   admin-role one; if that fails, stop, because step 3 will take the back office down.
+3. **Deploy the app.**
+4. **Smoke `/admin/accounts`** — log in and load the page. That single request exercises
+   the new column on the session read, so it fails loudly if the order was wrong.
+
+**Why it is one-way:**
+
+| | outcome |
+|---|---|
+| migration first | ✅ RPC signatures unchanged except `reset_admin_password`; every existing account is backfilled to `superadmin`, so the old app behaves exactly as before. |
+| app first | ❌ the app selects `admin_accounts.role`, which does not exist yet — **every** admin request fails. |
+
+**`reset_admin_password` has a narrow compatibility window.** Its signature changed
+3-arg → 5-arg (it cannot write a conformant audit row without an actor session id and a
+request id), and the old overload was **dropped** rather than left alongside — two
+overloads make the PostgREST named-argument call ambiguous. So between step 1 and step 3
+the *password-reset button* returns 500. Nothing else is affected: no cron job, no member
+or staff flow, no capacity or eligibility write. Do the two steps back to back and this
+window is a minute or two on a button nobody is pressing.
+
+**Rollback is therefore NOT "redeploy the old app"** — see §5.
 
 ---
 
@@ -173,8 +207,15 @@ in `.env.local` or exported directly — cloud values, not local-stack ones).
 **Before running this**: stop any screen recording or terminal-sharing session.
 
 ```bash
-npm run admin:create -- --username <operator> --display-name "<display name>"
+CONFIRM_CREATE_SUPERADMIN=1 npm run admin:create -- --username <operator> --display-name "<display name>"
 ```
+
+⚠️ **The env var is required and the CLI aborts without it** (Wave 2C-1 / #19). This
+command only ever creates a **系統管理員 (superadmin)** — full access, including account
+management, ops and the audit log — because it is the recovery path back in when no UI
+account can log in. It is read from the shell before `.env.local` is loaded, so it cannot
+be left switched on in a file. 幹事 accounts are created from the back office (Wave 2C-2),
+never here.
 
 **Do not pass `--stdin` here** — `--stdin` means the *caller* supplies the password (piped
 in) and the CLI does **not** print it; omitting `--stdin` is what makes the CLI *generate*
@@ -251,6 +292,15 @@ routes should not be exercised against prod just to prove auth works.
 
 For dispatcher-specific rollback (transport downgrade, halting sends), see
 [dispatcher-ops.md](dispatcher-ops.md) §Rollback — unchanged by this slice.
+
+**Migrations that are not bidirectionally compatible (`0035`, and any future one of that
+shape — see §1.5):** rolling the app back to the previous deploy does **not** undo the
+migration, and the old app calls the 3-arg `reset_admin_password` that no longer exists —
+so the rollback reintroduces the very failure it was meant to fix, on the same button.
+**Forward-fix.** If the migration itself must be undone, that is a deliberate, written
+down-migration (restore the 3-arg overload, drop the role column), not a redeploy — and
+note that dropping the role column re-opens account management, ops and the audit log to
+every operator.
 
 **This slice's specific note:** by the time §3 is complete, the cloud database is **not**
 an empty environment — it holds an admin account, one weekly_event, a Staff PIN/session

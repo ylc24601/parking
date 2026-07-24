@@ -1,6 +1,7 @@
-import { adminUnauthorized, getAdminSession } from '@/server/http/adminAuth'
+import { can } from '@/lib/adminRoles'
+import { adminForbidden, adminUnauthorized, getAdminSession } from '@/server/http/adminAuth'
 import { adminInternalError, guardAdminPost } from '@/server/http/adminRequestGuard'
-import { setAdminDisabled } from '@/server/services/adminAccountService'
+import { ADMIN_ACCOUNT_ACTION_STATUS, setAdminDisabled } from '@/server/services/adminAccountService'
 import { adminActor, newRequestId } from '@/server/services/auditContext'
 
 // Disable or re-enable another admin account. The actor is taken from the SESSION —
@@ -11,9 +12,13 @@ import { adminActor, newRequestId } from '@/server/services/auditContext'
 // re-login even on re-enable, closing a stale-cookie-revival hazard).
 //
 // Audited (0030): the audit row is written inside the RPC's transaction, so a 500
-// here means nothing changed. The 409 (last_active_admin) is a governance refusal
+// here means nothing changed. The 409 (last_active_superadmin) is a governance refusal
 // and DOES leave an audit row — that path must stay a typed return rather than a
 // raised error, or the rollback would erase the very record of the refusal.
+//
+// Superadmin-only (2C-1 / #19). The check below is the gate; the RPC re-derives the
+// acting role in-transaction and refuses again, so this route being wrong is not enough
+// to grant a clerk account management.
 const NO_STORE = { 'cache-control': 'no-store' }
 
 const UUID_FORMAT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -23,6 +28,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!guard.ok) return guard.response
   const session = await getAdminSession()
   if (!session) return adminUnauthorized()
+  if (!can(session.role, 'manage_admin_accounts')) return adminForbidden()
 
   const { targetId, disabled } = (guard.body ?? {}) as { targetId?: unknown; disabled?: unknown }
   if (typeof targetId !== 'string' || !UUID_FORMAT.test(targetId)) {
@@ -49,7 +55,6 @@ export async function POST(request: Request): Promise<Response> {
   if (result.ok) {
     return Response.json({ ok: true }, { headers: NO_STORE })
   }
-  const status =
-    result.reason === 'not_found' ? 404 : result.reason === 'cannot_target_self' ? 403 : 409 // last_active_admin
+  const status = ADMIN_ACCOUNT_ACTION_STATUS[result.reason]
   return Response.json({ ok: false, reason: result.reason }, { status, headers: NO_STORE })
 }

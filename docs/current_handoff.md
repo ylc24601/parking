@@ -984,6 +984,53 @@ business-chain（ops 正式路徑驅動）逐步結果：
 
 **結果**：go-live-checklist.md §1.6 打勾。**教訓**：go-live 走查裡任何「本機修正＋npm test 綠燈」都不能等同「已生效」，收尾前一定要確認 `git log`／`origin` 有沒有真的收到那個 commit。下一步是 §1.7（pilot 分批放行）。
 
+
+## 6.42 Wave 2C-1 — Admin 角色分級（#19）：地基＋存取控管（PR #45，2026-07-24）
+
+Phase 9 之後的功能 triage 進到 **Wave 2C**。在此之前 `admin_accounts` 是 **peer model（對等模型）**：任何一位登入者都能停用其他人、讀全部稽核記錄、看營運內部狀態。教會交付後會有多位同工共用後台，帳號管理與系統維運不該是全員共有。
+
+**時機**：prod 目前**沒有任何真會友資料**（go-live §1.3 未做）、pilot 未開始（§1.7），這種橫切 admin session 的改動現在出事只影響開發者測試帳號；等 pilot 開跑再動就變成「主日營運中把幹事鎖在後台外面」。
+
+**本刀（2C-1）完成**：`admin_role` enum（`superadmin` 系統管理員／`clerk` 幹事）、`admin_accounts.role`（`not null default 'clerk'`，**既有帳號全部回填 `superadmin`**）、session 每 request 讀角色、3 頁面＋4 支 API 的 server-side gating、`lib/adminRoles.ts` capability matrix、以及 `audit_logs.actor_role_snapshot`（0030 就存在但一直是 null）終於被填上。migration `0035`。
+
+**限系統管理員**：`/admin/accounts`（＋3 支寫入 API）、`/admin/ops`（＋`ops/requeue`）、`/admin/audit`。其餘（綁定審核／會友管理／資格審查／名單匯入／列印／車位設定／牧養關懷／現場 PIN）幹事照用。
+
+**⚠️ 部署順序＝DB-first，非雙向相容**：app 每個 admin request 都會 select `admin_accounts.role`，欄位不存在就全垮。順序固定為 **① 套 `0035` → ② `db:verify:remote` → ③ 部署 app → ④ smoke `/admin/accounts`**，且 **rollback 不能只回退 app**（舊 app 會呼叫已被 drop 的 3-arg `reset_admin_password`）。runbook 新增 §1.5 專講這件事，§5 補了 rollback 例外。
+
+**實作上的關鍵決策**（詳見 `0035` 標頭）：
+- **角色一律在 DB 交易內判定**，不由 app 傳入。0030 原本要求 auth layer 傳，照做要 drop+recreate 四支大型 SECURITY DEFINER 函式（光 0033 就有 15 處 audit 呼叫）、換來的只是毫秒級歸因差異。改為角色敏感 RPC 鎖列讀取 acting account、用該值授權、再把**同一個值**交給稽核 writer；舊 RPC 由 writer 自行解析。
+- **acting-account 模板同時讀 `role` 與 `disabled_at`、都不放進 `WHERE`**——放進去會讓「帳號不存在」與「帳號已停用」塌成同一個 `not found`，也讀不到停用者的角色。`acting_admin_not_found` **不寫稽核**（沒帳號就沒角色，且屬壞請求）；`acting_admin_disabled`／`forbidden_role` 寫。
+- **解析不到角色的 admin 稽核列一律 raise**，業務變更跟著 rollback。0035 之前的列保留誠實的 null：CHECK 是 **`NOT VALID` 且永遠不 validate**（回填成 superadmin 等於捏造證據，0030 已拒絕過同一件事），並下了 `COMMENT` 說明，verifier 釘 `convalidated = false`。
+- **`last_active_superadmin` 護欄現在結構上不可觸發**：操作者本人必須是啟用中的系統管理員、又不能對自己下手 ⇒ 必然有人存活。舊版之所以測得到，只是因為當時**根本沒檢查操作者存不存在**，傳假 UUID 就讓目標看起來像最後一個。護欄保留給未來「自我降級／硬刪除／無 session 維運腳本」等會縮小集合的路徑。
+- **`reset_admin_password` 成功也要寫稽核**（不只拒絕時）——只記幹事被拒、不記系統管理員真的改了密碼，比完全沒有紀錄更糟。這是它簽章 3→5 參數的原因。
+- **不預留 `viewer` enum 值**：沒有 gating 程式碼處理的角色會在幹事層級檢查 **fail open**。改用 `Record` ＋ `satisfies`，新增角色或能力都會在矩陣那一行編譯失敗。
+- **不用 Next 的 `forbidden()`**（experimental，需開 `experimental.authInterrupts` 旗標）。
+
+**審查抓到的 deadlock（已修）**：兩支 RPC 都是「鎖 acting 列（FOR SHARE）→ 鎖 target 列（FOR UPDATE）」，兩個 actor/target 互為鏡像的請求可以在兩次取鎖之間交錯而形成環，Postgres 以 40P01 中止其一、API 回 500。原本只有 `set_admin_disabled` 取 advisory lock ⇒ 規則改成 **「任何會改動 `admin_accounts` 的 RPC 都在進入點取同一把 lock」**（含不會縮小集合的 password reset；2C-2 的兩支也照辦）。
+
+**測試教訓（值得記）**：第一版 deadlock 迴歸測試是「開著 A 交易、讓 B 卡住」——它**永遠不會重現那個環**，因為 A 早就同時握有兩把鎖了；把 lock 拿掉它照樣綠燈，等於什麼都沒驗。改成用第二條連線 `pg_try_advisory_xact_lock` 直接斷言「RPC 執行中這把鎖必須拿不到」，並用 mutation test（把 lock 拿掉重灌本機 DB）確認**恰好只有被改壞那支的測試變紅**。同樣手法也驗過「不重疊的兩列仍會排隊」那條。
+
+**CLI**：`admin:create` 仍是救援路徑、仍固定建立系統管理員（不給 `--role`），改為必須 `CONFIRM_CREATE_SUPERADMIN=1`（在 `.env.local` 載入**前**從 shell 讀，不能寫在檔案裡長期開著）。它**仍不寫稽核**——跑它要 service-role 金鑰，那把金鑰本來就繞得過整個 substrate。
+
+**驗證**
+
+| 檢查 | 結果 |
+|------|------|
+| `npx tsc --noEmit` / `npm run lint` | ✅ exit 0 |
+| `npm test`（不接 DB） | ✅ **1301 passed** |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1595 passed**（131 檔） |
+| `npm run db:verify` | ✅ **46**（44→46：#39 enum／欄位預設／`NOT VALID` 且 `convalidated=false`／audited `reset_admin_password`；#39b 行為——admin 列必帶 role snapshot、解析不到就 raise） |
+| `verify_schema_prod.sql`（catalog-only） | ✅ **33**（32→33，含「prod 不得沒有啟用中的 superadmin」） |
+| mutation test | ✅ 拿掉 `set_admin_disabled` 的 advisory lock →「不重疊兩列仍排隊」變紅；拿掉 `reset_admin_password` 的 → **恰好只有它那條**變紅 |
+| `npm run build` | ✅ |
+| DB schema | **migration `0035`**（`0001–0035`） |
+
+既有 DB 測試中傳假 acting admin id 的地方（`weekly-capacity`／`capacity-race`／verifier 容量探針）改成建立真實帳號——稽核 writer 對它們 raise 是正確行為，不是要放寬的檢查。
+
+**尚未完成 / 下一刀（2C-2）**：帳號管理 UI（角色欄、新增管理者、變更角色）、側欄依角色隱藏、migration `0036`（`set_admin_role`／`create_admin_account`）、**稽核 viewer 顯示 `actor_role_snapshot`**（目前資料存了卻沒顯示，「當時是什麼身分」只能查 SQL）。**prod 目前還沒有任何 clerk 帳號**，所以 2C-1 上線對現有使用者零可見變化。
+
+**仍未補的既有缺口**：「撤銷所有 session」還是直接 repository DELETE，無 RPC、無稽核（要補得新開一支 RPC；此缺口早於角色分級，本刀未使其惡化）。
+
 ---
 
 ## 7. 關鍵設計決策（跨切片）
@@ -1292,7 +1339,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 ## 10. 本機開發備忘（重點，詳見 development_plan §12）
 
-- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0032` + seed）/ `db:verify` / `db:stop`。
+- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0035` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
 - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**；**`MEMBER_AUTH_MODE`（`mock`|`liff`；本機用 `mock`，`liff` 另需 `LINE_LOGIN_CHANNEL_ID` + `NEXT_PUBLIC_LIFF_ID`，見 [member-liff-setup.md](member-liff-setup.md)）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**（`NEXT_PUBLIC_LIFF_ID` 例外，非機密）；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。

@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers'
 import { ADMIN_SESSION_TTL_HOURS } from '@/lib/allocation/rules'
+import type { AdminRole } from '@/lib/adminRoles'
 import { hashSessionToken } from '@/server/http/sessionToken'
 import { createParkingRepository } from '@/server/repositories/parkingRepository'
 
@@ -12,6 +13,12 @@ import { createParkingRepository } from '@/server/repositories/parkingRepository
 //     device's DB row is reaped on its own next request. (Proactive revoke-all is
 //     the account-management slice.)
 //   · malformed cookie values never reach the DB.
+//
+// Wave 2C-1 (#19): the role rides along on the SAME row this already reads for
+// disabled_at, so it costs no extra query and is re-read on every request — a
+// demotion takes effect immediately rather than at the next login. The cookie never
+// carries it. This value gates HTTP and UI only; every DB write re-derives the role
+// inside its own transaction and never trusts one asserted by the caller.
 
 export const ADMIN_SESSION_COOKIE = 'admin_session'
 
@@ -22,6 +29,7 @@ export interface AdminSession {
   sessionId: string
   adminId: string
   username: string
+  role: AdminRole
 }
 
 export async function getAdminSession(): Promise<AdminSession | null> {
@@ -39,7 +47,7 @@ export async function getAdminSession(): Promise<AdminSession | null> {
     await repo.deleteAdminSessionByTokenHash(tokenHash)
     return null
   }
-  return { sessionId: row.id, adminId: row.admin_id, username: row.username }
+  return { sessionId: row.id, adminId: row.admin_id, username: row.username, role: row.role }
 }
 
 export async function setAdminSession(token: string): Promise<void> {
@@ -62,5 +70,14 @@ export function adminUnauthorized(): Response {
   return Response.json(
     { ok: false, error: 'unauthorized' },
     { status: 401, headers: { 'cache-control': 'no-store' } },
+  )
+}
+
+// Authenticated, but not for this surface. Distinct from 401 on purpose: re-logging in
+// would not help, and the client must not treat it as a session expiry.
+export function adminForbidden(): Response {
+  return Response.json(
+    { ok: false, error: 'forbidden' },
+    { status: 403, headers: { 'cache-control': 'no-store' } },
   )
 }

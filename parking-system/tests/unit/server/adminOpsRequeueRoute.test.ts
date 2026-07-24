@@ -10,7 +10,7 @@ import { POST } from '@/app/api/admin/ops/requeue/route'
 import { requeueFailed } from '@/server/services/requeueFailedService'
 import { getAdminSession } from '@/server/http/adminAuth'
 
-const SESSION = { sessionId: 's1', adminId: 'admin-1', username: 'alice' }
+const SESSION = { sessionId: 's1', adminId: 'admin-1', username: 'alice', role: 'superadmin' as const }
 
 const post = (body: unknown, headers: Record<string, string> = {}) =>
   POST(new Request('http://localhost/api/admin/ops/requeue', {
@@ -109,5 +109,23 @@ describe('POST /api/admin/ops/requeue', () => {
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual({ ok: false, error: 'internal' })
     spy.mockRestore()
+  })
+})
+
+// ── Wave 2C-1 (#19): ops recovery is superadmin-only ───────────────────────────
+// requeue replays real notifications to real members, and judging whether the root
+// cause is actually fixed is a maintenance call rather than a 幹事 one.
+describe('POST /api/admin/ops/requeue is closed to 幹事', () => {
+  it('clerk → 403, requeueFailed never called', async () => {
+    vi.clearAllMocks()
+    ;(getAdminSession as Mock).mockResolvedValue({ ...SESSION, role: 'clerk' })
+    const res = await POST(new Request('http://localhost/api/admin/ops/requeue', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dryRun: false, max: 10 }),
+    }))
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ ok: false, error: 'forbidden' })
+    expect(requeueFailed).not.toHaveBeenCalled()
   })
 })

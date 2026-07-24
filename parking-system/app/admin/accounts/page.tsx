@@ -1,7 +1,9 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
+import { can } from '@/lib/adminRoles'
 import { getAdminSession } from '@/server/http/adminAuth'
 import { listAdmins } from '@/server/services/adminAccountService'
+import NoPermission from '../NoPermission'
 import AdminAccounts from './AdminAccounts'
 
 export const metadata: Metadata = {
@@ -16,6 +18,8 @@ export const revalidate = 0
 export default async function AdminAccountsPage() {
   const session = await getAdminSession()
   if (!session) redirect('/admin')
+  // Before listAdmins(): a clerk must not even cause the roster to be read.
+  if (!can(session.role, 'manage_admin_accounts')) return <NoPermission />
 
   const { items } = await listAdmins()
   return <AdminAccounts items={items} currentAdminId={session.adminId} />
