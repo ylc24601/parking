@@ -3,7 +3,9 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { can, type AdminCapability, type AdminRole } from '@/lib/adminRoles'
+import { badgeForHref } from '@/lib/adminSidebarBadge'
 import LogoutButton from './LogoutButton'
+import { useAdminTodos } from './AdminTodoProvider'
 
 // Persistent back-office nav (Slice 3.5 follow-up). Routes are unchanged — this is a
 // shared shell over the existing admin pages, not an SPA. Rendered only when the
@@ -36,10 +38,27 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`)
 }
 
+// Wave 3 (#9): a small count pill on nav items with outstanding todos. UX ONLY — a
+// snapshot from the last full load / router.refresh(), and never an auth gate. The
+// ops count uses `danger` (a broken pipeline); member-facing work uses `warning`.
+function CountPill({ href, count }: { href: string; count: number }) {
+  const tone = href === '/admin/ops' ? 'bg-danger-bg text-danger-fg' : 'bg-warning-bg text-warning-fg'
+  return (
+    <span
+      className={`inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-xs font-bold leading-none ${tone}`}
+    >
+      {count}
+      <span className="sr-only"> 件待處理</span>
+    </span>
+  )
+}
+
 export default function AdminSidebar({ username, role }: { username: string; role: AdminRole }) {
   const pathname = usePathname()
   const homeActive = pathname === '/admin'
   const nav = NAV.filter(item => !item.capability || can(role, item.capability))
+  // Snapshot counts (null = couldn't fetch → no badges, never treated as "all zero").
+  const { counts } = useAdminTodos()
   return (
     <div className="sticky top-0 z-20 flex flex-col border-b border-border bg-surface print:hidden lg:h-dvh lg:w-56 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
       {/* brand + username (mobile: logout shares this row) */}
@@ -66,6 +85,7 @@ export default function AdminSidebar({ username, role }: { username: string; rol
       >
         {nav.map(item => {
           const active = isActive(pathname, item.href)
+          const badge = counts ? badgeForHref(item.href, counts) : null
           return (
             <Link
               key={item.href}
@@ -79,6 +99,7 @@ export default function AdminSidebar({ username, role }: { username: string; rol
             >
               <span aria-hidden>{item.icon}</span>
               {item.label}
+              {badge !== null && badge > 0 && <CountPill href={item.href} count={badge} />}
             </Link>
           )
         })}

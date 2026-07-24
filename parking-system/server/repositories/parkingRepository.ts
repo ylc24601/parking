@@ -170,6 +170,16 @@ export interface EligibilityReviewRow {
   reviewed_at: string | null
 }
 
+// Wave 3 (#8/#9) — MINIMAL projection for the todo badge count. Only the dates the
+// classifier needs; NO display_name / reason / reviewed_at. The admin shell reads this
+// on every load, so it must not pull P2 names/reasons just to produce a number.
+export interface EligibilityTodoCandidate {
+  user_id: string
+  p2_valid_from: string | null
+  p2_valid_until: string | null
+  p2_review_date: string | null
+}
+
 // Phase 7 Slice 1 — the member's own reservation for one week, plate joined.
 // Member-safe projection: own data only, no penalty/eligibility fields. `id`,
 // `effective_priority` and `attended_at` are for server-side actions/affordance
@@ -713,6 +723,10 @@ export interface ParkingRepository {
   // separate getPenaltyCountersForUsers lookup in the service, so a missing user_penalties
   // row can never drop an alert from the list.
   listPastoralAlerts(status: 'open' | 'resolved', limit: number): Promise<PastoralAlertRow[]>
+  // Wave 3 (#9) — head count of open alerts for the admin overview / sidebar badge.
+  // A pure count (unlike the P2 badge): "open" is a flat status filter with no
+  // date precedence to reproduce, so there is nothing to keep in sync in TS.
+  countOpenPastoralAlerts(): Promise<number>
   resolvePastoralAlert(args: {
     alertId: string
     adminId: string
@@ -930,6 +944,13 @@ export interface ParkingRepository {
   // rows; two ordered branches keep the earliest of each date. The service computes the
   // effective dueDate = min(valid_until, review_date), does the final global sort, and slices.
   listEligibilityReview(args: { cutoffDate: string; branchCap: number }): Promise<EligibilityReviewRow[]>
+  // Wave 3 (#8/#9) — SUPERSET of "due for review today": p2_eligible rows whose
+  // valid_until < asOf OR review_date <= asOf. The DB filter only narrows the candidate
+  // set; deriveEligibilityStatus in the service is the sole authority for the final
+  // expired/review_due count (no second business truth). Paginated to completion, so the
+  // count is EXACT — unlike listEligibilityReview, it has no display cap. pageSize is
+  // injectable purely so tests can exercise the pagination loop without seeding 1k rows.
+  listEligibilityTodoCandidates(asOfDate: string, pageSize?: number): Promise<EligibilityTodoCandidate[]>
   // Apply window: closed once the Friday allocation job has claimed the event
   // ('running' or 'success' — rows inserted mid-run would miss the batch).
   hasFridayAllocationRun(eventId: string): Promise<boolean>
@@ -1735,6 +1756,16 @@ export function createParkingRepository(
       })
     },
 
+    async countOpenPastoralAlerts() {
+      const { count, error } = await client
+        .from('pastoral_care_alerts')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'open')
+      if (error) throw new Error(`countOpenPastoralAlerts failed: ${error.message}`)
+      if (count === null) throw new Error('countOpenPastoralAlerts failed: count unavailable')
+      return count
+    },
+
     async resolvePastoralAlert({ alertId, adminId, note, resetCounter, nowIso }) {
       const { data, error } = await client.rpc('resolve_pastoral_alert', {
         p_alert_id: alertId,
@@ -2482,6 +2513,27 @@ export function createParkingRepository(
         }
       }
       return [...byUser.values()]
+    },
+
+    async listEligibilityTodoCandidates(asOfDate, pageSize = 1000) {
+      // Superset filter only — the classifier decides the final set. Null date columns
+      // never satisfy .lt/.lte, so permanent (both-null) rows are excluded here. Paginate
+      // to completion so the count is exact regardless of size (no display cap).
+      const out: EligibilityTodoCandidate[] = []
+      for (let from = 0; ; from += pageSize) {
+        const { data, error } = await client
+          .from('user_eligibility')
+          .select('user_id, p2_valid_from, p2_valid_until, p2_review_date')
+          .eq('p2_eligible', true)
+          .or(`p2_valid_until.lt.${asOfDate},p2_review_date.lte.${asOfDate}`)
+          .order('user_id', { ascending: true })
+          .range(from, from + pageSize - 1)
+        if (error) throw new Error(`listEligibilityTodoCandidates failed: ${error.message}`)
+        const rows = (data ?? []) as EligibilityTodoCandidate[]
+        out.push(...rows)
+        if (rows.length < pageSize) break
+      }
+      return out
     },
 
     async hasFridayAllocationRun(eventId) {
