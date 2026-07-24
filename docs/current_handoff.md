@@ -1072,7 +1072,7 @@ Phase 9 之後的功能 triage 進到 **Wave 2C**。在此之前 `admin_accounts
 
 ---
 
-## 6.44 Wave 3 slice 3a — 本週概覽（#8）＋ 側欄待辦徽章（#9，2026-07-24）
+## 6.44 Wave 3 slice 3a — 本週概覽（#8）＋ 側欄待辦徽章（#9，PR #47，2026-07-24）
 
 Wave 3（其餘管理功能）第一刀，取價值最高的 attention hub。`/admin` 從一句歡迎詞變成**上指標下待辦**儀表板；側欄項目加**待辦數字徽章**。**無 migration**（全唯讀查詢），db:verify 仍 48。
 
