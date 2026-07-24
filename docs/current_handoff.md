@@ -1078,10 +1078,10 @@ Wave 3（其餘管理功能）第一刀，取價值最高的 attention hub。`/a
 
 **上指標（`getWeekOverview`／`adminOverviewService`）**：管理日曆當週主日（`upcomingSundayISO`，非 `getActiveEvent`）＋本週階段（`deriveWeekStage`：no_event／application_open／allocated／finalized／closed，用 `event.status`＋`hasFridayAllocationRun`）＋容量三數（可分配總數＝`computeCapacity`／保留·停用／已核准＝`countPromisedReservations`，即時、page 自取）。
 
-**下待辦＋徽章（`adminTodoService`）**：一份 `AdminTodoSnapshot` 同時餵概覽下待辦與側欄徽章。四類：P2 待審（`listEligibilityReview.counts.expired+review_due`）、牧養 open（新 `countOpenPastoralAlerts` head count）、ops backlog／系統健康（`getOutboxHealth`＋`buildOutboxAlertFromHealth`）。P2/牧養全體可見；ops 只系統管理員（`view_ops`，幹事 `ops:null`）。
+**下待辦＋徽章（`adminTodoService`）**：一份 `AdminTodoSnapshot` 同時餵概覽下待辦與側欄徽章。四類：P2 待審（`listEligibilityTodoCandidates` 最小候選集，由 `p2ReviewCount`／`deriveEligibilityStatus` 做權威分類——見第二輪 Point 2）、牧養 open（新 `countOpenPastoralAlerts` head count）、ops backlog／系統健康（`getOutboxHealth`＋`buildOutboxAlertFromHealth`）。P2/牧養全體可見；ops 只系統管理員（`view_ops`，幹事 `ops:null`）。
 
 **外部審查（第一輪，4 點＋契約）全部納入**：
-1. **P2 邊界**：不手刻 SQL `.or()`（flat OR 連 `valid_until=today` 會誤判 expired，且無法表達 not_yet_effective 優先序＝第二套真相），改**複用權威分類器** `deriveEligibilityStatus`（[eligibilityStatus.ts:100](../parking-system/lib/eligibilityStatus.ts#L100)）。
+1. **P2 邊界**：不手刻 SQL `.or()`（flat OR 連 `valid_until=today` 會誤判 expired，且無法表達 not_yet_effective 優先序＝第二套真相），改**以權威分類器** `deriveEligibilityStatus`（[eligibilityStatus.ts:100](../parking-system/lib/eligibilityStatus.ts#L100)）判定。（第一輪暫複用 `listEligibilityReview.counts`；第二輪改為專用最小候選查詢 `listEligibilityTodoCandidates`，見下 Point 2。）
 2. **snapshot 模型**：核對 Next 16 文件確認共用 layout 在 client-side sibling 導覽**不重跑**（「Keeping any shared layouts and UI」）；若 page 各自取數會與側欄矛盾 → `AdminTodoProvider` 單一源。徽章明標「最近一次載入／`router.refresh()` 的快照」。
 3. **ops 徽章**：`attention = healthy ? 0 : failed+stale+staleBacklog`——納入 `due_backlog_stale`（否則只 backlog 超時時概覽顯示異常但徽章不亮），且以 `healthy` 把關使徽章與 ops 頁判定永遠一致。
 4. **fail-soft**：`getAdminTodoSnapshot` 任一查詢失敗回 `counts:null`（記固定無 PII 碼），側欄無徽章、概覽顯示「暫時無法取得」（非 🎉）、**其他 admin 頁照常開啟**——待辦不得成為整個後台的 availability gate。

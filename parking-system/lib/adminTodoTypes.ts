@@ -6,9 +6,10 @@ import type { WeekStage } from '@/lib/weekStage'
 // client into the client (see lib/capacityAdminTypes.ts for the same reasoning).
 
 export interface AdminTodoCounts {
-  // Members whose P2 eligibility is due for a human review as of today
-  // (= listEligibilityReview.counts.expired + review_due — the authoritative
-  // classifier, not a re-hand-coded date boundary).
+  // Members whose P2 eligibility is due for a human review as of today. An EXACT count
+  // over a minimal date-only candidate set (listEligibilityTodoCandidates), classified by
+  // deriveEligibilityStatus (expired + review_due) — the authoritative classifier, not a
+  // re-hand-coded date boundary, and with no list-page display cap.
   p2Review: number
   // Open pastoral-care alerts (v1: a single count; open/overdue split is deferred).
   pastoralOpen: number
