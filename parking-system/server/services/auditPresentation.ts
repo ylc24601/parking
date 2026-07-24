@@ -45,9 +45,23 @@ const yesNo = (v: unknown): string | null =>
 // codes. Unknown code falls back to the code itself (the MAP[x] ?? x idiom) — a
 // reason we can't name is still a reason worth showing, and these are our own
 // enum-like values, never user input.
+//
+// Shared by every admin_account.* action (2C-1: disable/enable/password_reset; 2C-2
+// adds create/role_change/session_revoke). One map so the same refusal reads the same
+// wherever it surfaces — see renderAdminDeniedReason.
 const DENIED_REASON_LABEL: Record<string, string> = {
-  last_active_admin: '不可停用最後一位系統管理員',
+  last_active_superadmin: '不可停用最後一位系統管理員',
   cannot_target_self: '不可對自己執行',
+  forbidden_role: '權限不足（需系統管理員）',
+  acting_admin_disabled: '操作者帳號已停用',
+}
+
+// The shared denied-row renderer for every admin_account.* action. A denied row carries
+// only `reason`; extracting this stops each action from reinventing the same branch and
+// the same map lookup (and drifting apart when a reason is renamed).
+function renderAdminDeniedReason(reason: unknown): AuditDetail[] | 'unreadable' {
+  if (typeof reason !== 'string') return 'unreadable'
+  return [{ label: '結果原因', value: DENIED_REASON_LABEL[reason] ?? reason }]
 }
 
 function renderAdminAccountToggle(metadata: Record<string, unknown>): AuditDetail[] | 'unreadable' {
@@ -55,9 +69,7 @@ function renderAdminAccountToggle(metadata: Record<string, unknown>): AuditDetai
 
   // A refusal row carries only `reason`; a success row carries the two booleans.
   if ('reason' in metadata) {
-    const reason = metadata.reason
-    if (typeof reason !== 'string') return 'unreadable'
-    return [{ label: '結果原因', value: DENIED_REASON_LABEL[reason] ?? reason }]
+    return renderAdminDeniedReason(metadata.reason)
   }
 
   const changed = yesNo(metadata.state_changed)
@@ -279,6 +291,27 @@ const ACTIONS: Record<string, AuditActionDefinition> = {
     label: '啟用管理員帳號',
     reads: ['disabled_to', 'state_changed', 'reason'],
     render: renderAdminAccountToggle,
+  },
+  // Audited on BOTH paths since 0035 (2C-1): a refusal carries `reason`, a success
+  // carries the two booleans. No credential is ever in this metadata — the writer's
+  // denylist would reject it anyway.
+  'admin_account.password_reset': {
+    label: '重設管理員密碼',
+    reads: ['sessions_revoked', 'target_disabled', 'reason'],
+    render: metadata => {
+      if ('reason' in metadata) {
+        return renderAdminDeniedReason(metadata.reason)
+      }
+      const revoked = yesNo(metadata.sessions_revoked)
+      if (revoked === null) return 'unreadable'
+      const details: AuditDetail[] = [{ label: '登入狀態', value: '已強制登出所有裝置' }]
+      // Reset never re-enables a disabled account (0026/0035), so say so — otherwise a
+      // reader might assume a password reset brought the account back.
+      if (metadata.target_disabled === true) {
+        details.push({ label: '帳號狀態', value: '此帳號目前為停用狀態' })
+      }
+      return details
+    },
   },
   'audit.substrate_enabled': {
     label: '稽核記錄啟用',
