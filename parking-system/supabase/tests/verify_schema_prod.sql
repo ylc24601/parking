@@ -1004,4 +1004,44 @@ begin
   raise notice 'PASS: admin_role enum + column + backfill + audited reset_admin_password are in place';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 33 assertions passed =='
+-- ── 30. Admin role management RPCs (verify_schema.sql #40) ────────────────────────
+-- Catalog-only half (the behavioural probes stay local — they write audit rows).
+-- ⚠️ Like #29, deploy DB-first: the new app calls these three RPCs, which do not exist
+-- until 0036 lands.
+do $$
+declare
+  v_sig text;
+  v_priv text;
+begin
+  foreach v_sig in array array[
+    'create_admin_account(text,text,text,admin_role,uuid,uuid,uuid)',
+    'set_admin_role(uuid,uuid,uuid,admin_role,uuid)',
+    'revoke_admin_sessions(uuid,uuid,uuid,uuid)'
+  ] loop
+    if to_regprocedure(v_sig) is null then
+      raise exception 'FAIL: % missing (exact signature)', v_sig;
+    end if;
+    if not exists (select 1 from pg_proc where oid = to_regprocedure(v_sig) and prosecdef) then
+      raise exception 'FAIL: % must be SECURITY DEFINER', v_sig;
+    end if;
+    if exists (
+      select 1 from pg_proc where oid = to_regprocedure(v_sig)
+        and prosecdef
+        and (proconfig is null or array_to_string(proconfig, ',') not like '%search_path%')
+    ) then
+      raise exception 'FAIL: % does not pin search_path', v_sig;
+    end if;
+    foreach v_priv in array array['anon', 'authenticated'] loop
+      if has_function_privilege(v_priv, v_sig, 'execute') then
+        raise exception 'FAIL: % must not execute %', v_priv, v_sig;
+      end if;
+    end loop;
+    if not has_function_privilege('service_role', v_sig, 'execute') then
+      raise exception 'FAIL: service_role lacks execute on %', v_sig;
+    end if;
+  end loop;
+
+  raise notice 'PASS: role management RPCs (create/role/revoke) present, SECURITY DEFINER, locked down';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 34 assertions passed =='

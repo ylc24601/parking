@@ -1229,6 +1229,126 @@ begin
   raise notice 'PASS: admin audit rows carry a role snapshot, and an unresolvable actor fails loud';
 end $$;
 
+-- ── 40. Admin role management RPCs (Wave 2C-2 / #19) ─────────────────────────────
+-- Signatures (exact args + names, since PostgREST calls by name), SECURITY DEFINER +
+-- search_path, and grants for the three account-management RPCs.
+do $$
+declare
+  v_sig text;
+  v_priv text;
+begin
+  foreach v_sig in array array[
+    'create_admin_account(text,text,text,admin_role,uuid,uuid,uuid)',
+    'set_admin_role(uuid,uuid,uuid,admin_role,uuid)',
+    'revoke_admin_sessions(uuid,uuid,uuid,uuid)'
+  ] loop
+    if to_regprocedure(v_sig) is null then
+      raise exception 'FAIL: % missing (exact signature)', v_sig;
+    end if;
+    if not exists (select 1 from pg_proc where oid = to_regprocedure(v_sig) and prosecdef) then
+      raise exception 'FAIL: % must be SECURITY DEFINER to reach the audit writer', v_sig;
+    end if;
+    if not exists (
+      select 1 from pg_proc where oid = to_regprocedure(v_sig)
+        and array_to_string(proconfig, ',') like '%search_path%'
+    ) then
+      raise exception 'FAIL: SECURITY DEFINER % must pin search_path', v_sig;
+    end if;
+    foreach v_priv in array array['anon', 'authenticated', 'public'] loop
+      if has_function_privilege(v_priv, v_sig, 'execute') then
+        raise exception 'FAIL: % must not execute %', v_priv, v_sig;
+      end if;
+    end loop;
+    if not has_function_privilege('service_role', v_sig, 'execute') then
+      raise exception 'FAIL: service_role lacks execute on %', v_sig;
+    end if;
+  end loop;
+
+  -- Argument NAMES matter: PostgREST invokes these by named argument.
+  if pg_get_function_identity_arguments(to_regprocedure('set_admin_role(uuid,uuid,uuid,admin_role,uuid)'))
+     is distinct from 'p_target_id uuid, p_acting_admin_id uuid, p_acting_session_id uuid, p_role admin_role, p_request_id uuid' then
+    raise exception 'FAIL: set_admin_role argument names drifted from the p_* contract';
+  end if;
+
+  raise notice 'PASS: role management RPCs are SECURITY DEFINER, search-path-pinned, locked down';
+end $$;
+
+-- ── 40b. The role RPCs actually behave (behavioural) ─────────────────────────────
+-- no-op writes nothing; username collision is typed and unaudited; a role change writes
+-- exactly one row with the actor's snapshot and the target's from/to; revoke writes even
+-- for zero sessions; and the unique-violation handler does NOT swallow an audit failure.
+do $$
+declare
+  sa uuid; sa2 uuid; target uuid; r jsonb; n int; before_rows int;
+begin
+  insert into admin_accounts (username, password_hash, role) values ('vrp-sa','scrypt$x$x','superadmin') returning id into sa;
+  insert into admin_accounts (username, password_hash, role) values ('vrp-sa2','scrypt$x$x','superadmin') returning id into sa2;
+
+  -- create a clerk
+  r := create_admin_account('vrp-new','scrypt$x$x','某某','clerk', sa, gen_random_uuid(), gen_random_uuid());
+  if not (r->>'ok')::bool then raise exception 'FAIL: create should succeed: %', r; end if;
+  if r->>'username' <> 'vrp-new' then raise exception 'FAIL: create must return canonical username: %', r; end if;
+  target := (r->>'id')::uuid;
+
+  -- duplicate username → typed, and NO audit row
+  select count(*) into before_rows from audit_logs where action = 'admin_account.create';
+  r := create_admin_account('vrp-new','scrypt$x$x',null,'clerk', sa, gen_random_uuid(), gen_random_uuid());
+  if r->>'reason' <> 'username_taken' then raise exception 'FAIL: dup username: %', r; end if;
+  select count(*) into n from audit_logs where action = 'admin_account.create';
+  if n <> before_rows then raise exception 'FAIL: username_taken must not write an audit row'; end if;
+
+  -- audit failure (null request_id) must RAISE and roll back, not be swallowed as 409
+  begin
+    r := create_admin_account('vrp-auditfail','scrypt$x$x',null,'clerk', sa, gen_random_uuid(), null);
+    raise exception 'FAIL: null request_id should have raised, got %', r;
+  exception when not_null_violation then
+    null; -- expected: the audit insert hit request_id NOT NULL
+  end;
+  if exists (select 1 from admin_accounts where username = 'vrp-auditfail') then
+    raise exception 'FAIL: an audit failure must roll the account back too';
+  end if;
+
+  -- promote, then same-role no-op writes nothing
+  r := set_admin_role(target, sa, gen_random_uuid(), 'superadmin', gen_random_uuid());
+  if not ((r->>'ok')::bool and (r->>'changed')::bool) then raise exception 'FAIL: promote: %', r; end if;
+  select count(*) into before_rows from audit_logs where action = 'admin_account.role_change';
+  r := set_admin_role(target, sa, gen_random_uuid(), 'superadmin', gen_random_uuid());
+  if not ((r->>'ok')::bool and not (r->>'changed')::bool) then raise exception 'FAIL: no-op: %', r; end if;
+  select count(*) into n from audit_logs where action = 'admin_account.role_change';
+  if n <> before_rows then raise exception 'FAIL: same-role no-op must not write an audit row'; end if;
+
+  -- a real role change: one row, actor snapshot = acting role, from/to = target's change
+  r := set_admin_role(target, sa, gen_random_uuid(), 'clerk', 'a1a1a1a1-1111-4111-8111-111111111111');
+  if not (r->>'ok')::bool then raise exception 'FAIL: demote: %', r; end if;
+  select count(*) into n from audit_logs
+    where request_id = 'a1a1a1a1-1111-4111-8111-111111111111' and action = 'admin_account.role_change';
+  if n <> 1 then raise exception 'FAIL: role change must write exactly one row, got %', n; end if;
+  perform 1 from audit_logs
+    where request_id = 'a1a1a1a1-1111-4111-8111-111111111111'
+      and actor_role_snapshot = 'superadmin'
+      and metadata_redacted = jsonb_build_object('from_role','superadmin','to_role','clerk');
+  if not found then raise exception 'FAIL: role change snapshot/metadata wrong'; end if;
+
+  -- self-target is audited (rule 7)
+  r := set_admin_role(sa, sa, gen_random_uuid(), 'clerk', 'b2b2b2b2-2222-4222-8222-222222222222');
+  if r->>'reason' <> 'cannot_target_self' then raise exception 'FAIL: self role change: %', r; end if;
+  perform 1 from audit_logs
+    where request_id = 'b2b2b2b2-2222-4222-8222-222222222222'
+      and action = 'admin_account.role_change' and result = 'denied';
+  if not found then raise exception 'FAIL: self-target must leave a denied row'; end if;
+
+  -- revoke with zero sessions still writes a row
+  r := revoke_admin_sessions(target, sa, gen_random_uuid(), 'c3c3c3c3-3333-4333-8333-333333333333');
+  if not ((r->>'ok')::bool and (r->>'sessions_revoked')::int = 0) then raise exception 'FAIL: revoke zero: %', r; end if;
+  perform 1 from audit_logs
+    where request_id = 'c3c3c3c3-3333-4333-8333-333333333333'
+      and action = 'admin_account.session_revoke' and result = 'success'
+      and metadata_redacted = jsonb_build_object('sessions_revoked', 0);
+  if not found then raise exception 'FAIL: revoke must write a row even for zero sessions'; end if;
+
+  raise notice 'PASS: role management RPCs behave (no-op silent, dup typed, audit-fail rolls back, snapshots correct)';
+end $$;
+
 rollback;
 
 \echo '== verify_schema.sql: all assertions passed =='

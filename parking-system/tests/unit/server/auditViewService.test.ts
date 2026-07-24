@@ -148,20 +148,35 @@ describe('listAuditTimeline — paging', () => {
 })
 
 describe('listAuditTimeline — actor resolution', () => {
+  // The default row() carries a null snapshot (pre-0035), so the honest 「角色制度建立前」
+  // suffix rides along on these — see the dedicated role-snapshot test below.
   it('shows an admin display name, and prefers username when display_name is null', async () => {
     const named = await listAuditTimeline({}, timeline([row()]).r)
-    expect(named.items[0].actorLabel).toBe('王姐妹')
+    expect(named.items[0].actorLabel).toBe('王姐妹（角色制度建立前）')
 
     const fallback = await listAuditTimeline({}, timeline([row()], [adminRow({ display_name: null })]).r)
-    expect(fallback.items[0].actorLabel).toBe('alice')
+    expect(fallback.items[0].actorLabel).toBe('alice（角色制度建立前）')
+  })
+
+  it('appends the actor role AS OF the action (2C-2): known label, honest null, raw unknown', async () => {
+    const known = await listAuditTimeline({}, timeline([row({ actor_role_snapshot: 'clerk' })]).r)
+    expect(known.items[0].actorLabel).toBe('王姐妹（當時身分：幹事）')
+
+    // null = written before roles existed. Not "missing" — an honest gap.
+    const historical = await listAuditTimeline({}, timeline([row({ actor_role_snapshot: null })]).r)
+    expect(historical.items[0].actorLabel).toBe('王姐妹（角色制度建立前）')
+
+    // An unrecognized value shows raw rather than vanishing, mirroring 未知動作.
+    const unknown = await listAuditTimeline({}, timeline([row({ actor_role_snapshot: 'future_role' })]).r)
+    expect(unknown.items[0].actorLabel).toBe('王姐妹（當時身分：future_role）')
   })
 
   it('a deleted actor is a normal row, not an error', async () => {
     // audit_logs deliberately carries no FK on actor_id so the log outlives what it
     // names. That makes "admin not found" an expected state to render, not throw.
-    const { r } = timeline([row()], [])
+    const { r } = timeline([row({ actor_role_snapshot: 'superadmin' })], [])
     const res = await listAuditTimeline({}, r)
-    expect(res.items[0].actorLabel).toBe(`已刪除管理員（ID 尾碼 ${idSuffix(ADMIN_ID)}）`)
+    expect(res.items[0].actorLabel).toBe(`已刪除管理員（ID 尾碼 ${idSuffix(ADMIN_ID)}）（當時身分：系統管理員）`)
   })
 
   it('never resolves a staff session to a person — even when a real admin shares that UUID', async () => {

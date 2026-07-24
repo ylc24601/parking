@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeMockRepo, asRepo, type MockRepo } from './mockRepo'
 import {
+  createAdmin,
   listAdmins,
   setAdminDisabled,
+  setAdminRole,
   resetAdminPassword,
   revokeAdminSessions,
 } from '@/server/services/adminAccountService'
-import type { AdminAccountListRow, AdminAccountRow } from '@/server/repositories/parkingRepository'
+import type { AdminAccountListRow } from '@/server/repositories/parkingRepository'
 import type { AuditActor } from '@/server/services/auditContext'
 
 function run(over: Partial<MockRepo> = {}) {
@@ -21,17 +23,6 @@ const listRow = (over: Partial<AdminAccountListRow> = {}): AdminAccountListRow =
   locked_at: null,
   disabled_at: null,
   created_at: new Date('2026-01-01T00:00:00Z'),
-  role: 'superadmin',
-  ...over,
-})
-
-const accountRow = (over: Partial<AdminAccountRow> = {}): AdminAccountRow => ({
-  id: '11111111-1111-4111-8111-111111111111',
-  username: 'alice',
-  password_hash: 'scrypt$old$old',
-  failed_attempts: 0,
-  locked_at: null,
-  disabled_at: null,
   role: 'superadmin',
   ...over,
 })
@@ -69,12 +60,17 @@ describe('listAdmins', () => {
 })
 
 describe('setAdminDisabled', () => {
-  it('self-target → cannot_target_self, repo never called', async () => {
-    const setDisabled = vi.fn(async () => ({ ok: true }))
-    const { r } = run({ setAdminDisabled: setDisabled })
+  // 2C-2 (rule 7): self-target is no longer short-circuited in the service — it is passed
+  // to the RPC, which refuses AND audits it, so the refusal is recorded from every entry
+  // point rather than only on a direct RPC call.
+  it('self-target is passed to the RPC (which audits it), reason relayed', async () => {
+    const setDisabled = vi.fn(async () => ({ ok: false, reason: 'cannot_target_self' }))
+    const { repo, r } = run({ setAdminDisabled: setDisabled })
     const res = await setAdminDisabled({ targetId: SELF, actor: ACTOR, disabled: true, requestId: REQ }, r, NOW)
     expect(res).toEqual({ ok: false, reason: 'cannot_target_self' })
-    expect(setDisabled).not.toHaveBeenCalled()
+    expect(repo.setAdminDisabled).toHaveBeenCalledWith(
+      expect.objectContaining({ targetId: SELF, actingAdminId: SELF, actingSessionId: SESSION, requestId: REQ }),
+    )
   })
 
   it('passes through not_found from the repo/RPC', async () => {
@@ -137,12 +133,15 @@ describe('setAdminDisabled', () => {
 })
 
 describe('resetAdminPassword', () => {
-  it('self-target → cannot_target_self, repo never called', async () => {
-    const reset = vi.fn(async () => ({ ok: true, username: 'x', disabled: false }))
-    const { r } = run({ resetAdminPassword: reset })
+  // 2C-2 (rule 7): self-target reaches the RPC, which audits the refusal.
+  it('self-target is passed to the RPC (which audits it), reason relayed', async () => {
+    const reset = vi.fn(async () => ({ ok: false, reason: 'cannot_target_self' }))
+    const { repo, r } = run({ resetAdminPassword: reset })
     const res = await resetAdminPassword({ targetId: SELF, actor: ACTOR, requestId: REQ }, r)
     expect(res).toEqual({ ok: false, reason: 'cannot_target_self' })
-    expect(reset).not.toHaveBeenCalled()
+    expect(repo.resetAdminPassword).toHaveBeenCalledWith(
+      expect.objectContaining({ targetId: SELF, actingAdminId: SELF, actingSessionId: SESSION, requestId: REQ }),
+    )
   })
 
   it('passes through not_found', async () => {
@@ -184,29 +183,114 @@ describe('resetAdminPassword', () => {
 })
 
 describe('revokeAdminSessions', () => {
-  it('self-target → cannot_target_self, repo never called', async () => {
-    const getById = vi.fn(async () => accountRow())
-    const del = vi.fn(async () => ({ deleted: 0 }))
-    const { r } = run({ getAdminAccountById: getById, deleteAdminSessionsByAdminId: del })
-    const res = await revokeAdminSessions({ targetId: SELF, actingAdminId: SELF }, r)
+  // 2C-2: self-target is NO LONGER short-circuited here (rule 7) — the RPC decides and
+  // audits it. The service just threads the actor and relays the reason.
+  it('self-target is passed to the RPC (which audits it), reason relayed', async () => {
+    const rpc = vi.fn(async () => ({ ok: false, reason: 'cannot_target_self' }))
+    const { repo, r } = run({ revokeAdminSessions: rpc })
+    const res = await revokeAdminSessions({ targetId: SELF, actor: ACTOR, requestId: REQ }, r)
     expect(res).toEqual({ ok: false, reason: 'cannot_target_self' })
-    expect(getById).not.toHaveBeenCalled()
-    expect(del).not.toHaveBeenCalled()
+    expect(repo.revokeAdminSessions).toHaveBeenCalledWith({
+      targetId: SELF, actingAdminId: SELF, actingSessionId: SESSION, requestId: REQ,
+    })
   })
 
-  it('unknown target → not_found, delete never called', async () => {
-    const del = vi.fn(async () => ({ deleted: 0 }))
-    const { r } = run({ getAdminAccountById: vi.fn(async () => null), deleteAdminSessionsByAdminId: del })
-    const res = await revokeAdminSessions({ targetId: TARGET, actingAdminId: SELF }, r)
+  it('passes through not_found from the RPC', async () => {
+    const { r } = run({ revokeAdminSessions: vi.fn(async () => ({ ok: false, reason: 'not_found' })) })
+    const res = await revokeAdminSessions({ targetId: TARGET, actor: ACTOR, requestId: REQ }, r)
     expect(res).toEqual({ ok: false, reason: 'not_found' })
-    expect(del).not.toHaveBeenCalled()
   })
 
-  it('success revokes the target account sessions', async () => {
-    const del = vi.fn(async () => ({ deleted: 2 }))
-    const { repo, r } = run({ getAdminAccountById: vi.fn(async () => accountRow({ id: TARGET })), deleteAdminSessionsByAdminId: del })
-    const res = await revokeAdminSessions({ targetId: TARGET, actingAdminId: SELF }, r)
-    expect(res).toEqual({ ok: true })
-    expect(repo.deleteAdminSessionsByAdminId).toHaveBeenCalledWith(TARGET)
+  it('success returns the revoked count', async () => {
+    const { r } = run({ revokeAdminSessions: vi.fn(async () => ({ ok: true, sessions_revoked: 2 })) })
+    const res = await revokeAdminSessions({ targetId: TARGET, actor: ACTOR, requestId: REQ }, r)
+    expect(res).toEqual({ ok: true, sessionsRevoked: 2 })
+  })
+
+  it('refuses a sessionless actor without touching the repo', async () => {
+    const rpc = vi.fn(async () => ({ ok: true, sessions_revoked: 0 }))
+    const { r } = run({ revokeAdminSessions: rpc })
+    await expect(
+      revokeAdminSessions({ targetId: TARGET, actor: { ...ACTOR, actorSessionId: null }, requestId: REQ }, r),
+    ).rejects.toThrow(/admin actor/)
+    expect(rpc).not.toHaveBeenCalled()
+  })
+})
+
+describe('setAdminRole', () => {
+  it('threads actor/session/requestId and the new role to the RPC', async () => {
+    const rpc = vi.fn(async () => ({ ok: true, changed: true, role: 'superadmin' }))
+    const { repo, r } = run({ setAdminRole: rpc })
+    const res = await setAdminRole({ targetId: TARGET, role: 'superadmin', actor: ACTOR, requestId: REQ }, r)
+    expect(res).toEqual({ ok: true, changed: true, role: 'superadmin' })
+    expect(repo.setAdminRole).toHaveBeenCalledWith({
+      targetId: TARGET, role: 'superadmin', actingAdminId: SELF, actingSessionId: SESSION, requestId: REQ,
+    })
+  })
+
+  it('relays a same-role no-op as changed:false', async () => {
+    const { r } = run({ setAdminRole: vi.fn(async () => ({ ok: true, changed: false, role: 'clerk' })) })
+    const res = await setAdminRole({ targetId: TARGET, role: 'clerk', actor: ACTOR, requestId: REQ }, r)
+    expect(res).toEqual({ ok: true, changed: false, role: 'clerk' })
+  })
+
+  it.each(['cannot_target_self', 'forbidden_role', 'last_active_superadmin', 'not_found'] as const)(
+    'relays typed refusal %s',
+    async reason => {
+      const { r } = run({ setAdminRole: vi.fn(async () => ({ ok: false, reason })) })
+      const res = await setAdminRole({ targetId: TARGET, role: 'clerk', actor: ACTOR, requestId: REQ }, r)
+      expect(res).toEqual({ ok: false, reason })
+    },
+  )
+})
+
+describe('createAdmin', () => {
+  const dbRow = {
+    ok: true as const,
+    id: TARGET,
+    username: 'newone',
+    display_name: '新同工',
+    role: 'clerk',
+    created_at: '2026-07-24T00:00:00Z',
+    disabled_at: null,
+    locked_at: null,
+  }
+
+  it('generates a one-time password, passes only its HASH, returns the canonical account', async () => {
+    const rpc = vi.fn(async () => dbRow)
+    const { repo, r } = run({ createAdminAccount: rpc })
+    const res = await createAdmin(
+      { username: 'newone', displayName: '新同工', role: 'clerk', actor: ACTOR, requestId: REQ }, r, NOW,
+    )
+    expect(res.ok).toBe(true)
+    if (!res.ok) return
+    expect(res.account).toEqual({
+      id: TARGET, username: 'newone', displayName: '新同工', role: 'clerk',
+      status: 'active', createdAt: new Date('2026-07-24T00:00:00Z').toISOString(),
+    })
+    expect(typeof res.password).toBe('string')
+    expect(res.password.length).toBeGreaterThan(20)
+
+    const arg = (repo.createAdminAccount as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(arg.passwordHash).toMatch(/^scrypt\$/)
+    expect(arg.passwordHash).not.toBe(res.password) // hash, not plaintext
+    expect(arg.actingAdminId).toBe(SELF)
+    expect(arg.actingSessionId).toBe(SESSION)
+    expect(arg.requestId).toBe(REQ)
+  })
+
+  it('relays username_taken', async () => {
+    const { r } = run({ createAdminAccount: vi.fn(async () => ({ ok: false, reason: 'username_taken' })) })
+    const res = await createAdmin(
+      { username: 'dup', displayName: null, role: 'clerk', actor: ACTOR, requestId: REQ }, r, NOW,
+    )
+    expect(res).toEqual({ ok: false, reason: 'username_taken' })
+  })
+
+  it('generates a different password each call', async () => {
+    const { r } = run({ createAdminAccount: vi.fn(async () => dbRow) })
+    const a = await createAdmin({ username: 'a', displayName: null, role: 'clerk', actor: ACTOR, requestId: REQ }, r, NOW)
+    const b = await createAdmin({ username: 'b', displayName: null, role: 'clerk', actor: ACTOR, requestId: REQ }, r, NOW)
+    expect(a.ok && b.ok && a.password !== b.password).toBe(true)
   })
 })

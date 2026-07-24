@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { can, type AdminCapability, type AdminRole } from '@/lib/adminRoles'
 import LogoutButton from './LogoutButton'
 
 // Persistent back-office nav (Slice 3.5 follow-up). Routes are unchanged — this is a
@@ -9,16 +10,20 @@ import LogoutButton from './LogoutButton'
 // layout has a session; it does NOT gate auth (pages/APIs keep their own checks).
 // print:hidden on the shell: no admin page should print its navigation, and /admin/print
 // is a paper sheet that must come out clean.
-const NAV: Array<{ href: string; label: string; icon: string }> = [
+//
+// Wave 2C-2 (#19): an item may carry a `capability`. Hiding it is UX ONLY — the real
+// gate is the server-side check on each page and API (a clerk who types the URL still
+// gets 「權限不足」). Items with no capability are open to every admin.
+const NAV: Array<{ href: string; label: string; icon: string; capability?: AdminCapability }> = [
   { href: '/admin/bindings', label: '綁定審核', icon: '🔗' },
   { href: '/admin/members', label: '會友管理', icon: '👥' },
-  { href: '/admin/accounts', label: '帳號管理', icon: '⚙️' },
+  { href: '/admin/accounts', label: '帳號管理', icon: '⚙️', capability: 'manage_admin_accounts' },
   { href: '/admin/eligibility', label: '資格審查', icon: '🏷️' },
   { href: '/admin/import', label: '名單匯入', icon: '📥' },
   { href: '/admin/print', label: '列印點名表', icon: '🖨' },
   { href: '/admin/capacity', label: '車位設定', icon: '🅿️' },
-  { href: '/admin/ops', label: '營運狀態', icon: '📊' },
-  { href: '/admin/audit', label: '稽核記錄', icon: '📜' },
+  { href: '/admin/ops', label: '營運狀態', icon: '📊', capability: 'view_ops' },
+  { href: '/admin/audit', label: '稽核記錄', icon: '📜', capability: 'view_audit' },
   { href: '/admin/pastoral', label: '牧養關懷', icon: '💚' },
   { href: '/admin/staff-pin', label: '現場 PIN 管理', icon: '🔑' },
 ]
@@ -31,9 +36,10 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`)
 }
 
-export default function AdminSidebar({ username }: { username: string }) {
+export default function AdminSidebar({ username, role }: { username: string; role: AdminRole }) {
   const pathname = usePathname()
   const homeActive = pathname === '/admin'
+  const nav = NAV.filter(item => !item.capability || can(role, item.capability))
   return (
     <div className="sticky top-0 z-20 flex flex-col border-b border-border bg-surface print:hidden lg:h-dvh lg:w-56 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
       {/* brand + username (mobile: logout shares this row) */}
@@ -58,7 +64,7 @@ export default function AdminSidebar({ username }: { username: string }) {
         aria-label="管理後台導覽"
         className="flex gap-1 overflow-x-auto overscroll-x-contain px-3 pb-2 lg:flex-1 lg:flex-col lg:gap-0.5 lg:overflow-x-visible lg:px-2 lg:pb-2"
       >
-        {NAV.map(item => {
+        {nav.map(item => {
           const active = isActive(pathname, item.href)
           return (
             <Link

@@ -1,3 +1,5 @@
+import { isAdminRole } from '@/lib/adminAccountInput'
+import { ADMIN_ROLE_LABEL } from '@/lib/adminRoles'
 import { fmtTaipeiDateTime } from '@/lib/taipeiDate'
 import {
   auditActionLabel,
@@ -19,15 +21,10 @@ import {
 // Its reader is a 系統管理員, not a 幹事 (Wave 2C-1 / #19 closed /admin/audit to
 // superadmins — the log carries every operator's governance actions).
 //
-// ⚠️ Gap, deliberate for 2C-1: rows now carry actor_role_snapshot, but actorLabel
-// below still renders only the name — so "what were they at the time" is currently
-// answerable only in SQL. Surfacing it (「王姐妹（當時身分：幹事）」, and 「角色制度
-// 建立前」 for the honest pre-0035 nulls) belongs to 2C-2, with the same treatment
-// unknown values already get elsewhere here: show the raw code rather than hide it.
-//
 // The log stores IDs and never names (0030). Names are resolved HERE, at display
 // time, which is why a deleted actor is a normal outcome rather than an error —
-// audit rows outlive the rows they point at, by design.
+// audit rows outlive the rows they point at, by design. Wave 2C-2 also appends the
+// actor's role AS OF the action from actor_role_snapshot (see adminRoleSuffix).
 
 const DEFAULT_LIMIT = 25
 const MAX_LIMIT = 100
@@ -112,15 +109,28 @@ export function idSuffix(id: string): string {
   return id.replaceAll('-', '').slice(-6)
 }
 
+// The actor's role AS OF the action (Wave 2C-2 / #19). Read straight off the row —
+// actor_role_snapshot was resolved inside the transaction (0035), so this is what they
+// WERE, not what they are now. null on rows written before 0035 (roles did not exist —
+// an honest gap, not missing data); an unrecognized value shows raw, mirroring how an
+// unknown action still shows its code, so a future role that forgets a label cannot
+// vanish from the page.
+function adminRoleSuffix(snapshot: string | null): string {
+  if (snapshot === null) return '（角色制度建立前）'
+  if (isAdminRole(snapshot)) return `（當時身分：${ADMIN_ROLE_LABEL[snapshot]}）`
+  return `（當時身分：${snapshot}）`
+}
+
 function actorLabel(row: AuditLogRow, adminNames: Map<string, string>): string {
   switch (row.actor_type) {
     case 'admin': {
-      if (!row.actor_id) return '管理員'
+      if (!row.actor_id) return `管理員${adminRoleSuffix(row.actor_role_snapshot)}`
       const name = adminNames.get(row.actor_id)
       // Not an error path. Admin accounts are soft-disabled rather than deleted
       // precisely so this resolves — but the log must survive a hard delete too,
       // which is why actor_id carries no FK.
-      return name ?? `已刪除管理員（ID 尾碼 ${idSuffix(row.actor_id)}）`
+      const who = name ?? `已刪除管理員（ID 尾碼 ${idSuffix(row.actor_id)}）`
+      return `${who}${adminRoleSuffix(row.actor_role_snapshot)}`
     }
     case 'staff_session':
       // NEVER a name, and never a lookup. The on-site PIN is a per-event credential

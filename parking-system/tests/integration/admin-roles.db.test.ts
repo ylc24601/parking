@@ -381,6 +381,78 @@ describe.skipIf(!RUN)('admin role tiers (2C-1 / #19) — local DB integration', 
 
   // ── the backfill ────────────────────────────────────────────────────────────
 
+  // ── 2C-2 RPCs take the SAME advisory lock ────────────────────────────────────
+  // The lock-presence property 0036 depends on: a demotion and a create must serialize
+  // against every other account mutation, even though they touch different (or no)
+  // target rows. Mutation-verified — drop the perform from any one RPC and only its
+  // case goes red.
+  it('set_admin_role holds the shared account lock for its whole transaction', async () => {
+    await holdsSharedLock((actor, target) => a.query(
+      `select set_admin_role($1,$2,$3,'superadmin',$4) as r`,
+      [target, actor, randomUUID(), randomUUID()],
+    ))
+  })
+
+  it('revoke_admin_sessions holds the shared account lock for its whole transaction', async () => {
+    await holdsSharedLock((actor, target) => a.query(
+      `select revoke_admin_sessions($1,$2,$3,$4) as r`,
+      [target, actor, randomUUID(), randomUUID()],
+    ))
+  })
+
+  it('create_admin_account holds it too, though it has no target row', async () => {
+    // No target — it cannot form the actor/target deadlock, but it takes the lock anyway
+    // for one consistent serialization policy (0036 header). The helper wants a target,
+    // so give it a throwaway one the call ignores.
+    const actor = await mkAdmin(`lk-${randomUUID().slice(0, 6)}-ca`, 'superadmin')
+    const createdName = `lk-${randomUUID().slice(0, 6)}-new`
+    const free = async () => (await b.query(
+      `select pg_try_advisory_xact_lock(hashtext('active_superadmin_invariant')) as got`,
+    )).rows[0].got as boolean
+
+    expect(await free()).toBe(true)
+    await a.query('begin')
+    await a.query(
+      `select create_admin_account($1,'scrypt$x$x',null,'clerk',$2,$3,$4) as r`,
+      [createdName, actor, randomUUID(), randomUUID()],
+    )
+    expect(await free()).toBe(false)
+    await a.query('commit')
+    expect(await free()).toBe(true)
+
+    const created = (await a.query(`select id from admin_accounts where username = $1`, [createdName])).rows[0]?.id
+    if (created) createdAdminIds.push(created)
+  })
+
+  // ── revoke actually deletes, and counts, every session ───────────────────────
+  it('revoke_admin_sessions reports and deletes 0, 1, and 2+ sessions correctly', async () => {
+    const actor = await mkAdmin('rev-actor', 'superadmin')
+    const mkSessions = async (targetId: string, n: number) => {
+      for (let i = 0; i < n; i++) {
+        await a.query(
+          `insert into admin_sessions (admin_id, token_hash, expires_at)
+           values ($1, $2, $3)`,
+          [targetId, randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, ''),
+            new Date(NOW.getTime() + 3600_000).toISOString()],
+        )
+      }
+    }
+    const sessionCount = async (targetId: string) =>
+      Number((await a.query(`select count(*)::int n from admin_sessions where admin_id = $1`, [targetId])).rows[0].n)
+
+    for (const n of [0, 1, 3]) {
+      const target = await mkAdmin(`rev-t-${n}`, 'clerk')
+      await mkSessions(target, n)
+      const r = (await a.query(
+        `select revoke_admin_sessions($1,$2,$3,$4) as r`,
+        [target, actor, randomUUID(), randomUUID()],
+      )).rows[0].r
+      expect(r.ok).toBe(true)
+      expect(r.sessions_revoked).toBe(n)       // the COUNT is right (scalar RETURNING would be wrong)
+      expect(await sessionCount(target)).toBe(0) // and all rows are gone
+    }
+  })
+
   it('the CLI provisions a 系統管理員, and a bare insert falls to 幹事', async () => {
     const { createAdminAccount } = await import('@/server/services/adminAuthService')
     const repo = (await import('@/server/repositories/parkingRepository')).createParkingRepository(sb)

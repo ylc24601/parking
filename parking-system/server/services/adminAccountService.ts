@@ -5,20 +5,22 @@ import { hashPin } from '@/server/http/pinHash'
 import { createParkingRepository, type ParkingRepository } from '@/server/repositories/parkingRepository'
 import { requireAdminActor, type AuditActor } from '@/server/services/auditContext'
 
-// ── Admin account management (Phase 8 Slice 3) ───────────────────────────────
-// Every state-changing action here targets an OTHER admin — an acting admin can never
-// disable/reset/revoke themselves (self-target is refused before touching the repo;
-// the RPCs behind setAdminDisabled/resetAdminPassword refuse it again as defense in
-// depth).
+// ── Admin account management (Phase 8 Slice 3, roles in Wave 2C) ─────────────
+// Every state-changing action here targets an OTHER admin. Wave 2C-2 (#19) moved the
+// self-target check ENTIRELY into the RPC: it is an audited governance refusal, and a
+// service-layer short-circuit would make the same refusal audited (direct RPC) or not
+// (app path) depending on entry point. So this layer no longer compares targetId to the
+// acting id — it threads the actor and lets the DB decide and record.
 //
-// The two write operations wrap single atomic RPCs (migration 0026) — see that
-// migration's comments for why a sequence of separate calls is not safe on this
-// offboarding security surface (partial failure would leave credentials/sessions
-// inconsistent). Reason unions below mirror what those RPCs return.
+// Each operation wraps a single atomic RPC (0026/0035/0036) that writes its audit row
+// inside the transaction — see those migrations for why a sequence of separate calls is
+// unsafe here (partial failure = live credential/session inconsistency). This layer must
+// not build metadata, must not write a second row, and must not report success on an
+// actor it cannot attribute.
 //
-// Wave 2C-1 (#19): this whole surface is superadmin-only. The routes refuse a clerk
-// before reaching here, and the RPCs refuse one again inside the transaction from the
-// role they read themselves — a role is never taken on the caller's word.
+// The whole surface is superadmin-only. The routes refuse a clerk before reaching here,
+// and the RPCs refuse one again inside the transaction from the role they read
+// themselves — a role is never taken on the caller's word.
 
 export type AdminAccountActionReason =
   | 'not_found'
@@ -34,14 +36,17 @@ export type AdminAccountActionReason =
   | 'forbidden_role'
   | 'acting_admin_disabled'
   | 'acting_admin_not_found'
+  // create only: the username unique index rejected it (0036 maps only that constraint).
+  | 'username_taken'
 
 export type AdminAccountActionResult =
   | { ok: true }
   | { ok: false; reason: AdminAccountActionReason }
 
-// One HTTP mapping for the whole surface, so disable/reset/revoke cannot drift apart.
-// The three race guards collapse to 403 on the wire (they are all "you may not, as
-// you are"); the distinction survives in the RPC's return value and the audit row.
+// One HTTP mapping for the whole surface, so the operations cannot drift apart. The
+// race guards collapse to 403 on the wire (all "you may not, as you are"); the
+// distinction survives in the RPC's return value and the audit row. username_taken is a
+// 409 conflict; last_active_superadmin likewise.
 export const ADMIN_ACCOUNT_ACTION_STATUS: Record<AdminAccountActionReason, number> = {
   not_found: 404,
   cannot_target_self: 403,
@@ -49,6 +54,7 @@ export const ADMIN_ACCOUNT_ACTION_STATUS: Record<AdminAccountActionReason, numbe
   acting_admin_disabled: 403,
   acting_admin_not_found: 403,
   last_active_superadmin: 409,
+  username_taken: 409,
 }
 
 export interface AdminAccountListItem {
@@ -97,10 +103,10 @@ export async function setAdminDisabled(
   repo: ParkingRepository = createParkingRepository(),
   now: Date = new Date(),
 ): Promise<AdminAccountActionResult> {
+  // No self-target short-circuit (rule 7, 2C-2): the RPC decides and audits it, so the
+  // refusal is recorded whatever the entry point. requireAdminActor still throws on a
+  // malformed actor — that is a threading bug, not a user action.
   const { adminId, sessionId } = requireAdminActor(params.actor)
-  if (params.targetId === adminId) {
-    return { ok: false, reason: 'cannot_target_self' }
-  }
   const result = await repo.setAdminDisabled({
     targetId: params.targetId,
     actingAdminId: adminId,
@@ -132,10 +138,7 @@ export async function resetAdminPassword(
   params: { targetId: string; actor: AuditActor; requestId: string },
   repo: ParkingRepository = createParkingRepository(),
 ): Promise<ResetAdminPasswordResult> {
-  const { adminId, sessionId } = requireAdminActor(params.actor)
-  if (params.targetId === adminId) {
-    return { ok: false, reason: 'cannot_target_self' }
-  }
+  const { adminId, sessionId } = requireAdminActor(params.actor) // self-target: RPC audits it (rule 7)
   const password = randomBytes(18).toString('base64url')
   const result = await repo.resetAdminPassword({
     targetId: params.targetId,
@@ -150,17 +153,94 @@ export async function resetAdminPassword(
   return { ok: true, username: result.username!, password, disabled: result.disabled! }
 }
 
+export type RevokeSessionsResult =
+  | { ok: true; sessionsRevoked: number }
+  | { ok: false; reason: AdminAccountActionReason }
+
+// Wave 2C-2 (#19): now an audited RPC (0036) rather than a bare repository DELETE, so
+// forcing an operator out leaves a trail like every other account action. Same actor
+// contract as setAdminDisabled; self-target and role are decided/recorded in the RPC.
 export async function revokeAdminSessions(
-  params: { targetId: string; actingAdminId: string },
+  params: { targetId: string; actor: AuditActor; requestId: string },
   repo: ParkingRepository = createParkingRepository(),
-): Promise<AdminAccountActionResult> {
-  if (params.targetId === params.actingAdminId) {
-    return { ok: false, reason: 'cannot_target_self' }
+): Promise<RevokeSessionsResult> {
+  const { adminId, sessionId } = requireAdminActor(params.actor)
+  const result = await repo.revokeAdminSessions({
+    targetId: params.targetId,
+    actingAdminId: adminId,
+    actingSessionId: sessionId,
+    requestId: params.requestId,
+  })
+  if (!result.ok) {
+    return { ok: false, reason: (result.reason ?? 'not_found') as AdminAccountActionReason }
   }
-  const account = await repo.getAdminAccountById(params.targetId)
-  if (!account) {
-    return { ok: false, reason: 'not_found' }
+  return { ok: true, sessionsRevoked: result.sessions_revoked ?? 0 }
+}
+
+export type CreateAdminResult =
+  | { ok: true; account: AdminAccountListItem; password: string }
+  | { ok: false; reason: AdminAccountActionReason }
+
+// Generates the one-time password (same shape as resetAdminPassword), hashes it, and
+// hands only the hash to the RPC. The plaintext exists solely in this scope and the
+// ok:true return — never logged, never in the RPC or audit. The returned account is the
+// DB-canonical row (normalized username/display_name), so the caller never reinterprets
+// input.
+export async function createAdmin(
+  params: { username: string; displayName: string | null; role: AdminRole; actor: AuditActor; requestId: string },
+  repo: ParkingRepository = createParkingRepository(),
+  now: Date = new Date(),
+): Promise<CreateAdminResult> {
+  const { adminId, sessionId } = requireAdminActor(params.actor)
+  const password = randomBytes(18).toString('base64url')
+  const result = await repo.createAdminAccount({
+    username: params.username,
+    passwordHash: hashPin(password),
+    displayName: params.displayName,
+    role: params.role,
+    actingAdminId: adminId,
+    actingSessionId: sessionId,
+    requestId: params.requestId,
+  })
+  if (!result.ok) {
+    return { ok: false, reason: (result.reason ?? 'username_taken') as AdminAccountActionReason }
   }
-  await repo.deleteAdminSessionsByAdminId(params.targetId)
-  return { ok: true }
+  return {
+    ok: true,
+    password,
+    account: {
+      id: result.id!,
+      username: result.username!,
+      displayName: result.display_name ?? null,
+      role: (result.role ?? params.role) as AdminRole,
+      status: deriveStatus(
+        result.disabled_at ? new Date(result.disabled_at) : null,
+        result.locked_at ? new Date(result.locked_at) : null,
+        now,
+      ),
+      createdAt: new Date(result.created_at!).toISOString(),
+    },
+  }
+}
+
+export type SetAdminRoleResult =
+  | { ok: true; changed: boolean; role: AdminRole }
+  | { ok: false; reason: AdminAccountActionReason }
+
+export async function setAdminRole(
+  params: { targetId: string; role: AdminRole; actor: AuditActor; requestId: string },
+  repo: ParkingRepository = createParkingRepository(),
+): Promise<SetAdminRoleResult> {
+  const { adminId, sessionId } = requireAdminActor(params.actor)
+  const result = await repo.setAdminRole({
+    targetId: params.targetId,
+    role: params.role,
+    actingAdminId: adminId,
+    actingSessionId: sessionId,
+    requestId: params.requestId,
+  })
+  if (!result.ok) {
+    return { ok: false, reason: (result.reason ?? 'not_found') as AdminAccountActionReason }
+  }
+  return { ok: true, changed: result.changed ?? true, role: (result.role ?? params.role) as AdminRole }
 }

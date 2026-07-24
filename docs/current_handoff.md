@@ -1029,7 +1029,43 @@ Phase 9 之後的功能 triage 進到 **Wave 2C**。在此之前 `admin_accounts
 
 **尚未完成 / 下一刀（2C-2）**：帳號管理 UI（角色欄、新增管理者、變更角色）、側欄依角色隱藏、migration `0036`（`set_admin_role`／`create_admin_account`）、**稽核 viewer 顯示 `actor_role_snapshot`**（目前資料存了卻沒顯示，「當時是什麼身分」只能查 SQL）。**prod 目前還沒有任何 clerk 帳號**，所以 2C-1 上線對現有使用者零可見變化。
 
-**仍未補的既有缺口**：「撤銷所有 session」還是直接 repository DELETE，無 RPC、無稽核（要補得新開一支 RPC；此缺口早於角色分級，本刀未使其惡化）。
+**仍未補的既有缺口**：「撤銷所有 session」還是直接 repository DELETE，無 RPC、無稽核（要補得新開一支 RPC；此缺口早於角色分級，本刀未使其惡化）。→ **已於 2C-2 補上（見 §6.43）**。
+
+---
+
+## 6.43 Wave 2C-2 — 帳號管理 UI ＋ 新增管理者（#19 收尾，2026-07-24）
+
+2C-1 建好了角色地基卻**沒有任何 UI**——尤其**建不出幹事帳號**（CLI 只產系統管理員）。2C-2 把它變成能用的東西，並收掉 2C-1 有意留下的三個缺口。migration `0036`（純新增三支 RPC）。
+
+**本刀完成**：
+- **三支 audited RPC**（`0036`）：`create_admin_account`／`set_admin_role`／`revoke_admin_sessions`，全部走 2C-1 建立的規則——同一把 advisory lock、acting-account 模板、角色在交易內判定、治理拒絕 typed return、self-target 由 RPC 寫 `denied` 列。
+- **帳號管理 UI**（`/admin/accounts`）：角色欄、「新增管理者」表單（預設幹事、選系統管理員跳高權限警告）、變更角色、`REASON_MESSAGE` 全面更新（含 `username_taken` 的「回應遺失」復原指引）。前端用**成功回應的權威 DTO** 更新 local state（非 `router.refresh()`——props 已 copy 進 useState 不會重設）。
+- **側欄依角色過濾**：幹事看不到帳號管理／營運狀態／稽核記錄三項（**純 UX，真 gate 在 server**）。
+- **稽核 viewer 顯示當時身分**：`actor_role_snapshot` 終於顯示——「王姐妹（當時身分：幹事）」、0035 前的誠實 null 顯示「（角色制度建立前）」、未知值顯示原碼（比照「未知動作」，不靜默消失）。三個新 action 也進了 `auditPresentation` 登記（含 denied 分支共用 `renderAdminDeniedReason`）。
+
+**採納審查（兩輪 plan review）的關鍵點**：
+- **self-target 改由 RPC 判定並稽核，service 不再短路**（規則 7）——四支帳號操作（disable／reset／role／revoke）一致，同一治理拒絕不因入口而異。連帶移除 2C-1 兩支 service 的短路。
+- **每支帳號管理 RPC 都取同一把 advisory lock**（含不會縮小集合的 create／revoke）——不只 invariant，也是 **deadlock 防護**：兩支都是「acting FOR SHARE → target FOR UPDATE」，鏡像請求會成環（40P01）。
+- **`create` 的 `unique_violation` handler 只包 INSERT 並比對 constraint name**——`p_request_id=null` 的 audit 失敗必須 raise＋rollback，不能被吞成 `username_taken`（DB 測試實證：帳號不留、無 audit 列）。
+- **`revoke` 用 `get diagnostics ... row_count`**，不是 `RETURNING INTO`（多列塞 scalar 拿不到筆數）——三態測試（0／1／2+）釘住。
+- **共用輸入驗證抽成 `lib/adminAccountInput.ts`**（client-safe），不從 `adminAuthService` import——後者 module load 會跑登入用 scrypt。`isAdminRole` runtime guard 供 route 與 audit viewer 共用，不用 `as AdminRole`。
+- **建立系統管理員 UI 高權限確認**（列出實際權限，非只顯示角色名），對齊 CLI 的 `CONFIRM_CREATE_SUPERADMIN` 姿態。
+
+**驗證**
+
+| 檢查 | 結果 |
+|------|------|
+| `npx tsc --noEmit` / `npm run lint` | ✅ exit 0 |
+| `npm run db:verify` | ✅ **48**（46→48：#40 三支 RPC 簽章/grant/prosecdef/search_path＋argument names；#40b 行為——no-op 不寫列、`username_taken` 不寫列、audit-fail rollback、role_change snapshot=操作者、from/to=目標、revoke 零筆仍寫列） |
+| `verify_schema_prod.sql`（catalog-only） | ✅ **34**（33→34） |
+| `RUN_DB_TESTS=1 npm test` | ✅（`admin-roles.db.test.ts` 15 tests：三支 lock-presence＋revoke 三態筆數） |
+| mutation test | ✅ 拿掉 `set_admin_role` 的 advisory lock → **恰好只有它那條 lock-presence 變紅** |
+| `npm run build` | ✅ |
+| DB schema | **migration `0036`**（`0001–0036`） |
+
+**部署**：`0036` 不改既有簽章 ⇒ migration-first 不破壞舊 app（不像 0035）；但新 app 依賴三支新 RPC，**app-first 會使新增/變更角色/撤銷 session 失敗**。順序仍 **migration → `db:verify:remote` → app → smoke**（runbook §1.5 已延伸）。
+
+**#19 至此收尾**：Wave 2C 全部完成。**prod 目前仍沒有任何 clerk 帳號**，交付時由第一位系統管理員在 `/admin/accounts` 建立幹事。
 
 ---
 
@@ -1339,7 +1375,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 ## 10. 本機開發備忘（重點，詳見 development_plan §12）
 
-- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0035` + seed）/ `db:verify` / `db:stop`。
+- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0036` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
 - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**；**`MEMBER_AUTH_MODE`（`mock`|`liff`；本機用 `mock`，`liff` 另需 `LINE_LOGIN_CHANNEL_ID` + `NEXT_PUBLIC_LIFF_ID`，見 [member-liff-setup.md](member-liff-setup.md)）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**（`NEXT_PUBLIC_LIFF_ID` 例外，非機密）；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。
