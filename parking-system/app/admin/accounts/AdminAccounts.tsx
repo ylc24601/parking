@@ -63,7 +63,7 @@ const REASON_MESSAGE: Record<string, string> = {
   acting_admin_disabled: '你的帳號已被停用，請重新登入',
   acting_admin_not_found: '找不到你的帳號，請重新登入',
   username_taken:
-    '此帳號名稱已存在。若剛才建立時連線中斷，請先在下方清單確認；若帳號已建立但未取得一次性密碼，請用「重設密碼」重新產生。',
+    '此帳號名稱已存在。若剛才建立時連線中斷，請重新載入帳號清單確認；若帳號已建立但未取得密碼，請用「重設密碼」重新產生。',
   not_found: '查無此帳號',
   invalid_request: '請求格式不正確',
 }
@@ -83,6 +83,10 @@ export default function AdminAccounts({
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  // Set when the error is recoverable by reloading the roster (username_taken): the list
+  // is local state seeded from props, so an account created by a request whose response
+  // was lost is NOT in it — a full reload is the only way to reveal it.
+  const [showReload, setShowReload] = useState(false)
 
   // Create form inputs.
   const [newUsername, setNewUsername] = useState('')
@@ -95,6 +99,7 @@ export default function AdminAccounts({
     setCredential(null)
     setCopied(false)
     setError(null)
+    setShowReload(false)
   }
 
   function startRowAction(action: 'disable' | 'enable' | 'revoke' | 'reset', id: string, username: string) {
@@ -121,6 +126,7 @@ export default function AdminAccounts({
 
   function fail(data: { reason?: string } | null) {
     setError(REASON_MESSAGE[data?.reason ?? ''] ?? '操作失敗，請再試一次')
+    setShowReload(data?.reason === 'username_taken')
   }
 
   async function confirmAction() {
@@ -184,7 +190,20 @@ export default function AdminAccounts({
       </header>
 
       {error && (
-        <p className="rounded-xl border border-danger-fg/30 bg-danger-bg px-4 py-3 text-sm text-danger-fg">{error}</p>
+        <div className="flex flex-col gap-2 rounded-xl border border-danger-fg/30 bg-danger-bg px-4 py-3 text-sm text-danger-fg">
+          <p>{error}</p>
+          {showReload && (
+            <div>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="inline-flex min-h-11 items-center rounded-lg border border-danger-fg/40 px-4 text-sm font-semibold text-danger-fg transition-colors hover:bg-danger-bg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+              >
+                重新載入帳號清單
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {credential && (
@@ -207,7 +226,7 @@ export default function AdminAccounts({
           </div>
           <p className="text-sm text-muted">
             {credential.kind === 'created'
-              ? '帳號已建立；請將此一次性密碼交給本人，首次登入後建議自行更換。'
+              ? '帳號已建立；請安全轉交這組登入密碼並由本人妥善保存。若密碼遺失，需請系統管理員重設。'
               : credential.disabled
                 ? '密碼已重設；此帳號目前為停用狀態，需先重啟才能登入。'
                 : '密碼已重設；該帳號所有裝置已登出，需以新密碼重新登入。'}

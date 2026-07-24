@@ -3,7 +3,7 @@
 > 整體系統邏輯與 Admin 後台其他頁面總覽見 [admin-operations-guide.md](admin-operations-guide.md)。
 >
 > 管理 `admin_accounts`（Admin UI 操作者帳號，與 `users.role='admin'` 無關，見 handoff §6.27）的生命週期：
-> 建立走 CLI、日常管理（停用/重啟/重設密碼/強制登出）走 **Admin UI**（Phase 8 Slice 3，handoff §6.30）。
+> 日常建立與管理（新增管理者/變更角色/停用/重啟/重設密碼/強制登出）走 **Admin UI** `/admin/accounts`（Wave 2C-2，handoff §6.43）；CLI 只留給第一個帳號與救援（見下）。
 >
 > **Wave 2C-1（#19）起帳號分兩級**：**系統管理員（superadmin）** 可用全部後台；**幹事（clerk）** 不能開「帳號管理／營運狀態／稽核記錄」三頁，其餘日常營運照舊。
 
@@ -31,7 +31,7 @@ CONFIRM_CREATE_SUPERADMIN=1 npm run admin:create -- --username alice --display-n
 
 - 執行需要 **service-role 金鑰**，等同資料庫最高權限 ⇒ 只有保管該金鑰的人（交付後即教會指定的技術負責人）可以跑。
 - 這條路徑**不寫稽核記錄**：持有 service-role 金鑰的人本來就能繞過整個稽核機制（migration `0030` 已明說它「提高偽造成本、不防遺漏」）。經由後台建立的帳號才會留下紀錄。
-- 建立後請**立刻**：① 用一次性密碼登入一次確認可用；② 在 `/admin/accounts` 重設密碼或請本人自行更換；③ 在教會的權責清單記下「誰、何時、為什麼」——這是這條路徑唯一的紀錄。
+- 建立後請**立刻**：① 用一次性密碼登入一次確認可用；② 在 `/admin/accounts` 重設密碼產生一組新密碼（**沒有「本人自行更換」的功能**——密碼一律由系統管理員重設）；③ 在教會的權責清單記下「誰、何時、為什麼」——這是這條路徑唯一的紀錄。
 
 ## 日常管理（Admin UI `/admin/accounts`）
 

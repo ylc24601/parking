@@ -1236,12 +1236,21 @@ do $$
 declare
   v_sig text;
   v_priv text;
-begin
-  foreach v_sig in array array[
+  v_args text;
+  v_writer_owner oid := (select proowner from pg_proc
+    where oid = to_regprocedure('private.append_audit_log(audit_actor_type,uuid,uuid,text,text,text,uuid,uuid,uuid,audit_result,jsonb)'));
+  -- Full argument lists WITH names: PostgREST invokes these by named argument (p_*), so a
+  -- drift here breaks every call even though the type signature still matches.
+  v_expected constant jsonb := jsonb_build_object(
     'create_admin_account(text,text,text,admin_role,uuid,uuid,uuid)',
+      'p_username text, p_password_hash text, p_display_name text, p_role admin_role, p_acting_admin_id uuid, p_acting_session_id uuid, p_request_id uuid',
     'set_admin_role(uuid,uuid,uuid,admin_role,uuid)',
-    'revoke_admin_sessions(uuid,uuid,uuid,uuid)'
-  ] loop
+      'p_target_id uuid, p_acting_admin_id uuid, p_acting_session_id uuid, p_role admin_role, p_request_id uuid',
+    'revoke_admin_sessions(uuid,uuid,uuid,uuid)',
+      'p_target_id uuid, p_acting_admin_id uuid, p_acting_session_id uuid, p_request_id uuid'
+  );
+begin
+  for v_sig in select jsonb_object_keys(v_expected) loop
     if to_regprocedure(v_sig) is null then
       raise exception 'FAIL: % missing (exact signature)', v_sig;
     end if;
@@ -1262,15 +1271,24 @@ begin
     if not has_function_privilege('service_role', v_sig, 'execute') then
       raise exception 'FAIL: service_role lacks execute on %', v_sig;
     end if;
+    -- Argument names (the PostgREST contract).
+    v_args := pg_get_function_arguments(to_regprocedure(v_sig));
+    if v_args is distinct from (v_expected ->> v_sig) then
+      raise exception 'FAIL: % argument names drifted — got "%"', v_sig, v_args;
+    end if;
+    -- Returns jsonb (the typed { ok, reason, ... } contract the service reads).
+    if (select prorettype from pg_proc where oid = to_regprocedure(v_sig)) <> 'jsonb'::regtype then
+      raise exception 'FAIL: % must return jsonb', v_sig;
+    end if;
+    -- Owner-equality with append_audit_log is load-bearing: a SECURITY DEFINER runs as
+    -- its owner, and only the owner retains EXECUTE on the writer (granted to nobody).
+    -- A differently-owned RPC could not write its audit row at all.
+    if (select proowner from pg_proc where oid = to_regprocedure(v_sig)) <> v_writer_owner then
+      raise exception 'FAIL: % owner <> append_audit_log owner — it could not reach the writer', v_sig;
+    end if;
   end loop;
 
-  -- Argument NAMES matter: PostgREST invokes these by named argument.
-  if pg_get_function_identity_arguments(to_regprocedure('set_admin_role(uuid,uuid,uuid,admin_role,uuid)'))
-     is distinct from 'p_target_id uuid, p_acting_admin_id uuid, p_acting_session_id uuid, p_role admin_role, p_request_id uuid' then
-    raise exception 'FAIL: set_admin_role argument names drifted from the p_* contract';
-  end if;
-
-  raise notice 'PASS: role management RPCs are SECURITY DEFINER, search-path-pinned, locked down';
+  raise notice 'PASS: role management RPCs — signatures, arg names, return type, owner, grants all pinned';
 end $$;
 
 -- ── 40b. The role RPCs actually behave (behavioural) ─────────────────────────────

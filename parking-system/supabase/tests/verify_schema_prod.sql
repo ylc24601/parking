@@ -1012,12 +1012,16 @@ do $$
 declare
   v_sig text;
   v_priv text;
-begin
-  foreach v_sig in array array[
+  v_expected constant jsonb := jsonb_build_object(
     'create_admin_account(text,text,text,admin_role,uuid,uuid,uuid)',
+      'p_username text, p_password_hash text, p_display_name text, p_role admin_role, p_acting_admin_id uuid, p_acting_session_id uuid, p_request_id uuid',
     'set_admin_role(uuid,uuid,uuid,admin_role,uuid)',
-    'revoke_admin_sessions(uuid,uuid,uuid,uuid)'
-  ] loop
+      'p_target_id uuid, p_acting_admin_id uuid, p_acting_session_id uuid, p_role admin_role, p_request_id uuid',
+    'revoke_admin_sessions(uuid,uuid,uuid,uuid)',
+      'p_target_id uuid, p_acting_admin_id uuid, p_acting_session_id uuid, p_request_id uuid'
+  );
+begin
+  for v_sig in select jsonb_object_keys(v_expected) loop
     if to_regprocedure(v_sig) is null then
       raise exception 'FAIL: % missing (exact signature)', v_sig;
     end if;
@@ -1039,9 +1043,17 @@ begin
     if not has_function_privilege('service_role', v_sig, 'execute') then
       raise exception 'FAIL: service_role lacks execute on %', v_sig;
     end if;
+    -- Argument NAMES: PostgREST calls these by named argument, so pin the p_* contract,
+    -- not just the type signature.
+    if pg_get_function_arguments(to_regprocedure(v_sig)) is distinct from (v_expected ->> v_sig) then
+      raise exception 'FAIL: % argument names drifted from the p_* contract', v_sig;
+    end if;
+    if (select prorettype from pg_proc where oid = to_regprocedure(v_sig)) <> 'jsonb'::regtype then
+      raise exception 'FAIL: % must return jsonb', v_sig;
+    end if;
   end loop;
 
-  raise notice 'PASS: role management RPCs (create/role/revoke) present, SECURITY DEFINER, locked down';
+  raise notice 'PASS: role management RPCs present, SECURITY DEFINER, named-arg contract + return type pinned';
 end $$;
 
 \echo '== verify_schema_prod.sql: all 34 assertions passed =='
