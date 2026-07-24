@@ -1072,6 +1072,27 @@ Phase 9 之後的功能 triage 進到 **Wave 2C**。在此之前 `admin_accounts
 
 ---
 
+## 6.44 Wave 3 slice 3a — 本週概覽（#8）＋ 側欄待辦徽章（#9，2026-07-24）
+
+Wave 3（其餘管理功能）第一刀，取價值最高的 attention hub。`/admin` 從一句歡迎詞變成**上指標下待辦**儀表板；側欄項目加**待辦數字徽章**。**無 migration**（全唯讀查詢），db:verify 仍 48。
+
+**上指標（`getWeekOverview`／`adminOverviewService`）**：管理日曆當週主日（`upcomingSundayISO`，非 `getActiveEvent`）＋本週階段（`deriveWeekStage`：no_event／application_open／allocated／finalized／closed，用 `event.status`＋`hasFridayAllocationRun`）＋容量三數（可分配總數＝`computeCapacity`／保留·停用／已核准＝`countPromisedReservations`，即時、page 自取）。
+
+**下待辦＋徽章（`adminTodoService`）**：一份 `AdminTodoSnapshot` 同時餵概覽下待辦與側欄徽章。四類：P2 待審（`listEligibilityReview.counts.expired+review_due`）、牧養 open（新 `countOpenPastoralAlerts` head count）、ops backlog／系統健康（`getOutboxHealth`＋`buildOutboxAlertFromHealth`）。P2/牧養全體可見；ops 只系統管理員（`view_ops`，幹事 `ops:null`）。
+
+**外部審查（第一輪，4 點＋契約）全部納入**：
+1. **P2 邊界**：不手刻 SQL `.or()`（flat OR 連 `valid_until=today` 會誤判 expired，且無法表達 not_yet_effective 優先序＝第二套真相），改**複用權威分類器** `deriveEligibilityStatus`（[eligibilityStatus.ts:100](../parking-system/lib/eligibilityStatus.ts#L100)）。
+2. **snapshot 模型**：核對 Next 16 文件確認共用 layout 在 client-side sibling 導覽**不重跑**（「Keeping any shared layouts and UI」）；若 page 各自取數會與側欄矛盾 → `AdminTodoProvider` 單一源。徽章明標「最近一次載入／`router.refresh()` 的快照」。
+3. **ops 徽章**：`attention = healthy ? 0 : failed+stale+staleBacklog`——納入 `due_backlog_stale`（否則只 backlog 超時時概覽顯示異常但徽章不亮），且以 `healthy` 把關使徽章與 ops 頁判定永遠一致。
+4. **fail-soft**：`getAdminTodoSnapshot` 任一查詢失敗回 `counts:null`（記固定無 PII 碼），側欄無徽章、概覽顯示「暫時無法取得」（非 🎉）、**其他 admin 頁照常開啟**——待辦不得成為整個後台的 availability gate。
+契約補充亦全採：`Promise.all` 並行、同一 request clock（`getAdminRequestNow = React.cache`）、真 repo 測 PostgREST head count、「可分配總數」文案。
+
+**驗證全綠**：lint／tsc／build ✅；`npm test` 1379 passed；`RUN_DB_TESTS=1 npm test` **137 檔 / 1678 passed**；db:reset＋db:verify 48。新測試：`weekStage`／`adminSidebarBadge`／`adminTodoService`（P2 邊界＋角色 gate＋ops attention 三態＋fail-soft）／`adminOverviewService`／`admin-todos.db.test`（真 repo，baseline delta）。
+
+**部署**：純 app 變更、無 migration、無 DB-first 排序顧慮。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。

@@ -713,6 +713,10 @@ export interface ParkingRepository {
   // separate getPenaltyCountersForUsers lookup in the service, so a missing user_penalties
   // row can never drop an alert from the list.
   listPastoralAlerts(status: 'open' | 'resolved', limit: number): Promise<PastoralAlertRow[]>
+  // Wave 3 (#9) — head count of open alerts for the admin overview / sidebar badge.
+  // A pure count (unlike the P2 badge): "open" is a flat status filter with no
+  // date precedence to reproduce, so there is nothing to keep in sync in TS.
+  countOpenPastoralAlerts(): Promise<number>
   resolvePastoralAlert(args: {
     alertId: string
     adminId: string
@@ -1733,6 +1737,16 @@ export function createParkingRepository(
           note: (r.note as string | null) ?? null,
         }
       })
+    },
+
+    async countOpenPastoralAlerts() {
+      const { count, error } = await client
+        .from('pastoral_care_alerts')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'open')
+      if (error) throw new Error(`countOpenPastoralAlerts failed: ${error.message}`)
+      if (count === null) throw new Error('countOpenPastoralAlerts failed: count unavailable')
+      return count
     },
 
     async resolvePastoralAlert({ alertId, adminId, note, resetCounter, nowIso }) {
