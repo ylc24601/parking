@@ -21,6 +21,7 @@ const listRow = (over: Partial<AdminAccountListRow> = {}): AdminAccountListRow =
   locked_at: null,
   disabled_at: null,
   created_at: new Date('2026-01-01T00:00:00Z'),
+  role: 'superadmin',
   ...over,
 })
 
@@ -31,6 +32,7 @@ const accountRow = (over: Partial<AdminAccountRow> = {}): AdminAccountRow => ({
   failed_attempts: 0,
   locked_at: null,
   disabled_at: null,
+  role: 'superadmin',
   ...over,
 })
 
@@ -81,10 +83,20 @@ describe('setAdminDisabled', () => {
     expect(res).toEqual({ ok: false, reason: 'not_found' })
   })
 
-  it('passes through last_active_admin from the repo/RPC', async () => {
-    const { r } = run({ setAdminDisabled: vi.fn(async () => ({ ok: false, reason: 'last_active_admin' })) })
+  // 2C-1 (#19): the guard counts SUPERADMINS, not admins — leaving a room full of
+  // clerks with nobody who can manage accounts is the failure it exists to prevent.
+  it('passes through last_active_superadmin from the repo/RPC', async () => {
+    const { r } = run({ setAdminDisabled: vi.fn(async () => ({ ok: false, reason: 'last_active_superadmin' })) })
     const res = await setAdminDisabled({ targetId: TARGET, actor: ACTOR, disabled: true, requestId: REQ }, r, NOW)
-    expect(res).toEqual({ ok: false, reason: 'last_active_admin' })
+    expect(res).toEqual({ ok: false, reason: 'last_active_superadmin' })
+  })
+
+  // Defence in depth: the route refuses a clerk first, but the RPC re-derives the role
+  // in-transaction and refuses again. The service must relay that, not swallow it.
+  it('passes through forbidden_role from the repo/RPC', async () => {
+    const { r } = run({ setAdminDisabled: vi.fn(async () => ({ ok: false, reason: 'forbidden_role' })) })
+    const res = await setAdminDisabled({ targetId: TARGET, actor: ACTOR, disabled: true, requestId: REQ }, r, NOW)
+    expect(res).toEqual({ ok: false, reason: 'forbidden_role' })
   })
 
   it('disable success calls the repo with disabled:true and the acting admin id', async () => {
@@ -128,21 +140,21 @@ describe('resetAdminPassword', () => {
   it('self-target → cannot_target_self, repo never called', async () => {
     const reset = vi.fn(async () => ({ ok: true, username: 'x', disabled: false }))
     const { r } = run({ resetAdminPassword: reset })
-    const res = await resetAdminPassword({ targetId: SELF, actingAdminId: SELF }, r)
+    const res = await resetAdminPassword({ targetId: SELF, actor: ACTOR, requestId: REQ }, r)
     expect(res).toEqual({ ok: false, reason: 'cannot_target_self' })
     expect(reset).not.toHaveBeenCalled()
   })
 
   it('passes through not_found', async () => {
     const { r } = run({ resetAdminPassword: vi.fn(async () => ({ ok: false, reason: 'not_found' })) })
-    const res = await resetAdminPassword({ targetId: TARGET, actingAdminId: SELF }, r)
+    const res = await resetAdminPassword({ targetId: TARGET, actor: ACTOR, requestId: REQ }, r)
     expect(res).toEqual({ ok: false, reason: 'not_found' })
   })
 
   it('success returns a fresh plaintext password and passes only its HASH to the repo', async () => {
     const reset = vi.fn(async () => ({ ok: true, username: 'alice', disabled: false }))
     const { repo, r } = run({ resetAdminPassword: reset })
-    const res = await resetAdminPassword({ targetId: TARGET, actingAdminId: SELF }, r)
+    const res = await resetAdminPassword({ targetId: TARGET, actor: ACTOR, requestId: REQ }, r)
     expect(res).toMatchObject({ ok: true, username: 'alice', disabled: false })
     const password = (res as { password: string }).password
     expect(typeof password).toBe('string')
@@ -151,20 +163,22 @@ describe('resetAdminPassword', () => {
     const arg = (repo.resetAdminPassword as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(arg.targetId).toBe(TARGET)
     expect(arg.actingAdminId).toBe(SELF)
+    expect(arg.actingSessionId).toBe(SESSION)
+    expect(arg.requestId).toBe(REQ)
     expect(arg.passwordHash).toMatch(/^scrypt\$/)
     expect(arg.passwordHash).not.toBe(password)   // hash, not plaintext
   })
 
   it('generates a different password on each call', async () => {
     const { r } = run({ resetAdminPassword: vi.fn(async () => ({ ok: true, username: 'alice', disabled: false })) })
-    const res1 = await resetAdminPassword({ targetId: TARGET, actingAdminId: SELF }, r)
-    const res2 = await resetAdminPassword({ targetId: TARGET, actingAdminId: SELF }, r)
+    const res1 = await resetAdminPassword({ targetId: TARGET, actor: ACTOR, requestId: REQ }, r)
+    const res2 = await resetAdminPassword({ targetId: TARGET, actor: ACTOR, requestId: REQ }, r)
     expect((res1 as { password: string }).password).not.toBe((res2 as { password: string }).password)
   })
 
   it('a disabled target stays reported as disabled (reset does not re-enable)', async () => {
     const { r } = run({ resetAdminPassword: vi.fn(async () => ({ ok: true, username: 'alice', disabled: true })) })
-    const res = await resetAdminPassword({ targetId: TARGET, actingAdminId: SELF }, r)
+    const res = await resetAdminPassword({ targetId: TARGET, actor: ACTOR, requestId: REQ }, r)
     expect(res).toMatchObject({ ok: true, disabled: true })
   })
 })

@@ -31,6 +31,7 @@ function sessionRow(over: Record<string, unknown> = {}) {
     expires_at: new Date(Date.now() + 3600_000),
     username: 'alice',
     account_disabled_at: null,
+    role: 'superadmin',
     ...over,
   }
 }
@@ -55,7 +56,9 @@ describe('getAdminSession', () => {
   it('looks up by sha256 of the cookie token — never the raw token', async () => {
     cookieGet.mockReturnValue({ value: TOKEN })
     getAdminSessionByTokenHash.mockResolvedValue(sessionRow())
-    expect(await getAdminSession()).toEqual({ sessionId: 's1', adminId: 'admin-1', username: 'alice' })
+    expect(await getAdminSession()).toEqual({
+      sessionId: 's1', adminId: 'admin-1', username: 'alice', role: 'superadmin',
+    })
     expect(getAdminSessionByTokenHash).toHaveBeenCalledWith(hashSessionToken(TOKEN))
   })
 
@@ -98,5 +101,22 @@ describe('setAdminSession / clearAdminSession', () => {
   it('clear deletes the cookie', async () => {
     await clearAdminSession()
     expect(cookieDelete).toHaveBeenCalledWith('admin_session')
+  })
+})
+
+// ── Wave 2C-1 (#19) ────────────────────────────────────────────────────────────
+describe('getAdminSession carries the role', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it.each(['superadmin', 'clerk'] as const)('surfaces %s from the joined account row', async role => {
+    cookieGet.mockReturnValue({ value: TOKEN })
+    getAdminSessionByTokenHash.mockResolvedValue(sessionRow({ role }))
+    // Read from the SAME row that already carries disabled_at, so it costs no extra
+    // query and is re-read on every request — a demotion bites immediately rather than
+    // at the next login. Nothing role-related is ever read from the cookie.
+    expect(await getAdminSession()).toEqual({
+      sessionId: 's1', adminId: 'admin-1', username: 'alice', role,
+    })
+    expect(getAdminSessionByTokenHash).toHaveBeenCalledWith(hashSessionToken(TOKEN))
   })
 })

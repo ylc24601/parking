@@ -1,8 +1,10 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
+import { can } from '@/lib/adminRoles'
 import { getAdminSession } from '@/server/http/adminAuth'
 import { getOutboxHealth } from '@/server/services/outboxHealthService'
 import { buildOutboxAlertFromHealth, readAlertThresholds } from '@/server/services/outboxAlertService'
+import NoPermission from '../NoPermission'
 import OpsDashboard from './OpsDashboard'
 
 export const metadata: Metadata = {
@@ -16,7 +18,9 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 export default async function AdminOpsPage() {
-  if (!(await getAdminSession())) redirect('/admin')
+  const session = await getAdminSession()
+  if (!session) redirect('/admin')
+  if (!can(session.role, 'view_ops')) return <NoPermission />
 
   const now = new Date()
   const health = await getOutboxHealth({ now })

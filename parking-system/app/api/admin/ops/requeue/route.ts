@@ -1,4 +1,5 @@
-import { adminUnauthorized, getAdminSession } from '@/server/http/adminAuth'
+import { can } from '@/lib/adminRoles'
+import { adminForbidden, adminUnauthorized, getAdminSession } from '@/server/http/adminAuth'
 import { adminInternalError, guardAdminPost } from '@/server/http/adminRequestGuard'
 import { requeueFailed } from '@/server/services/requeueFailedService'
 
@@ -7,6 +8,9 @@ import { requeueFailed } from '@/server/services/requeueFailedService'
 // posture as the internal job route, now behind an admin session: dryRun is fail-safe
 // (anything but an explicit `false` stays a dry run), max is strictly 1..500, and only
 // { dryRun, max, errorCode } are read from the body — any adminId/now/status is ignored.
+//
+// Superadmin-only (2C-1 / #19): this replays real notifications to real members, and
+// judging whether the root cause is actually fixed is a maintenance call, not a 幹事 one.
 const NO_STORE = { 'cache-control': 'no-store' }
 
 const ERROR_CODE_FORMAT = /^[a-z0-9][a-z0-9_.:-]{0,99}$/i
@@ -16,6 +20,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!guard.ok) return guard.response
   const session = await getAdminSession()
   if (!session) return adminUnauthorized()
+  if (!can(session.role, 'view_ops')) return adminForbidden()
 
   const { dryRun, max, errorCode } = (guard.body ?? {}) as {
     dryRun?: unknown

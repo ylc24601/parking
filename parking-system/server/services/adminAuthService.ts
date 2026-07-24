@@ -99,6 +99,16 @@ export async function loginAdmin(
 
 // CLI provisioning (scripts/run-admin-create.ts). The plaintext password is hashed
 // here and never stored or logged.
+//
+// Wave 2C-1 (#19): the CLI always provisions a 系統管理員. It is the recovery path —
+// the way back in when every UI account is locked out — so it necessarily carries full
+// power, and there is deliberately no --role flag to make that a per-invocation choice.
+// The safety is at the caller (CONFIRM_CREATE_SUPERADMIN, see the script), not here.
+//
+// This path writes NO audit row, and that is honest rather than lazy: it runs with the
+// service-role key, and anyone holding that key can already bypass the whole audit
+// substrate (0030 — it raises the cost of FORGING a row, not of skipping one). Grants
+// made through the UI are audited; this one is governed by who holds the key.
 export async function createAdminAccount(
   args: { username: string; password: string; displayName?: string | null },
   repo: ParkingRepository = createParkingRepository(),
@@ -120,6 +130,7 @@ export async function createAdminAccount(
     username,
     passwordHash: hashPin(args.password),
     displayName,
+    role: 'superadmin',
   })
   if (!inserted) throw new Error('username already exists')
   return { username }

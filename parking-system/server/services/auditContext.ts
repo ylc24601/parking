@@ -22,10 +22,13 @@ export interface AuditActor {
   actorType: AuditActorType
   actorId: string | null
   actorSessionId: string | null
-  // The actor's role AS OF this action. Null until #19 introduces roles; it must
-  // then be filled from the role the auth layer read for THIS request, never
-  // looked up later at display time — a snapshot that re-reads today's value is
-  // not a snapshot.
+  // The actor's role AS OF this action — and the app deliberately never fills it.
+  // Wave 2C-1 (#19) resolves the role inside the business transaction instead: the
+  // role-sensitive RPCs lock and read the acting account, authorise on that value and
+  // pass the same one to the audit writer, while private.append_audit_log resolves it
+  // for the RPCs that predate roles. That is still as-of-action (the hazard the
+  // original design warned about was re-reading today's role at DISPLAY time), and it
+  // means a role asserted over HTTP can never reach the log. See 0035's header.
   actorRoleSnapshot: string | null
 }
 

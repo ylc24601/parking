@@ -19,7 +19,8 @@ import {
 } from '@/server/services/adminAccountService'
 import { getAdminSession } from '@/server/http/adminAuth'
 
-const SESSION = { sessionId: 's1', adminId: 'admin-1', username: 'alice' }
+const SESSION = { sessionId: 's1', adminId: 'admin-1', username: 'alice', role: 'superadmin' as const }
+const CLERK_SESSION = { ...SESSION, role: 'clerk' as const }
 const TARGET_ID = 'a1b2c3d4-1111-4222-8333-000000000001'
 
 type Handler = typeof disablePOST
@@ -91,7 +92,10 @@ describe('POST /api/admin/accounts/disable', () => {
 
   it.each([
     ['cannot_target_self', 403],
-    ['last_active_admin', 409],
+    ['last_active_superadmin', 409],
+    ['forbidden_role', 403],
+    ['acting_admin_disabled', 403],
+    ['acting_admin_not_found', 403],
     ['not_found', 404],
   ] as const)('typed %s → %i', async (reason, status) => {
     ;(setAdminDisabled as Mock).mockResolvedValue({ ok: false, reason })
@@ -130,11 +134,19 @@ describe('POST /api/admin/accounts/reset-password', () => {
     expect(resetAdminPassword).not.toHaveBeenCalled()
   })
 
-  it('actingAdminId is ALWAYS the session admin id; smuggled body fields (username/passwordHash) are ignored', async () => {
+  it('the audit actor is ALWAYS built from the session; smuggled body fields (username/passwordHash) are ignored', async () => {
     await post(resetPOST, 'reset-password', {
       targetId: TARGET_ID, actingAdminId: 'attacker', username: 'attacker', passwordHash: 'scrypt$fake$fake',
     })
-    expect(resetAdminPassword).toHaveBeenCalledWith({ targetId: TARGET_ID, actingAdminId: 'admin-1' })
+    expect(resetAdminPassword).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetId: TARGET_ID,
+        actor: { actorType: 'admin', actorId: 'admin-1', actorSessionId: 's1', actorRoleSnapshot: null },
+      }),
+    )
+    const { actor, requestId } = (resetAdminPassword as Mock).mock.calls[0][0]
+    expect(JSON.stringify(actor)).not.toContain('attacker')
+    expect(requestId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
   it('success → 200 with the full password, no-store; the password is never logged', async () => {
@@ -149,6 +161,7 @@ describe('POST /api/admin/accounts/reset-password', () => {
 
   it.each([
     ['cannot_target_self', 403],
+    ['forbidden_role', 403],
     ['not_found', 404],
   ] as const)('typed %s → %i', async (reason, status) => {
     ;(resetAdminPassword as Mock).mockResolvedValue({ ok: false, reason })
@@ -213,5 +226,35 @@ describe('POST /api/admin/accounts/revoke-sessions', () => {
     expect(res.status).toBe(500)
     expect(await res.json()).toEqual({ ok: false, error: 'internal' })
     spy.mockRestore()
+  })
+})
+
+// ── Wave 2C-1 (#19): account management is superadmin-only ──────────────────────
+// One block for all three routes so a future fourth cannot be added without an
+// obvious place its gating test is missing. These assert the ROUTE refuses before the
+// service runs; the RPCs refuse again in-transaction (admin-roles.db.test.ts), so a
+// mistake here is not on its own enough to grant a clerk account management.
+describe('account routes are closed to 幹事', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ;(getAdminSession as Mock).mockResolvedValue(CLERK_SESSION)
+  })
+
+  it.each([
+    ['disable', disablePOST, { targetId: TARGET_ID, disabled: true }, setAdminDisabled],
+    ['reset-password', resetPOST, { targetId: TARGET_ID }, resetAdminPassword],
+    ['revoke-sessions', revokePOST, { targetId: TARGET_ID }, revokeAdminSessions],
+  ] as const)('clerk → 403 on %s, service never called', async (path, handler, body, service) => {
+    const res = await post(handler, path, body)
+    expect(res.status).toBe(403)
+    expect(await res.json()).toEqual({ ok: false, error: 'forbidden' })
+    // 403, not 401: re-logging in would not help, and the client must not read this
+    // as an expired session and bounce the operator to the login form.
+    expect(service).not.toHaveBeenCalled()
+  })
+
+  it('the refusal happens before body validation, so a clerk cannot probe input handling', async () => {
+    const res = await post(disablePOST, 'disable', { targetId: 'not-a-uuid', disabled: 'nope' })
+    expect(res.status).toBe(403)
   })
 })

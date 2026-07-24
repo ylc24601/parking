@@ -132,23 +132,29 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
   })
 
   it('enabling an already-active admin is a no-op success that still clears sessions', async () => {
+    const actor = await mkAdmin('idem-enable-actor')
     const target = await mkAdmin('idem-enable')
     await mkSession(target.id, `${T}-idem-enable-stray`)
 
-    const res = await setDisabled({ targetId: target.id, actingAdminId: randomUUID(), disabled: false })
+    const res = await setDisabled({ targetId: target.id, actingAdminId: actor.id, disabled: false })
     expect(res).toEqual({ ok: true })
     expect(await sessionCount(target.id)).toBe(0)
     expect((await adminRow(`${U}-idem-enable`)).disabled_at).toBeNull()
 
-    await deleteAdmins([target.id])
+    await deleteAdmins([actor.id, target.id])
   })
 
   // ── last-active atomic guard ─────────────────────────────────────────────────
 
-  it('the sole active admin cannot be disabled', async () => {
+  // Wave 2C-1 (#19) moved where this is enforced. It used to reach the last-active
+  // guard, but only because nothing verified the ACTING admin existed: a fictional
+  // actor made the target look like the last one standing. Now the actor must be a
+  // real, active superadmin — so the refusal comes earlier, and the invariant holds
+  // for a stronger reason (the actor themselves is an active superadmin who survives).
+  it('a nonexistent acting admin cannot disable anyone', async () => {
     const sole = await mkAdmin('sole')
     const res = await setDisabled({ targetId: sole.id, actingAdminId: randomUUID(), disabled: true })
-    expect(res).toEqual({ ok: false, reason: 'last_active_admin' })
+    expect(res).toEqual({ ok: false, reason: 'acting_admin_not_found' })
     expect((await adminRow(`${U}-sole`)).disabled_at).toBeNull()
 
     await deleteAdmins([sole.id])
@@ -167,7 +173,11 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     const bWon = resB.ok
     expect(aWon !== bWon).toBe(true)   // exactly one side succeeds
     const loser = aWon ? resB : resA
-    expect(loser).toEqual({ ok: false, reason: 'last_active_admin' })
+    // The advisory lock serializes the two calls, so the loser runs AFTER its own
+    // acting account was disabled by the winner — and is refused for that, rather
+    // than by the last-active guard as it was before 2C-1. Same outcome, earlier and
+    // for a better reason: a disabled admin should not be able to act at all.
+    expect(loser).toEqual({ ok: false, reason: 'acting_admin_disabled' })
 
     const rowA = await adminRow(`${U}-race-a`)
     const rowB = await adminRow(`${U}-race-b`)
@@ -190,8 +200,10 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     await mkSession(target.id, `${T}-reset-2`)
 
     const newHash = hashPin('a-brand-new-password!!')
+    const actor = await mkAdmin('reset-actor')
     const res = await repo.resetAdminPassword({
-      targetId: target.id, actingAdminId: randomUUID(), passwordHash: newHash,
+      targetId: target.id, actingAdminId: actor.id, actingSessionId: randomUUID(),
+      passwordHash: newHash, requestId: randomUUID(),
     })
     expect(res).toEqual({ ok: true, username: `${U}-reset`, disabled: false })
 
@@ -202,7 +214,7 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     expect(row.locked_at).toBeNull()
     expect(await sessionCount(target.id)).toBe(0)
 
-    await deleteAdmins([target.id])
+    await deleteAdmins([actor.id, target.id])
   })
 
   it('resetting a disabled admin leaves it disabled', async () => {
@@ -211,7 +223,8 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
     await setDisabled({ targetId: target.id, actingAdminId: other.id, disabled: true })
 
     const res = await repo.resetAdminPassword({
-      targetId: target.id, actingAdminId: other.id, passwordHash: hashPin('another-new-password!!'),
+      targetId: target.id, actingAdminId: other.id, actingSessionId: randomUUID(),
+      passwordHash: hashPin('another-new-password!!'), requestId: randomUUID(),
     })
     expect(res).toEqual({ ok: true, username: `${U}-reset-dis-target`, disabled: true })
     expect((await adminRow(`${U}-reset-dis-target`)).disabled_at).not.toBeNull()
@@ -222,7 +235,8 @@ describe.skipIf(!RUN)('admin account management (Phase 8 Slice 3) — local DB i
   it('reset_admin_password RPC refuses self-target directly (defense in depth, bypassing the service)', async () => {
     const target = await mkAdmin('reset-self')
     const { data, error } = await sb.rpc('reset_admin_password', {
-      p_target_id: target.id, p_acting_admin_id: target.id, p_password_hash: hashPin('irrelevant-pw!!'),
+      p_target_id: target.id, p_acting_admin_id: target.id, p_acting_session_id: randomUUID(),
+      p_password_hash: hashPin('irrelevant-pw!!'), p_request_id: randomUUID(),
     })
     expect(error).toBeNull()
     expect(data).toEqual({ ok: false, reason: 'cannot_target_self' })

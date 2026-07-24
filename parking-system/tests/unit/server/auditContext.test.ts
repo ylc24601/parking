@@ -13,7 +13,7 @@ import {
 // wrong or unattributable row be written: failing closed, and never storing a
 // mutable or shared identifier as though it named a person.
 
-const ADMIN = { sessionId: 'sess-1', adminId: 'admin-1', username: 'alice' }
+const ADMIN = { sessionId: 'sess-1', adminId: 'admin-1', username: 'alice', role: 'superadmin' as const }
 
 describe('adminActor', () => {
   it('carries the admin id and session id, and never the username', () => {
@@ -22,11 +22,16 @@ describe('adminActor', () => {
       actorType: 'admin',
       actorId: 'admin-1',
       actorSessionId: 'sess-1',
-      actorRoleSnapshot: null,   // until #19
+      // Still null after #19, and deliberately so: the role snapshot is resolved
+      // inside the business transaction (0035), never asserted over HTTP. A session
+      // role that reached the log here could be stale or forged.
+      actorRoleSnapshot: null,
     })
     // Usernames are mutable, so a snapshot of one would rot; the log stores the id
     // and resolves a display name at read time instead.
     expect(JSON.stringify(actor)).not.toContain('alice')
+    // Same reasoning applies to the role: it must not ride along on the actor.
+    expect(JSON.stringify(actor)).not.toContain('superadmin')
   })
 
   it('throws rather than emitting an unattributable actor', () => {

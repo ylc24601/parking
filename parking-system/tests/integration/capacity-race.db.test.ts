@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client } from 'pg'
 
@@ -36,7 +37,9 @@ const DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
 // disagree about who creates the row first (this one reuses, that one inserts), so the
 // collision surfaced or hid depending on file order.
 const SUNDAY = '2099-08-30'
-const ADMIN = '11111111-1111-4111-8111-111111111111'
+// A REAL admin_accounts row (see weekly-capacity.db.test.ts): since 0035 the audit
+// writer resolves the actor's role in-transaction and raises for an unknown admin id.
+let ADMIN = ''
 const SESSION = '22222222-2222-4222-8222-222222222222'
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -51,6 +54,11 @@ describe.skipIf(!RUN)('capacity vs allocation — lock protocol under concurrenc
     b = new Client({ connectionString: DB_URL })
     await a.connect()
     await b.connect()
+
+    ADMIN = (await a.query(
+      `insert into admin_accounts (username, password_hash) values ($1, 'scrypt$notarealhash') returning id`,
+      [`caprace-admin-${randomUUID().slice(0, 8)}`],
+    )).rows[0].id
 
     // Reuse if present: audit rows FK weekly_events and are append-only, so once this
     // suite audits its event the row can never be deleted (see weekly-capacity.db.test).
@@ -77,6 +85,9 @@ describe.skipIf(!RUN)('capacity vs allocation — lock protocol under concurrenc
       // lingering OPEN 2099 event would silently become the active event for every later
       // suite. It vanishes on the next db:reset.
       await a.query(`update weekly_events set status = 'finalized' where id = $1`, [eventId])
+      // audit_logs has no FK to admin_accounts by design, so the actor row can go even
+      // though the rows it wrote cannot.
+      if (ADMIN) await a.query(`delete from admin_accounts where id = $1`, [ADMIN])
     }
     await a?.end()
     await b?.end()
