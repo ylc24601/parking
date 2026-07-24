@@ -133,6 +133,7 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     applySettlement: vi.fn(async () => ({ settled: 0, penalties_applied: 0, alerts_created: 0 })),
     // Phase 8 Slice 8 — pastoral alert admin list + resolve
     listPastoralAlerts: vi.fn(async () => []),
+    countOpenPastoralAlerts: vi.fn(async () => 0),
     resolvePastoralAlert: vi.fn(async () => ({ resolved: 1, reason: 'resolved' })),
     // Phase 3 v2 — Staff PIN session
     getStaffSessionByEvent: vi.fn(async () => null),
