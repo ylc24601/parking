@@ -1064,11 +1064,11 @@ Phase 9 之後的功能 triage 進到 **Wave 2C**。在此之前 `admin_accounts
 | DB schema | **migration `0036`**（`0001–0036`） |
 
 **runtime 走查（本機 dev server ＋ curl，PR #46 第一輪審查後補跑）**——server 端契約逐項實跑通過：superadmin 建 clerk（回權威 DTO＋一次性密碼＋`no-store`）✅；clerk 打 6 支限定 API 全 403 ✅；clerk 開 `/admin/{accounts,ops,audit}` 全渲染「權限不足」✅；clerk 側欄 8 項／superadmin 11 項 ✅；clerk 仍能開 `/admin/capacity` ✅；升級 clerk→superadmin 後其**舊 session 立即失效**（307 導回登入）✅；同角色 no-op 回 `changed:false` ✅；self role change 回 `cannot_target_self` 並留 denied 列 ✅；四種 admin_account action（create／role_change／session_revoke／password_reset）audit 列齊全、`actor_role_snapshot=superadmin`、metadata 正確 ✅；`/admin/audit` 頁**實際渲染出「當時身分：系統管理員」** 後綴與四個新動作中文 label ✅；重複 username 回 409＋`username_taken` ✅。
-> ⚠️ **仍待人眼／瀏覽器確認**（curl 打 server-rendered HTML 驗不到的純 client 互動）：新增/確認/一次性密碼區塊的實際畫面、選系統管理員時的高權限警告樣式、`username_taken` 的「重新載入帳號清單」按鈕、手機寬度版面。這些的**邏輯**已由 route/unit 測試與程式碼覆蓋，但**視覺呈現未親眼看過**。
+**UI 視覺走查（本機 headless Chrome ＋ puppeteer-core 驅動，PR #46 第一輪審查後補跑，親眼看過每一個 client 狀態）**——全部渲染正確：帳號管理頁（sidebar 11 項、新增管理者表單、角色欄 badge、self-row 無操作鈕只顯示「目前登入」）✅；**選系統管理員 → 紅色高權限警告**列出實際權限（「可管理其他管理者帳號、查看稽核記錄及操作營運維護功能」）✅；建立幹事 → 確認框 → **一次性密碼區塊**（密碼碼框＋複製鈕＋修正後文案「…若密碼遺失，需請系統管理員重設」，**無「自行更換」**）✅，且**新帳號即時出現在下方清單**（權威 DTO state 同步）＋帶「改為系統管理員」等列內操作 ✅；**重複 username → 錯誤橫幅＋「重新載入帳號清單」按鈕** ✅；手機寬度（390px）表單縱向堆疊、導覽橫向捲動、表格於 overflow 容器內捲動 ✅；`/admin/audit` 實際渲染「（當時身分：系統管理員）」「已刪除管理員（…）（當時身分：幹事）」、系統列**無**角色後綴、「新增管理員帳號」中文 label ✅。（截圖存 session scratchpad；puppeteer 裝在 scratchpad 專案、未動 repo。）
 
 **部署**：`0036` 不改既有簽章 ⇒ migration-first 不破壞舊 app（不像 0035）；但新 app 依賴三支新 RPC，**app-first 會使新增/變更角色/撤銷 session 失敗**。順序仍 **migration → `db:verify:remote` → app → smoke**（runbook §1.5 已延伸）。
 
-**#19 開發面完成、待最終 UI 目視**：Wave 2C 的程式與自動測試（含上述 server 端 runtime 走查）皆完成；剩「上一段 ⚠️ 的純 client 視覺」待一次瀏覽器目視即可收尾。**prod 目前仍沒有任何 clerk 帳號**，交付時由第一位系統管理員在 `/admin/accounts` 建立幹事。
+**#19（Wave 2C）完成**：程式、自動測試、server 端 runtime 走查、以及 UI 視覺走查皆通過。剩雲端 smoke 屬**交付當天**的 DB-first 部署驗證（runbook §1.5 第 4 步），非本刀範圍。**prod 目前仍沒有任何 clerk 帳號**，交付時由第一位系統管理員在 `/admin/accounts` 建立幹事。
 
 ---
 
