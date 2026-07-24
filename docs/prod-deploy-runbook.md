@@ -71,14 +71,14 @@ npx supabase db push
 npx supabase migration list          # AFTER push — compare against the line below
 ```
 
-**Acceptance: every one of the 35 local migration files (`0001`–`0035`) appears as an
+**Acceptance: every one of the 36 local migration files (`0001`–`0036`) appears as an
 applied remote entry, in the same order, with matching version ids.** No remote-only
 entries, no local-only entries, no pending entries. If there is any discrepancy, **stop
 and investigate the cause — do not run `supabase migration repair` to force the list
 green.**
 
 ```bash
-ls supabase/migrations/*.sql | wc -l   # sanity: should print 35
+ls supabase/migrations/*.sql | wc -l   # sanity: should print 36
 ```
 
 > ⚠️ **`0035` (admin roles) must be applied BEFORE the app that goes with it.** It is not
@@ -105,7 +105,7 @@ npm run db:verify:remote
 unset SUPABASE_DB_URL
 ```
 
-Expect **`verify_schema_prod.sql: all 33 assertions passed`**. This is a **different,
+Expect **`verify_schema_prod.sql: all 34 assertions passed`**. This is a **different,
 independent check** from the local `npm run db:verify` (33/33) — the local one exercises
 behavior via DML inside a rolled-back transaction and depends on seed data (so it cannot
 run against a fresh cloud database); this one is catalog-only (tables/indexes/
@@ -119,8 +119,11 @@ in a terminal screenshot. `unset` it when done, as above.
 ### 1.5 Deploy order when a migration is not bidirectionally compatible
 
 Most migrations in this repo are additive and either order works. **`0035` (admin roles,
-Wave 2C-1 / #19) is not**, and any future migration that adds a column the app reads on
-every request has the same shape. The order is fixed:
+Wave 2C-1 / #19) is not** — the app reads a new column on every request — and any future
+migration of that shape behaves the same. **`0036` (admin role management, Wave 2C-2) is a
+milder case: it only ADDS RPCs, so migration-first never breaks the old app, but the new
+app calls three RPCs that do not exist until it lands — so app-first makes 新增管理者 /
+變更角色 / 撤銷 session fail.** Either way the order is the same, and it is fixed:
 
 1. **Apply the migration** (§1.3).
 2. **Verify it landed** — `npm run db:verify:remote` (§1.4). Its last assertion is the

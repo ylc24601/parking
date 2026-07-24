@@ -847,6 +847,43 @@ export interface ParkingRepository {
   }): Promise<{ ok: boolean; reason?: string; username?: string; disabled?: boolean }>
   // Single-table, single-statement — already atomic without an RPC.
   deleteAdminSessionsByAdminId(id: string): Promise<{ deleted: number }>
+  // Wave 2C-2 (#19) account-management RPCs (0036). Same actor/session/requestId
+  // contract as setAdminDisabled: each writes its audit row inside the transaction, so
+  // a partial failure is impossible and the caller must not build metadata or write a
+  // second row. The role is resolved and authorised inside the RPC — never trusted from
+  // the app.
+  createAdminAccount(args: {
+    username: string
+    passwordHash: string
+    displayName: string | null
+    role: AdminRole
+    actingAdminId: string
+    actingSessionId: string
+    requestId: string
+  }): Promise<{
+    ok: boolean
+    reason?: string
+    id?: string
+    username?: string
+    display_name?: string | null
+    role?: string
+    created_at?: string
+    disabled_at?: string | null
+    locked_at?: string | null
+  }>
+  setAdminRole(args: {
+    targetId: string
+    role: AdminRole
+    actingAdminId: string
+    actingSessionId: string
+    requestId: string
+  }): Promise<{ ok: boolean; reason?: string; changed?: boolean; role?: string }>
+  revokeAdminSessions(args: {
+    targetId: string
+    actingAdminId: string
+    actingSessionId: string
+    requestId: string
+  }): Promise<{ ok: boolean; reason?: string; sessions_revoked?: number }>
   // The member-facing "this week": smallest sunday_date >= todayTaipei (any status),
   // NOT getActiveEvent's "latest non-finalized" (that is Staff-PIN semantics and
   // points wrong once future weeks are pre-created).
@@ -2079,6 +2116,43 @@ export function createParkingRepository(
         .eq('admin_id', id)
       if (error) throw new Error(`deleteAdminSessionsByAdminId failed: ${error.message}`)
       return { deleted: count ?? 0 }
+    },
+
+    async createAdminAccount({ username, passwordHash, displayName, role, actingAdminId, actingSessionId, requestId }) {
+      const { data, error } = await client.rpc('create_admin_account', {
+        p_username: username,
+        p_password_hash: passwordHash,
+        p_display_name: displayName,
+        p_role: role,
+        p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
+        p_request_id: requestId,
+      })
+      if (error) throw new Error(`create_admin_account failed: ${error.message}`)
+      return data as Awaited<ReturnType<ParkingRepository['createAdminAccount']>>
+    },
+
+    async setAdminRole({ targetId, role, actingAdminId, actingSessionId, requestId }) {
+      const { data, error } = await client.rpc('set_admin_role', {
+        p_target_id: targetId,
+        p_role: role,
+        p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
+        p_request_id: requestId,
+      })
+      if (error) throw new Error(`set_admin_role failed: ${error.message}`)
+      return data as { ok: boolean; reason?: string; changed?: boolean; role?: string }
+    },
+
+    async revokeAdminSessions({ targetId, actingAdminId, actingSessionId, requestId }) {
+      const { data, error } = await client.rpc('revoke_admin_sessions', {
+        p_target_id: targetId,
+        p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
+        p_request_id: requestId,
+      })
+      if (error) throw new Error(`revoke_admin_sessions failed: ${error.message}`)
+      return data as { ok: boolean; reason?: string; sessions_revoked?: number }
     },
 
     async getMemberEvent(todayTaipei) {

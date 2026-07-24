@@ -3,6 +3,11 @@ import {
   ADMIN_LOGIN_MAX_ATTEMPTS,
   ADMIN_SESSION_TTL_HOURS,
 } from '@/lib/allocation/rules'
+import {
+  normalizeAdminDisplayName,
+  normalizeAdminUsername,
+  validateAdminPassword,
+} from '@/lib/adminAccountInput'
 import { hashPin, verifyPin } from '@/server/http/pinHash'
 import { generateSessionToken, hashSessionToken } from '@/server/http/sessionToken'
 import { createParkingRepository, type ParkingRepository } from '@/server/repositories/parkingRepository'
@@ -18,10 +23,6 @@ import { createParkingRepository, type ParkingRepository } from '@/server/reposi
 // Raw input bounds: anything beyond these is rejected before any DB read.
 const MAX_USERNAME_RAW = 100
 const MAX_PASSWORD_RAW = 512
-
-const USERNAME_FORMAT = /^[a-z0-9_.-]{3,32}$/
-const MIN_PASSWORD_LENGTH = 12
-const MAX_DISPLAY_NAME_CODEPOINTS = 80
 
 // Fixed scrypt target for the no-account / disabled / locked paths. Computed once at
 // module load; the password compared against it is the caller's, so the work factor
@@ -113,23 +114,19 @@ export async function createAdminAccount(
   args: { username: string; password: string; displayName?: string | null },
   repo: ParkingRepository = createParkingRepository(),
 ): Promise<{ username: string }> {
-  const username = args.username.trim().toLowerCase()
-  if (!USERNAME_FORMAT.test(username)) {
-    throw new Error(`username must match ${USERNAME_FORMAT} after trim+lowercase`)
-  }
-  if (typeof args.password !== 'string' || args.password.length < MIN_PASSWORD_LENGTH) {
-    throw new Error(`password must be at least ${MIN_PASSWORD_LENGTH} characters`)
-  }
-  const trimmedName = args.displayName?.trim() ?? ''
-  const displayName = trimmedName === '' ? null : trimmedName
-  if (displayName !== null && [...displayName].length > MAX_DISPLAY_NAME_CODEPOINTS) {
-    throw new Error(`display name must be at most ${MAX_DISPLAY_NAME_CODEPOINTS} characters`)
-  }
+  // Same validation the UI path uses (lib/adminAccountInput.ts), so the CLI and the
+  // back office agree on what a legal account is.
+  const username = normalizeAdminUsername(args.username)
+  if (username === null) throw new Error('username must be 3–32 chars of a-z 0-9 _ . - after trim+lowercase')
+  const passwordError = validateAdminPassword(args.password)
+  if (passwordError) throw new Error(passwordError)
+  const name = normalizeAdminDisplayName(args.displayName)
+  if (!name.ok) throw new Error('display name must be at most 80 characters')
 
   const { inserted } = await repo.insertAdminAccount({
     username,
     passwordHash: hashPin(args.password),
-    displayName,
+    displayName: name.value,
     role: 'superadmin',
   })
   if (!inserted) throw new Error('username already exists')

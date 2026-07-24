@@ -1,3 +1,5 @@
+import { isAdminRole } from '@/lib/adminAccountInput'
+import { ADMIN_ROLE_LABEL } from '@/lib/adminRoles'
 import { P2_REASON_LABEL } from '@/lib/p2Reason'
 import type { P2Reason } from '@/lib/memberImportSchema'
 
@@ -62,6 +64,12 @@ const DENIED_REASON_LABEL: Record<string, string> = {
 function renderAdminDeniedReason(reason: unknown): AuditDetail[] | 'unreadable' {
   if (typeof reason !== 'string') return 'unreadable'
   return [{ label: '結果原因', value: DENIED_REASON_LABEL[reason] ?? reason }]
+}
+
+// A role value → its Chinese label, raw string if unrecognized (see the create/role_change
+// action comments). isAdminRole is the same guard the audit viewer uses.
+function adminRoleLabel(role: string): string {
+  return isAdminRole(role) ? ADMIN_ROLE_LABEL[role] : role
 }
 
 function renderAdminAccountToggle(metadata: Record<string, unknown>): AuditDetail[] | 'unreadable' {
@@ -311,6 +319,42 @@ const ACTIONS: Record<string, AuditActionDefinition> = {
         details.push({ label: '帳號狀態', value: '此帳號目前為停用狀態' })
       }
       return details
+    },
+  },
+  // Wave 2C-2 (#19) role management. A role value is shown through ADMIN_ROLE_LABEL;
+  // an unrecognized value falls through to the raw string (like an unknown action code)
+  // so a future role that forgets a label cannot vanish. A denied row reads through the
+  // same shared reason map as the other admin_account.* actions.
+  'admin_account.create': {
+    label: '新增管理員帳號',
+    reads: ['role', 'reason'],
+    render: metadata => {
+      if ('reason' in metadata) return renderAdminDeniedReason(metadata.reason)
+      const role = metadata.role
+      if (typeof role !== 'string') return 'unreadable'
+      return [{ label: '角色', value: adminRoleLabel(role) }]
+    },
+  },
+  'admin_account.role_change': {
+    label: '變更管理員角色',
+    reads: ['from_role', 'to_role', 'reason'],
+    render: metadata => {
+      if ('reason' in metadata) return renderAdminDeniedReason(metadata.reason)
+      const { from_role: from, to_role: to } = metadata
+      if (typeof from !== 'string' || typeof to !== 'string') return 'unreadable'
+      return [{ label: '角色', value: `${adminRoleLabel(from)} → ${adminRoleLabel(to)}` }]
+    },
+  },
+  'admin_account.session_revoke': {
+    label: '撤銷管理員登入',
+    reads: ['sessions_revoked', 'reason'],
+    render: metadata => {
+      if ('reason' in metadata) return renderAdminDeniedReason(metadata.reason)
+      const n = metadata.sessions_revoked
+      if (typeof n !== 'number') return 'unreadable'
+      // 0 is a real outcome (the target was not logged in), and the row is written
+      // anyway (0036) — say so rather than implying nothing happened.
+      return [{ label: '登出裝置數', value: String(n) }]
     },
   },
   'audit.substrate_enabled': {

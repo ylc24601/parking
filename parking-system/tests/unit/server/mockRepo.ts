@@ -161,6 +161,14 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     setAdminDisabled: vi.fn(async () => ({ ok: true })),
     resetAdminPassword: vi.fn(async () => ({ ok: true, username: 'alice', disabled: false })),
     deleteAdminSessionsByAdminId: vi.fn(async () => ({ deleted: 0 })),
+    // Wave 2C-2 — role management RPCs
+    createAdminAccount: vi.fn(async () => ({
+      ok: true, id: '11111111-1111-4111-8111-111111111111', username: 'alice',
+      display_name: null, role: 'clerk', created_at: '2026-07-24T00:00:00Z',
+      disabled_at: null, locked_at: null,
+    })),
+    setAdminRole: vi.fn(async () => ({ ok: true, changed: true, role: 'superadmin' })),
+    revokeAdminSessions: vi.fn(async () => ({ ok: true, sessions_revoked: 0 })),
     getMemberEvent: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
     getMemberWeekReservation: vi.fn(async () => null),
     // Phase 7 Slice 3 — member apply/cancel

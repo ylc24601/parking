@@ -11,6 +11,10 @@
 
 export type AdminRole = 'superadmin' | 'clerk'
 
+// The enum values, for a runtime guard (lib/adminAccountInput.ts isAdminRole). `satisfies`
+// keeps this in step with the AdminRole union — drop a value and it stops compiling.
+export const ADMIN_ROLES = ['superadmin', 'clerk'] as const satisfies readonly AdminRole[]
+
 export const ADMIN_ROLE_LABEL: Record<AdminRole, string> = {
   superadmin: '系統管理員',
   clerk: '幹事',

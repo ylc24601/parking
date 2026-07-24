@@ -78,6 +78,34 @@ describe('renderAuditDetails — known action, valid metadata', () => {
       .toEqual([{ label: '結果原因', value: '權限不足（需系統管理員）' }])
   })
 
+  it('renders the 2C-2 role-management actions with role labels and denied branches', () => {
+    // create: role shown in Chinese, unknown role shows raw (a future role must not vanish)
+    expect(renderAuditDetails('admin_account.create', { role: 'clerk' }).details)
+      .toEqual([{ label: '角色', value: '幹事' }])
+    expect(renderAuditDetails('admin_account.create', { role: 'future_role' }).details)
+      .toEqual([{ label: '角色', value: 'future_role' }])
+    expect(renderAuditDetails('admin_account.create', { reason: 'forbidden_role' }).details)
+      .toEqual([{ label: '結果原因', value: '權限不足（需系統管理員）' }])
+
+    // role_change: from → to
+    expect(renderAuditDetails('admin_account.role_change', { from_role: 'clerk', to_role: 'superadmin' }).details)
+      .toEqual([{ label: '角色', value: '幹事 → 系統管理員' }])
+    expect(renderAuditDetails('admin_account.role_change', { reason: 'cannot_target_self' }).details)
+      .toEqual([{ label: '結果原因', value: '不可對自己執行' }])
+
+    // session_revoke: count, including zero (the row is still written)
+    expect(renderAuditDetails('admin_account.session_revoke', { sessions_revoked: 0 }).details)
+      .toEqual([{ label: '登出裝置數', value: '0' }])
+    expect(renderAuditDetails('admin_account.session_revoke', { sessions_revoked: 3 }).details)
+      .toEqual([{ label: '登出裝置數', value: '3' }])
+  })
+
+  it('none of the new actions renders as 未知動作', () => {
+    for (const action of ['admin_account.create', 'admin_account.role_change', 'admin_account.session_revoke']) {
+      expect(auditActionLabel(action)).not.toBe(action)
+    }
+  })
+
   it('renders the bootstrap marker as "the trail starts here"', () => {
     const r = renderAuditDetails('audit.substrate_enabled', {
       schema_version: 2,
