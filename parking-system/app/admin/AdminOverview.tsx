@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { WeekOverview } from '@/lib/adminTodoTypes'
+import { buildAdminTodoRows } from '@/lib/adminTodoRows'
 import { WEEK_STAGE_LABEL, type WeekStage } from '@/lib/weekStage'
 import Badge, { type BadgeTone } from '../ui/Badge'
 import { useAdminTodos } from './AdminTodoProvider'
@@ -55,19 +56,9 @@ export default function AdminOverview({ overview }: { overview: WeekOverview }) 
   const router = useRouter()
   const { counts, snapshotAt } = useAdminTodos()
 
-  const todos: Array<{ href: string; label: string; count: number; tone: BadgeTone }> = []
-  if (counts) {
-    if (counts.p2Review > 0) {
-      todos.push({ href: '/admin/eligibility', label: '資格待審', count: counts.p2Review, tone: 'warning' })
-    }
-    if (counts.pastoralOpen > 0) {
-      todos.push({ href: '/admin/pastoral', label: '牧養關懷待跟進', count: counts.pastoralOpen, tone: 'warning' })
-    }
-    // ops.attention > 0 ⟺ the pipeline is 異常 (attention folds in due_backlog_stale).
-    if (counts.ops && counts.ops.attention > 0) {
-      todos.push({ href: '/admin/ops', label: '通知系統異常', count: counts.ops.attention, tone: 'danger' })
-    }
-  }
+  // Rows (incl. a healthy "通知待送" backlog) come from the shared pure builder, so 🎉
+  // shows iff there is genuinely nothing — never while a backlog is queued.
+  const todos = counts ? buildAdminTodoRows(counts) : []
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-8 text-ink">

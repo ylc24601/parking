@@ -1,19 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeMockRepo, asRepo, type MockRepo } from './mockRepo'
-import { computeAdminTodoCounts, getAdminTodoSnapshot } from '@/server/services/adminTodoService'
-import type { EligibilityReviewRow, OutboxHealth } from '@/server/repositories/parkingRepository'
+import { computeAdminTodoCounts, getAdminTodoSnapshot, p2ReviewCount } from '@/server/services/adminTodoService'
+import type { EligibilityTodoCandidate, OutboxHealth } from '@/server/repositories/parkingRepository'
 
 // taipeiToday(NOW) === '2026-07-12'.
 const NOW = new Date('2026-07-12T00:00:00Z')
+const TODAY = '2026-07-12'
 
-const elig = (over: Partial<EligibilityReviewRow>): EligibilityReviewRow => ({
+const cand = (over: Partial<EligibilityTodoCandidate>): EligibilityTodoCandidate => ({
   user_id: '11111111-1111-4111-8111-111111111111',
-  display_name: '王小明',
-  p2_reason: 'mobility_short',
   p2_valid_from: null,
   p2_valid_until: null,
   p2_review_date: null,
-  reviewed_at: null,
   ...over,
 })
 
@@ -36,6 +34,24 @@ const health = (over: Partial<OutboxHealth>): OutboxHealth => ({
 
 const minsBeforeNow = (m: number) => new Date(NOW.getTime() - m * 60_000).toISOString()
 
+// ── p2ReviewCount: authoritative classifier over the candidate superset ───────────
+describe('p2ReviewCount — classifier boundaries', () => {
+  it('counts expired + review_due; excludes today-boundary, not_yet_effective, permanent; dedupes both-due', () => {
+    const rows: EligibilityTodoCandidate[] = [
+      cand({ user_id: 'a', p2_valid_until: '2026-07-11' }),                              // expired (yesterday) → in
+      cand({ user_id: 'b', p2_review_date: '2026-07-12' }),                              // review_due (today) → in
+      cand({ user_id: 'c', p2_valid_until: '2026-07-12' }),                              // last day == today → active → OUT
+      cand({ user_id: 'd', p2_valid_from: '2026-07-20', p2_review_date: '2026-07-01' }), // not_yet_effective → OUT
+      cand({ user_id: 'e', p2_valid_until: '2026-07-05', p2_review_date: '2026-07-06' }),// both due → count ONCE
+    ]
+    expect(p2ReviewCount(rows, TODAY)).toBe(3) // a, b, e
+  })
+
+  it('empty candidate set → 0', () => {
+    expect(p2ReviewCount([], TODAY)).toBe(0)
+  })
+})
+
 // Fixed thresholds (= the sensitive defaults) so the ops verdict never depends on ambient env.
 let savedEnv: Record<string, string | undefined>
 beforeEach(() => {
@@ -56,19 +72,19 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('computeAdminTodoCounts — P2 badge reuses the authoritative classifier', () => {
-  it('p2Review = expired + review_due; excludes upcoming and the valid_until==today boundary', async () => {
+describe('computeAdminTodoCounts — P2 via minimal candidate query', () => {
+  it('reads the candidate query with today, classifies, and pulls no list/name query', async () => {
     const repo: MockRepo = makeMockRepo({
       countOpenPastoralAlerts: vi.fn(async () => 0),
-      listEligibilityReview: vi.fn(async () => [
-        elig({ user_id: 'a1111111-1111-4111-8111-111111111111', p2_valid_until: '2026-07-11' }),           // expired
-        elig({ user_id: 'b1111111-1111-4111-8111-111111111111', p2_review_date: '2026-07-12' }),           // review_due (today)
-        elig({ user_id: 'c1111111-1111-4111-8111-111111111111', p2_valid_until: '2026-07-12' }),           // boundary: last day today → active, NOT counted
-        elig({ user_id: 'd1111111-1111-4111-8111-111111111111', p2_valid_until: '2026-08-01' }),           // upcoming, NOT counted
+      listEligibilityTodoCandidates: vi.fn(async () => [
+        cand({ user_id: 'a', p2_valid_until: '2026-07-11' }),
+        cand({ user_id: 'b', p2_review_date: '2026-07-12' }),
       ]),
     })
     const counts = await computeAdminTodoCounts({ now: NOW, role: 'superadmin' }, asRepo(repo))
     expect(counts.p2Review).toBe(2)
+    expect(repo.listEligibilityTodoCandidates).toHaveBeenCalledWith(TODAY)
+    expect(repo.listEligibilityReview).not.toHaveBeenCalled()
   })
 })
 
@@ -76,7 +92,7 @@ describe('computeAdminTodoCounts — role gating', () => {
   it('clerk → ops:null and outbox health is NOT fetched', async () => {
     const repo: MockRepo = makeMockRepo({
       countOpenPastoralAlerts: vi.fn(async () => 7),
-      listEligibilityReview: vi.fn(async () => []),
+      listEligibilityTodoCandidates: vi.fn(async () => []),
     })
     const counts = await computeAdminTodoCounts({ now: NOW, role: 'clerk' }, asRepo(repo))
     expect(counts).toEqual({ p2Review: 0, pastoralOpen: 7, ops: null })
@@ -84,32 +100,26 @@ describe('computeAdminTodoCounts — role gating', () => {
   })
 })
 
-describe('computeAdminTodoCounts — ops attention (three states)', () => {
+describe('computeAdminTodoCounts — ops (backlog + attention, no healthy field)', () => {
   const runOps = async (h: OutboxHealth) => {
     const repo: MockRepo = makeMockRepo({
       countOpenPastoralAlerts: vi.fn(async () => 0),
-      listEligibilityReview: vi.fn(async () => []),
+      listEligibilityTodoCandidates: vi.fn(async () => []),
       getOutboxHealth: vi.fn(async () => h),
     })
     return (await computeAdminTodoCounts({ now: NOW, role: 'superadmin' }, asRepo(repo))).ops
   }
 
-  it('failed / stale present → attention = failed + stale, unhealthy', async () => {
-    expect(await runOps(health({ failed: 2, stale_processing: 1 }))).toEqual({
-      healthy: false, backlog: 0, attention: 3,
-    })
+  it('failed / stale present → attention = failed + stale', async () => {
+    expect(await runOps(health({ failed: 2, stale_processing: 1 }))).toEqual({ backlog: 0, attention: 3 })
   })
 
-  it('ONLY a stale due backlog (failed=0, stale=0) → still unhealthy, attention = due', async () => {
-    expect(await runOps(health({ due: 4, oldest_due_at: minsBeforeNow(20) }))).toEqual({
-      healthy: false, backlog: 4, attention: 4,
-    })
+  it('ONLY a stale due backlog (failed=0, stale=0) → attention = due (the due_backlog_stale fix)', async () => {
+    expect(await runOps(health({ due: 4, oldest_due_at: minsBeforeNow(20) }))).toEqual({ backlog: 4, attention: 4 })
   })
 
-  it('due backlog present but NOT stale → healthy, attention = 0 (no false badge)', async () => {
-    expect(await runOps(health({ due: 4, oldest_due_at: minsBeforeNow(5) }))).toEqual({
-      healthy: true, backlog: 4, attention: 0,
-    })
+  it('due backlog present but NOT stale → healthy: attention 0, backlog surfaced for "通知待送"', async () => {
+    expect(await runOps(health({ due: 4, oldest_due_at: minsBeforeNow(5) }))).toEqual({ backlog: 4, attention: 0 })
   })
 })
 
@@ -118,20 +128,19 @@ describe('getAdminTodoSnapshot — fail-soft', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const repo: MockRepo = makeMockRepo({
       countOpenPastoralAlerts: vi.fn(async () => { throw new Error('boom') }),
-      listEligibilityReview: vi.fn(async () => []),
+      listEligibilityTodoCandidates: vi.fn(async () => []),
     })
     const snap = await getAdminTodoSnapshot('superadmin', asRepo(repo), NOW)
     expect(snap.counts).toBeNull()
     expect(snap.snapshotAt).toBe(NOW.toISOString())
     expect(spy).toHaveBeenCalledWith('admin_todo_snapshot_failed')
-    // fixed code only — no error object / message leaked
-    expect(spy.mock.calls[0]).toHaveLength(1)
+    expect(spy.mock.calls[0]).toHaveLength(1) // fixed code only, no error object leaked
   })
 
   it('success → counts populated, snapshotAt set', async () => {
     const repo: MockRepo = makeMockRepo({
       countOpenPastoralAlerts: vi.fn(async () => 1),
-      listEligibilityReview: vi.fn(async () => []),
+      listEligibilityTodoCandidates: vi.fn(async () => []),
     })
     const snap = await getAdminTodoSnapshot('clerk', asRepo(repo), NOW)
     expect(snap.counts).toEqual({ p2Review: 0, pastoralOpen: 1, ops: null })

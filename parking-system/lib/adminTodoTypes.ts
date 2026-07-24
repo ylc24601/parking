@@ -14,9 +14,8 @@ export interface AdminTodoCounts {
   pastoralOpen: number
   // Notification-pipeline health — ops domain, so null for a clerk (no view_ops).
   ops: {
-    healthy: boolean   // buildOutboxAlertFromHealth(...).healthy — the ops-page verdict
     backlog: number    // rows due to send now (informational "通知待送 N")
-    attention: number  // drives the badge; 0 when healthy, else failed+stale+staleBacklog
+    attention: number  // drives the badge; 0 when the ops verdict is healthy (⟺ 正常)
   } | null
 }
 

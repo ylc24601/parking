@@ -5,7 +5,7 @@ import type { AdminTodoCounts } from '@/lib/adminTodoTypes'
 const counts = (over: Partial<AdminTodoCounts> = {}): AdminTodoCounts => ({
   p2Review: 3,
   pastoralOpen: 2,
-  ops: { healthy: false, backlog: 5, attention: 4 },
+  ops: { backlog: 5, attention: 4 },
   ...over,
 })
 
@@ -18,8 +18,9 @@ describe('badgeForHref', () => {
   })
 
   it('ops uses attention (covers due_backlog_stale, not just failed+stale)', () => {
-    expect(badgeForHref('/admin/ops', counts({ ops: { healthy: false, backlog: 7, attention: 7 } }))).toBe(7)
-    expect(badgeForHref('/admin/ops', counts({ ops: { healthy: true, backlog: 0, attention: 0 } }))).toBe(0)
+    expect(badgeForHref('/admin/ops', counts({ ops: { backlog: 7, attention: 7 } }))).toBe(7)
+    // healthy backlog (attention 0) does NOT light the sidebar — normal flow, not a warning.
+    expect(badgeForHref('/admin/ops', counts({ ops: { backlog: 4, attention: 0 } }))).toBe(0)
   })
 
   it('clerk (ops null) → ops item has no badge', () => {

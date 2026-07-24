@@ -1,10 +1,10 @@
 # 功能想法 Triage（rev.3 — 兩輪外部審查後接近定稿）
 
-> 目的：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A-1／2A-2 ✅、2B-1 ✅、2B-2a／2B-2b ✅**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
+> 目的：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A（全）✅、2B（全）✅、2C #19 ✅（PR #45/#46）、3a #8/#9 ✅（PR #47）**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
 > rev.1（2026-07-16）：30 條判定＋動工順序。
 > rev.2：一輪審查，修規格＋改 delivery-first 排序。
 > rev.3：二輪審查，修實作語意（PIN 旋轉、commit-then-dispatch、雙真相、actor 模型、拒絕科學記號…）＋拆 Wave 2A/2B/2C。
-> 對應：[current_handoff.md](current_handoff.md)（每刀 merge 後同步，最新到 Wave 2B-2b）、[prod-deploy-runbook.md](prod-deploy-runbook.md)。
+> 對應：[current_handoff.md](current_handoff.md)（每刀 merge 後同步，最新到 Wave 3 3a §6.44）、[prod-deploy-runbook.md](prod-deploy-runbook.md)。
 
 ---
 

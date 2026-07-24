@@ -1087,7 +1087,13 @@ Wave 3（其餘管理功能）第一刀，取價值最高的 attention hub。`/a
 4. **fail-soft**：`getAdminTodoSnapshot` 任一查詢失敗回 `counts:null`（記固定無 PII 碼），側欄無徽章、概覽顯示「暫時無法取得」（非 🎉）、**其他 admin 頁照常開啟**——待辦不得成為整個後台的 availability gate。
 契約補充亦全採：`Promise.all` 並行、同一 request clock（`getAdminRequestNow = React.cache`）、真 repo 測 PostgREST head count、「可分配總數」文案。
 
-**驗證全綠**：lint／tsc／build ✅；`npm test` 1379 passed；`RUN_DB_TESTS=1 npm test` **137 檔 / 1678 passed**；db:reset＋db:verify 48。新測試：`weekStage`／`adminSidebarBadge`／`adminTodoService`（P2 邊界＋角色 gate＋ops attention 三態＋fail-soft）／`adminOverviewService`／`admin-todos.db.test`（真 repo，baseline delta）。
+**第二輪外部審查（Request changes）三點全採**：
+1. **健康 backlog 誤顯示 🎉**：DTO 留了 `backlog`/`healthy` 卻只接異常分支 ⇒ `due=4, healthy=true` 會顯示 🎉。抽出純函式 `lib/adminTodoRows.ts::buildAdminTodoRows`：健康 backlog → 「通知待送 N」(info)、異常 → 「通知系統異常 N」(danger)、真的全清才空陣列→🎉；側欄仍只吃 `attention`（正常 backlog 不長期亮警告）。移除 DTO 冗餘 `healthy`（`attention===0 ⟺ healthy`）。
+2. **P2 徽章被 500 display cap 截斷＋熱路徑拉敏感全清單**：改用專用 `repo.listEligibilityTodoCandidates(asOf, pageSize?)`——只選 `user_id`＋三個日期欄（不拉 name/reason/reviewed_at）、`.or(valid_until.lt / review_date.lte)` 只當 **superset filter**、**分頁到底無 cap**；`p2ReviewCount(candidates, today)` 用 `deriveEligibilityStatus` 做唯一權威分類（SQL 非第二套真相）。
+3. **UI 走查**：改完重跑本機 headless Chrome，補上「健康 backlog=4 → 通知待送 4、側欄 ops 不亮、非 🎉」的關鍵格；健康／stale／幹事／空狀態／手機五格逐張確認。
+4. **文件**：`feature-triage.md` 過期 header 更新（已動工到 3a、handoff 最新到 §6.44）。
+
+**驗證全綠（第二輪後）**：lint／tsc／build ✅；`npm test` 1386 passed；`RUN_DB_TESTS=1 npm test` **138 檔 / 1686 passed**；db:reset＋db:verify 48。新增/更新測試：`adminTodoRows`（Point 1 各態）、`p2ReviewCount` 邊界、`admin-todos.db.test` 真 repo projection/superset/pagination。
 
 **部署**：純 app 變更、無 migration、無 DB-first 排序顧慮。
 

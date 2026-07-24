@@ -181,6 +181,7 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     getMemberAdminDetail: vi.fn(async () => null),
     // Phase 8 Slice 4 — P2 eligibility review
     listEligibilityReview: vi.fn(async () => []),
+    listEligibilityTodoCandidates: vi.fn(async () => []),
     hasFridayAllocationRun: vi.fn(async () => false),
     applyReservation: vi.fn(async () => ({ applied: 1, reason: 'applied' })),
     claimFridayAllocation: vi.fn(async () => ({ claimed: true, reason: 'claimed' })),

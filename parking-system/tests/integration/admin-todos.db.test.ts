@@ -84,4 +84,45 @@ describe.skipIf(!RUN)('countOpenPastoralAlerts (Wave 3 #9) — local DB integrat
     expect(res.resolved).toBe(1)
     expect(await repo.countOpenPastoralAlerts()).toBe(baseline + 2)
   })
+
+  it('listEligibilityTodoCandidates: minimal projection, superset filter, exact via pagination', async () => {
+    const { p2ReviewCount } = await import('@/server/services/adminTodoService')
+    const TODAY = '2099-09-06'
+    // Distinct outcomes at the today boundary. mkElig sets review_status so p2_eligible reflects it.
+    const mkElig = async (over: {
+      approved?: boolean; valid_until?: string | null; review_date?: string | null; valid_from?: string | null
+    }): Promise<string> => {
+      const uid = await mkUser(`elig-${T}`)
+      await sb.from('user_eligibility').insert({
+        user_id: uid,
+        review_status: over.approved === false ? 'unreviewed' : 'approved',
+        p2_reason: over.approved === false ? null : 'mobility_short',
+        p2_valid_from: over.valid_from ?? null,
+        p2_valid_until: over.valid_until ?? null,
+        p2_review_date: over.review_date ?? null,
+      }).throwOnError()
+      return uid
+    }
+    const expired = await mkElig({ valid_until: '2099-09-05' })                                   // < today → in, expired
+    const boundary = await mkElig({ valid_until: '2099-09-06' })                                  // == today → NOT a candidate
+    const reviewDue = await mkElig({ review_date: '2099-09-06' })                                 // <= today → in, review_due
+    const notYet = await mkElig({ valid_from: '2099-09-20', valid_until: '2099-10-01', review_date: '2099-09-01' }) // candidate, classifier excludes
+    const nonElig = await mkElig({ approved: false, valid_until: '2099-09-05' })                  // p2_eligible false → NOT a candidate
+    const bothDue = await mkElig({ valid_until: '2099-09-03', review_date: '2099-09-04' })        // in, expired, counted once
+    const mine = new Set([expired, boundary, reviewDue, notYet, nonElig, bothDue])
+
+    // pageSize=2 forces the pagination loop across multiple pages (table is global).
+    const rows = await repo.listEligibilityTodoCandidates(TODAY, 2)
+    const mineRows = rows.filter(r => mine.has(r.user_id))
+
+    // Superset membership: the four date-qualifying rows are present; boundary + non-eligible excluded.
+    const ids = new Set(mineRows.map(r => r.user_id))
+    expect(ids).toEqual(new Set([expired, reviewDue, notYet, bothDue]))
+
+    // Minimal projection: no display_name / p2_reason / reviewed_at leak onto the hot path.
+    expect(Object.keys(mineRows[0]).sort()).toEqual(['p2_review_date', 'p2_valid_from', 'p2_valid_until', 'user_id'])
+
+    // Classifier is the authority: not_yet_effective is filtered out of the final count.
+    expect(p2ReviewCount(mineRows, TODAY)).toBe(3) // expired, reviewDue, bothDue
+  })
 })

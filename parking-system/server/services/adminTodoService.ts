@@ -1,8 +1,13 @@
 import { cache } from 'react'
 import { can, type AdminRole } from '@/lib/adminRoles'
+import { deriveEligibilityStatus } from '@/lib/eligibilityStatus'
+import { taipeiToday } from '@/lib/taipeiDate'
 import type { AdminTodoCounts, AdminTodoSnapshot } from '@/lib/adminTodoTypes'
-import { createParkingRepository, type ParkingRepository } from '@/server/repositories/parkingRepository'
-import { listEligibilityReview } from '@/server/services/eligibilityReviewService'
+import {
+  createParkingRepository,
+  type EligibilityTodoCandidate,
+  type ParkingRepository,
+} from '@/server/repositories/parkingRepository'
 import { getOutboxHealth } from '@/server/services/outboxHealthService'
 import { buildOutboxAlertFromHealth, readAlertThresholds } from '@/server/services/outboxAlertService'
 
@@ -16,18 +21,30 @@ import { buildOutboxAlertFromHealth, readAlertThresholds } from '@/server/servic
 // after it — this is the same "one snapshot + one now" discipline the ops page uses.
 export const getAdminRequestNow = cache((): Date => new Date())
 
-// The P2 badge reuses the AUTHORITATIVE classifier (deriveEligibilityStatus, via
-// listEligibilityReview) rather than re-encoding the expired/review_due/not_yet_effective
-// precedence in a PostgREST filter — that would be a second source of truth that could
-// drift from the eligibility page. `expired + review_due` = "needs a human today"
-// (upcoming/not_yet_effective are deliberately excluded).
+// P2 "needs a human today" = expired + review_due, decided by the AUTHORITATIVE
+// classifier (deriveEligibilityStatus) — the repo's SQL filter is only a superset that
+// narrows candidates, never a second source of truth. This is an EXACT count over minimal
+// columns (no display cap, no names/reasons pulled), unlike the list-page query.
+export function p2ReviewCount(candidates: EligibilityTodoCandidate[], today: string): number {
+  let n = 0
+  for (const c of candidates) {
+    const status = deriveEligibilityStatus(
+      { validUntil: c.p2_valid_until, reviewDate: c.p2_review_date, validFrom: c.p2_valid_from },
+      today,
+    )
+    if (status === 'expired' || status === 'review_due') n += 1
+  }
+  return n
+}
+
 export async function computeAdminTodoCounts(
   params: { now: Date; role: AdminRole },
   repo: ParkingRepository = createParkingRepository(),
 ): Promise<AdminTodoCounts> {
   const { now, role } = params
+  const today = taipeiToday(now)
 
-  const p2Promise = listEligibilityReview(repo, now).then(r => r.counts.expired + r.counts.review_due)
+  const p2Promise = repo.listEligibilityTodoCandidates(today).then(rows => p2ReviewCount(rows, today))
   const pastoralPromise = repo.countOpenPastoralAlerts()
 
   // Clerk: no ops visibility. Don't even fetch outbox health.
@@ -49,13 +66,15 @@ export async function computeAdminTodoCounts(
   // failed=0 / stale=0 — so fold it into attention. Gate the whole sum by `healthy`
   // so the badge lights EXACTLY when the ops page shows 異常 (raising a threshold
   // could otherwise leave failed>0 while healthy stays true, and the two would disagree).
+  // attention===0 ⟺ healthy, so the DTO needn't carry a separate healthy flag.
   const staleBacklog = alert.breaches.includes('due_backlog_stale') ? health.due : 0
   const attention = alert.healthy ? 0 : health.failed + health.stale_processing + staleBacklog
 
   return {
     p2Review,
     pastoralOpen,
-    ops: { healthy: alert.healthy, backlog: health.due, attention },
+    // backlog = rows due to send now (informational "通知待送"); attention drives the badge.
+    ops: { backlog: health.due, attention },
   }
 }
 
