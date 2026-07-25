@@ -122,9 +122,11 @@ export default function OpsDashboard({
       )}
 
       {/* Technical detail — folded away, opened by default only when something is wrong. */}
-      <details open={!alert.healthy} className="rounded-xl border border-border bg-surface">
-        <summary className="flex min-h-11 cursor-pointer items-center gap-2 px-5 py-3 text-sm font-semibold text-ink">
-          佇列數字與時間{!alert.healthy && <span className="text-danger-fg">（需要查看）</span>}
+      <details open={!alert.healthy} className="group rounded-xl border border-border bg-surface">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+          <span aria-hidden className="text-muted transition-transform group-open:rotate-90">▶</span>
+          <span>佇列數字與時間</span>
+          {!alert.healthy && <span className="text-danger-fg">（需要查看）</span>}
         </summary>
         <div className="flex flex-col gap-5 border-t border-border px-5 py-5">
           {/* Counts */}
@@ -155,9 +157,10 @@ export default function OpsDashboard({
       </details>
 
       {/* Requeue — a destructive action, folded closed so it is opened deliberately. */}
-      <details className="rounded-xl border border-border bg-surface">
-        <summary className="flex min-h-11 cursor-pointer items-center px-5 py-3 text-sm font-semibold text-ink">
-          失敗通知重送
+      <details className="group rounded-xl border border-border bg-surface">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+          <span aria-hidden className="text-muted transition-transform group-open:rotate-90">▶</span>
+          <span>失敗通知重送</span>
         </summary>
         <div className="flex flex-col gap-3 border-t border-border px-6 py-5">
           <p className="text-xs text-muted">

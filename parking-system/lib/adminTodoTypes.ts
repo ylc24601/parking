@@ -6,8 +6,8 @@ import type { WeekStage } from '@/lib/weekStage'
 // client into the client (see lib/capacityAdminTypes.ts for the same reasoning).
 
 // Plain-language notification-system verdict, available to EVERY admin (#17 C). Split out
-// from `ops` on purpose: `ops` still means "this admin may see the technical ops data"
-// (⟺ view_ops), while this three-state readout is the cross-role signal a clerk sees on
+// from `ops` on purpose: a non-null `ops` ⇒ this admin has view_ops (never the reverse — see
+// the field comment), while this three-state readout is the cross-role signal a clerk sees on
 // the overview. 'attention' ⟺ the ops page's 異常; 'unavailable' ⟺ the health query
 // couldn't be reached — never treated as healthy (fail-safe).
 export type NotificationHealth = 'healthy' | 'attention' | 'unavailable'
@@ -22,9 +22,10 @@ export interface AdminTodoCounts {
   pastoralOpen: number
   // Cross-role plain verdict (clerks see this on the overview; carries NO technical counts).
   notificationHealth: NotificationHealth
-  // Technical ops data — present iff the admin has view_ops AND health was fetched. A clerk
-  // always gets null (no counts leak to their client); a superadmin gets null only when the
-  // health query failed (⟺ notificationHealth === 'unavailable').
+  // Technical ops data. ops non-null ⇒ view_ops — but NOT the reverse: it is non-null only
+  // when the admin has view_ops AND the health query succeeded. A clerk always gets null (no
+  // counts leak to their client); a superadmin gets null when health failed (notificationHealth
+  // === 'unavailable'). Authorization is by role/capability, never by inspecting `ops`.
   ops: {
     backlog: number    // rows due to send now (informational "通知待送 N")
     attention: number  // drives the badge; 0 when the ops verdict is healthy (⟺ 正常)

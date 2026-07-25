@@ -99,7 +99,7 @@
 規則：cutoff `created_at < now() - interval '24 months'`／受限 `SECURITY DEFINER` maintenance function／bounded batches／purge 只記 cutoff＋deleted_count，**不記被刪 ID 或其 metadata**。
 **`audit.substrate_enabled` 與 `audit.retention_purge` 為 retention-exempt**——保留「trail 從何時開始、歷史依哪個政策被清」。
 ✅ 實作（`0034`）：0030 的 append-only trigger 擋掉**所有** DELETE，purge 的逃生口＝**雙鎖**——交易域 GUC `audit.allow_purge`（只有 `purge_audit_logs` 用 `set_config(...,true)` 開）＋ `current_user` ＝ table owner（SECURITY DEFINER 以 owner 執行、直接 service_role delete 不是 owner）。**時鐘用 DB `now()`、RPC 不收 `p_now`**（呼叫端傳未來時間即可洗全表；審查必改 1，與 binding-PII 前例的有意分歧）。verifier 釘 fn owner ＝ table owner（否則鎖2 連合法 purge 都擋）。UI 文案翻面的**部署硬前置**＝prod cron 先設好（runbook §13）。
-**可交付後迭代**：#3、#4、#6、#11、#14B、#16、#17、#18、#28、#5B（#8／#9／#19 ✅ 已完成）
+**可交付後迭代**：#3、#4、#6、#11、#14B、#16、#18、#28、#5B（#8／#9／#17／#19 ✅ 已完成）
 > #3 雖方便但人工重發 PIN 已能運作；反而 #10/#14A 仍碰 SQL 的交付風險更高。角色分級（#19）可留交付後。
 > **更新（2026-07-25）**：#19（Wave 2C-1／2C-2）已完成 merged，此處「可留交付後」已成歷史脈絡。
 > **更新（2026-07-17）**：#14A（2B-1）與 #10（2B-2a＋2B-2b）皆已完成 ⇒ **上句所指的交付風險已消除**，容量與 P2 資格都有 audited 的 Admin UI 路徑。僅存的「仍需手打 SQL」缺口是 **runbook §12.1 Step 0 的遠期 demo event 容量**（`/admin/capacity` 刻意只給當週/次週，見 §8 Wave 2B-1），屬 demo 走查而非同工日常營運。
