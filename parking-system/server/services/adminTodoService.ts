@@ -2,7 +2,7 @@ import { cache } from 'react'
 import { can, type AdminRole } from '@/lib/adminRoles'
 import { deriveEligibilityStatus } from '@/lib/eligibilityStatus'
 import { taipeiToday } from '@/lib/taipeiDate'
-import type { AdminTodoCounts, AdminTodoSnapshot } from '@/lib/adminTodoTypes'
+import type { AdminTodoCounts, AdminTodoSnapshot, NotificationHealth } from '@/lib/adminTodoTypes'
 import {
   createParkingRepository,
   type EligibilityTodoCandidate,
@@ -44,38 +44,48 @@ export async function computeAdminTodoCounts(
   const { now, role } = params
   const today = taipeiToday(now)
 
-  const p2Promise = repo.listEligibilityTodoCandidates(today).then(rows => p2ReviewCount(rows, today))
-  const pastoralPromise = repo.countOpenPastoralAlerts()
-
-  // Clerk: no ops visibility. Don't even fetch outbox health.
-  if (!can(role, 'view_ops')) {
-    const [p2Review, pastoralOpen] = await Promise.all([p2Promise, pastoralPromise])
-    return { p2Review, pastoralOpen, ops: null }
-  }
-
-  // getOutboxHealth MUST receive the same repo — a default would build a real
-  // service-role client and break unit tests that inject a mock.
-  const [p2Review, pastoralOpen, health] = await Promise.all([
-    p2Promise,
-    pastoralPromise,
-    getOutboxHealth({ now }, repo),
+  // Fetch core todos AND notification health in ONE parallel batch. Health is wrapped so
+  // its rejection resolves to a sentinel rather than rejecting the whole batch: a health
+  // outage must NOT take down the core todos (the primary reason to render the overview),
+  // while a core (P2/pastoral) rejection still propagates → fails the whole snapshot.
+  // getOutboxHealth MUST receive the same repo — a default would build a real service-role
+  // client and break unit tests that inject a mock.
+  const [p2Review, pastoralOpen, healthResult] = await Promise.all([
+    repo.listEligibilityTodoCandidates(today).then(rows => p2ReviewCount(rows, today)),
+    repo.countOpenPastoralAlerts(),
+    getOutboxHealth({ now }, repo).then(
+      health => ({ ok: true as const, health }),
+      () => ({ ok: false as const }),
+    ),
   ])
 
-  const alert = buildOutboxAlertFromHealth(health, readAlertThresholds(), now)
-  // A due backlog that has aged past the threshold is itself a breach even with
-  // failed=0 / stale=0 — so fold it into attention. Gate the whole sum by `healthy`
-  // so the badge lights EXACTLY when the ops page shows 異常 (raising a threshold
-  // could otherwise leave failed>0 while healthy stays true, and the two would disagree).
-  // attention===0 ⟺ healthy, so the DTO needn't carry a separate healthy flag.
-  const staleBacklog = alert.breaches.includes('due_backlog_stale') ? health.due : 0
-  const attention = alert.healthy ? 0 : health.failed + health.stale_processing + staleBacklog
+  let notificationHealth: NotificationHealth = 'unavailable'
+  let ops: AdminTodoCounts['ops'] = null
+  if (healthResult.ok) {
+    const health = healthResult.health
+    const alert = buildOutboxAlertFromHealth(health, readAlertThresholds(), now)
+    notificationHealth = alert.healthy ? 'healthy' : 'attention'
 
-  return {
-    p2Review,
-    pastoralOpen,
-    // backlog = rows due to send now (informational "通知待送"); attention drives the badge.
-    ops: { backlog: health.due, attention },
+    // Technical ops data is only for view_ops (superadmin); a clerk gets the plain verdict
+    // above but never the raw counts (they don't reach the clerk's client).
+    if (can(role, 'view_ops')) {
+      // A due backlog that has aged past the threshold is itself a breach even with
+      // failed=0 / stale=0 — so fold it into attention. Gate the whole sum by `healthy`
+      // so the badge lights EXACTLY when the ops page shows 異常 (raising a threshold
+      // could otherwise leave failed>0 while healthy stays true, and the two would disagree).
+      const staleBacklog = alert.breaches.includes('due_backlog_stale') ? health.due : 0
+      const attention = alert.healthy ? 0 : health.failed + health.stale_processing + staleBacklog
+      // backlog = rows due to send now (informational "通知待送"); attention drives the badge.
+      ops = { backlog: health.due, attention }
+    }
+  } else {
+    // Only the health query failed — keep the core todos, report the verdict as
+    // 'unavailable' (never fail-open to 'healthy'), and light no ops data. Fixed PII-free
+    // code, no error object / query data.
+    console.error('admin_notification_health_failed')
   }
+
+  return { p2Review, pastoralOpen, notificationHealth, ops }
 }
 
 // Fail-soft wrapper for the admin shell. The layout renders on EVERY /admin page, so

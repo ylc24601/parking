@@ -5,6 +5,7 @@ import type { AdminTodoCounts } from '@/lib/adminTodoTypes'
 const counts = (over: Partial<AdminTodoCounts> = {}): AdminTodoCounts => ({
   p2Review: 3,
   pastoralOpen: 2,
+  notificationHealth: 'attention',
   ops: { backlog: 5, attention: 4 },
   ...over,
 })

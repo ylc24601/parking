@@ -88,15 +88,67 @@ describe('computeAdminTodoCounts — P2 via minimal candidate query', () => {
   })
 })
 
-describe('computeAdminTodoCounts — role gating', () => {
-  it('clerk → ops:null and outbox health is NOT fetched', async () => {
+describe('computeAdminTodoCounts — role gating (#17 C)', () => {
+  it('clerk → plain notificationHealth but ops:null; NO technical counts reach the client', async () => {
     const repo: MockRepo = makeMockRepo({
       countOpenPastoralAlerts: vi.fn(async () => 7),
       listEligibilityTodoCandidates: vi.fn(async () => []),
+      getOutboxHealth: vi.fn(async () => health({})), // healthy
     })
     const counts = await computeAdminTodoCounts({ now: NOW, role: 'clerk' }, asRepo(repo))
-    expect(counts).toEqual({ p2Review: 0, pastoralOpen: 7, ops: null })
-    expect(repo.getOutboxHealth).not.toHaveBeenCalled()
+    // The clerk DOES get a verdict now (health is fetched), but only the enum — no ops object.
+    expect(counts).toEqual({ p2Review: 0, pastoralOpen: 7, notificationHealth: 'healthy', ops: null })
+    expect(repo.getOutboxHealth).toHaveBeenCalledTimes(1)
+    expect(counts.ops).toBeNull() // no backlog/attention number leaks to a clerk
+  })
+
+  it('clerk with an unhealthy pipeline → notificationHealth:attention, still ops:null (no counts)', async () => {
+    const repo: MockRepo = makeMockRepo({
+      countOpenPastoralAlerts: vi.fn(async () => 0),
+      listEligibilityTodoCandidates: vi.fn(async () => []),
+      getOutboxHealth: vi.fn(async () => health({ failed: 5 })),
+    })
+    const counts = await computeAdminTodoCounts({ now: NOW, role: 'clerk' }, asRepo(repo))
+    expect(counts.notificationHealth).toBe('attention')
+    expect(counts.ops).toBeNull()
+  })
+
+  it('superadmin → both the plain verdict and the technical ops object', async () => {
+    const repo: MockRepo = makeMockRepo({
+      countOpenPastoralAlerts: vi.fn(async () => 0),
+      listEligibilityTodoCandidates: vi.fn(async () => []),
+      getOutboxHealth: vi.fn(async () => health({ failed: 2 })),
+    })
+    const counts = await computeAdminTodoCounts({ now: NOW, role: 'superadmin' }, asRepo(repo))
+    expect(counts.notificationHealth).toBe('attention')
+    expect(counts.ops).toEqual({ backlog: 0, attention: 2 })
+  })
+})
+
+describe('computeAdminTodoCounts — notification-health failure is isolated (#17 C)', () => {
+  it('clerk: health query throws → P2/pastoral survive, verdict unavailable, ops null, fixed log', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const repo: MockRepo = makeMockRepo({
+      countOpenPastoralAlerts: vi.fn(async () => 4),
+      listEligibilityTodoCandidates: vi.fn(async () => [cand({ user_id: 'a', p2_valid_until: '2026-07-11' })]),
+      getOutboxHealth: vi.fn(async () => { throw new Error('boom') }),
+    })
+    const counts = await computeAdminTodoCounts({ now: NOW, role: 'clerk' }, asRepo(repo))
+    expect(counts).toEqual({ p2Review: 1, pastoralOpen: 4, notificationHealth: 'unavailable', ops: null })
+    expect(counts.notificationHealth).not.toBe('healthy') // never fail-open
+    expect(spy).toHaveBeenCalledWith('admin_notification_health_failed')
+    expect(spy.mock.calls[0]).toHaveLength(1) // fixed code only, no error / query data
+  })
+
+  it('superadmin: health query throws → ops null, P2/pastoral survive, verdict unavailable', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const repo: MockRepo = makeMockRepo({
+      countOpenPastoralAlerts: vi.fn(async () => 2),
+      listEligibilityTodoCandidates: vi.fn(async () => []),
+      getOutboxHealth: vi.fn(async () => { throw new Error('boom') }),
+    })
+    const counts = await computeAdminTodoCounts({ now: NOW, role: 'superadmin' }, asRepo(repo))
+    expect(counts).toEqual({ p2Review: 0, pastoralOpen: 2, notificationHealth: 'unavailable', ops: null })
   })
 })
 
@@ -143,7 +195,7 @@ describe('getAdminTodoSnapshot — fail-soft', () => {
       listEligibilityTodoCandidates: vi.fn(async () => []),
     })
     const snap = await getAdminTodoSnapshot('clerk', asRepo(repo), NOW)
-    expect(snap.counts).toEqual({ p2Review: 0, pastoralOpen: 1, ops: null })
+    expect(snap.counts).toEqual({ p2Review: 0, pastoralOpen: 1, notificationHealth: 'healthy', ops: null })
     expect(snap.snapshotAt).toBe(NOW.toISOString())
   })
 })
