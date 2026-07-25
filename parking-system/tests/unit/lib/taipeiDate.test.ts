@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fmtTaipeiDateTime, taipeiToday, upcomingSundayISO } from '@/lib/taipeiDate'
+import { fmtTaipeiDateTime, fmtTaipeiTime, taipeiToday, upcomingSundayISO } from '@/lib/taipeiDate'
 
 // Asia/Taipei is UTC+8 year-round (no DST): the member "this week" resolver keys
 // off the Taipei calendar date, so the UTC-day boundary must flip at 16:00Z.
@@ -78,5 +78,14 @@ describe('fmtTaipeiDateTime', () => {
   it('zero-pads and rolls the date across the UTC→Taipei boundary', () => {
     // 2026-03-01T18:30Z + 8h = 2026-03-02 02:30 Taipei.
     expect(fmtTaipeiDateTime('2026-03-01T18:30:00Z')).toBe('2026/03/02 02:30')
+  })
+})
+
+describe('fmtTaipeiTime', () => {
+  it('is ICU-free HH:MM Taipei (ASCII digits + colon only)', () => {
+    expect(fmtTaipeiTime('2026-07-25T00:05:00Z')).toBe('08:05')       // +8h
+    expect(fmtTaipeiTime('2026-07-25T16:20:00Z')).toBe('00:20')       // rolls past midnight
+    const s = fmtTaipeiTime('2026-07-25T00:05:00Z')
+    expect([...s].every(c => c.charCodeAt(0) < 0x80)).toBe(true)
   })
 })

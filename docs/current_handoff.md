@@ -1105,17 +1105,19 @@ Wave 3 第二刀。`/admin/ops`「營運狀態」→**改名「通知系統狀�
 
 **B（`/admin/ops`，系統管理員專屬，gating 不變）**：白話健康摘要（通知系統正常／異常）當主角；「佇列數字與時間」「失敗通知重送」摺疊進原生 `<details>`（前者 `open={!alert.healthy}`＝異常時預設展開、`<summary>` 附「（需要查看）」提示；後者恆預設收起——破壞性操作刻意展開）。requeue preview→apply 綁定條件、單一 health snapshot 驅動 banner＋數字等既有紀律零改。**時間 UTC→台北**：重用 `fmtTaipeiDateTime`（`lib/taipeiDate.ts`）、header 標「快照時間（台北）：…」、`TimeRow` 去 UTC 標記；`relTime` 相對前/後仍用 server `snapshotAt` 基準。sidebar `/admin/ops` 移到**末端**（#18 才做兩區分區線）。
 
-**C（幹事白話健康放概覽，不放行進 `/admin/ops`）**：外部審查後 DTO **拆兩欄**——`notificationHealth: 'healthy'|'attention'|'unavailable'`（跨角色白話結論、不含計數）與技術 `ops: {backlog,attention} | null`（**`ops!==null ⟺ view_ops` 語意不變**，`adminSidebarBadge` 零改）。`computeAdminTodoCounts` 移除「幹事不抓 health」短路、依角色組 `kind`；`buildAdminTodoRows` 依 `ops`／`notificationHealth` 分支：系統管理員走完整技術列（帶 link/count）、幹事異常→`通知系統異常，請聯絡系統管理員`（**linkless、無 count**、tone 著色容器）、`unavailable`→`暫時無法確認`(info)。`AdminTodoRow` 加 **stable `id`**（`key={t.id}`，不再用 href/文案當 key）。
+**C（幹事白話健康放概覽，不放行進 `/admin/ops`）**：外部審查後 DTO **拆兩欄**——`notificationHealth: 'healthy'|'attention'|'unavailable'`（跨角色白話結論、不含計數）與技術 `ops: {backlog,attention} | null`（**`ops` 非 null ⇒ 具 view_ops**——幹事恆 null、superadmin 在 health 無法取得時亦 null；**授權以 role/capability 為準、非看 `ops`**。badge 選擇器 `counts.ops?.attention ?? null` 零改）。`computeAdminTodoCounts` 移除「幹事不抓 health」短路、依角色組 `kind`；`buildAdminTodoRows` 依 `ops`／`notificationHealth` 分支：系統管理員走完整技術列（帶 link/count）、幹事異常→`通知系統異常，請聯絡系統管理員`（**linkless、無 count**、tone 著色容器）、`unavailable`→`暫時無法確認`(info)。`AdminTodoRow` 加 **stable `id`**（`key={t.id}`，不再用 href/文案當 key）。
 
-**外部審查（一輪，三必修＋三建議全採）**：
-1. **health 失敗隔離**：P2/牧養先 `Promise.all`、health 各自 `try/catch`——只有 health 掛掉時 P2/牧養照常、`notificationHealth='unavailable'`、`console.error('admin_notification_health_failed')`（固定碼），**不 fail-open 當正常、不連帶清空核心待辦**（順帶修掉今日「系統管理員 health throw 也清空 P2/牧養」的耦合）。
+**計畫外部審查（實作前一輪，三必修＋三建議全採於設計）**：
+1. **health 失敗隔離**：P2/牧養與 health **同一 `Promise.all` 併行**，health promise 以 sentinel（`{ok:true,health}|{ok:false}`）包住其 rejection——只有 health 掛掉時 P2/牧養照常、`notificationHealth='unavailable'`、`console.error('admin_notification_health_failed')`（固定碼），**不 fail-open 當正常、不連帶清空核心待辦**（順帶修掉今日「系統管理員 health throw 也清空 P2/牧養」的耦合）。
 2. **stable row id**：`href` 改選填後 `key={t.href}` 會失效／碰撞 → `AdminTodoRowId` union。
 3. **DTO 拆兩欄**（非塞進 `ops` 判別聯集）：權限語意清楚，`ops!==null` 不再被誤讀為「有 ops 權限」。
 4. **🎉 重定義**為「此角色需處理的事項」（非「系統中完全沒有項目」）——幹事白話結論不帶 backlog，健康且正在消化的佇列不是其可處理待辦，故不顯示；同步改註解／測試名，避免被當 3a regression。
 5. 文件改名限前向面（live UI＋操作指南＋操作 CLI），歷史 handoff/mockups 維持原名。
 6. 走查限本機 disposable DB、Artifact 不含 PII。
 
-**驗證全綠**：tsc／eslint／`next build`（`/admin/ops` 仍 ƒ dynamic）✅；`npm test` **1393 passed**（+7）；`RUN_DB_TESTS=1` **138 檔 / 1693 passed**；`db:verify` 48。新增測試：`adminTodoRows`（幹事 attention/unavailable linkless 列、healthy 無列的角色決策）、`adminTodoService`（clerk/superadmin health throw 隔離、幹事不外洩計數）。
+**程式碼外部審查（實作後一輪，adversarial subagent）：0 CONFIRMED 缺陷、2 low-severity PLAUSIBLE**。納 **O1**——health fetch 原被序列化於核心待辦之後（每次 /admin 渲染多一次序列 round-trip）→ 改回上述「同一 Promise.all 併行＋sentinel 隔離」。**O2**（`fmtTaipeiDateTime` 對 invalid input 回 `NaN` 字串而非 throw）經確認不可達、不處理。**合併前再修（第二輪 doc/一致性審查）**：`AdminOverview` 快照時間仍用 client-side `Intl` → 抽 ICU-free `fmtTaipeiTime`（time-only、有測試）；並更正本節「`ops!==null ⟺ view_ops`」為單向 `⇒`（見上）。
+
+**驗證全綠**：tsc／eslint／`next build`（`/admin/ops` 仍 ƒ dynamic）✅；`npm test` **1396 passed**；`RUN_DB_TESTS=1` **138 檔 / 1696 passed**；`db:verify` 48。新增測試：`adminTodoRows`（幹事 attention/unavailable linkless 列、healthy 無列的角色決策）、`adminTodoService`（clerk/superadmin health throw 隔離、幹事不外洩計數）、`taipeiDate`（`fmtTaipeiDateTime`／`fmtTaipeiTime` ICU-free、U+0020 分隔）。
 
 **部署**：純 app 變更、無 migration、無 DB-first 排序顧慮。
 

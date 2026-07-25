@@ -44,3 +44,12 @@ export function fmtTaipeiDateTime(iso: string): string {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${t.getUTCFullYear()}/${p(t.getUTCMonth() + 1)}/${p(t.getUTCDate())} ${p(t.getUTCHours())}:${p(t.getUTCMinutes())}`
 }
+
+// Time-only (HH:MM) Taipei, same ICU-free rationale as fmtTaipeiDateTime: the overview's
+// snapshot stamp renders inside a 'use client' component, so it must hydrate deterministically
+// rather than lean on Intl (whose separators can differ between Node's ICU and the browser's).
+export function fmtTaipeiTime(iso: string): string {
+  const t = new Date(new Date(iso).getTime() + TAIPEI_UTC_OFFSET_HOURS * 3600_000)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(t.getUTCHours())}:${p(t.getUTCMinutes())}`
+}

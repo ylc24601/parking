@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { WeekOverview } from '@/lib/adminTodoTypes'
 import { buildAdminTodoRows } from '@/lib/adminTodoRows'
+import { fmtTaipeiTime } from '@/lib/taipeiDate'
 import { WEEK_STAGE_LABEL, type WeekStage } from '@/lib/weekStage'
 import Badge, { type BadgeTone } from '../ui/Badge'
 import { useAdminTodos } from './AdminTodoProvider'
@@ -19,15 +20,6 @@ const STAGE_TONE: Record<WeekStage, BadgeTone> = {
   allocated: 'info',
   finalized: 'neutral',
   closed: 'neutral',
-}
-
-function formatSnapshot(iso: string): string {
-  return new Intl.DateTimeFormat('zh-TW', {
-    timeZone: 'Asia/Taipei',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(new Date(iso))
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
@@ -109,7 +101,7 @@ export default function AdminOverview({ overview }: { overview: WeekOverview }) 
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">待辦事項</h2>
           <div className="flex items-center gap-3 text-xs text-muted">
-            <span>資料時間 {formatSnapshot(snapshotAt)}</span>
+            <span>資料時間 {fmtTaipeiTime(snapshotAt)}</span>
             <button
               type="button"
               onClick={() => router.refresh()}
