@@ -1,6 +1,6 @@
 # 功能想法 Triage（rev.3 — 兩輪外部審查後接近定稿）
 
-> 目的：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A（全）✅、2B（全）✅、2C #19 ✅（PR #45/#46）、3a #8/#9 ✅（PR #47）**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
+> 目的：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A（全）✅、2B（全）✅、2C #19 ✅（PR #45/#46）、3a #8/#9 ✅（PR #47）、3b #17 ✅**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
 > rev.1（2026-07-16）：30 條判定＋動工順序。
 > rev.2：一輪審查，修規格＋改 delivery-first 排序。
 > rev.3：二輪審查，修實作語意（PIN 旋轉、commit-then-dispatch、雙真相、actor 模型、拒絕科學記號…）＋拆 Wave 2A/2B/2C。
@@ -43,7 +43,7 @@
 | 14B | 申請開放 override（後續） | admin＋weekly_events | M | ✅ defer（3） | `application_override` enum（`automatic`/`forced_open`/`forced_closed`）。規則未定：與時間視窗互動、關閉後既有申請、分配後重開——先不做，不卡 14A。 |
 | 15 | 稽核記錄（Audit Log） — 地基 | 橫切＋唯讀頁 | L | ✅ **全部完成**：**2A-1 ✅**（PR #38 / `8513912`）＋**2A-2 viewer ✅**（PR #39 / `d2e6890`）＋**2A-3 retention ✅**（PR #43 / `5db33bc`，migration `0034`） | **實作與下列原始規格有四處刻意分歧，以實作為準（見 [0030](../parking-system/supabase/migrations/0030_audit_substrate.sql) 標頭）**：①「app role 只 INSERT/SELECT」**做不到也不夠**——app 跑 service_role、RLS 對它無效，且 0004 已 blanket grant DML；改為 **revoke DML（含 TRUNCATE）＋ trigger 雙層**，且明確**不宣稱 immutability**（owner 仍有 DDL）、**不防 omission**（只提高偽造成本）。②「單一 RPC」升級為 **`private.append_audit_log`，EXECUTE 不授權給任何人**（含 service_role），只有 owner-controlled `SECURITY DEFINER` 業務 RPC 能在**業務 txn 內**呼叫＝audit 與業務同生共死。③ 治理拒絕**必須 typed return 不可 raise**（raise 會把記錄拒絕的那列一起 rollback）。④ metadata **flat depth-1**＋PII key denylist，由 RPC 內部組裝。原始規格其餘照做：actor 模型（actor_type enum＋actor_id＋actor_session_id＋actor_role_snapshot，**無 FK**）、存 ID 不存姓名、request_id（改 **NOT NULL**）、result（`success/denied/conflict`）。exemplar＝`set_admin_disabled`；其餘記錄項（容量/P2/PIN/群組/車牌 CRUD）隨各自 slice 接入。<br>原始規格存參：表已存在（[0003_infra.sql:49](../parking-system/supabase/migrations/0003_infra.sql#L49)）**無 insert path**→補 insert substrate。**actor 模型：`actor_type` enum（admin/staff_session/member/job/system）＋`actor_id` nullable＋`actor_role_snapshot` nullable**（不要四個 nullable FK；`actor_id` 為 snapshot ref、不做通用 FK）。**存 ID 不存姓名**，顯示時 join；刪除者顯示「已刪除會友（ID 尾碼 xxxx）」→ 故 **admin 帳號 soft-disable 不 hard-delete**（現況已 disabled_at）。其餘欄：action/entity_type/entity_id/event_id/request_id/result/metadata_redacted(allowlist)/created_at。**DB append-only**：app role 只 INSERT/SELECT、單一 RPC、**永不寫 PII/token/LINE ID**、retention 用受限 maintenance function。記錄：role change/帳號停用/容量修改/P2 覆核/PIN rotation/群組設定/會員車牌 CRUD。<br>**2A-3 retention（[0034](../parking-system/supabase/migrations/0034_audit_retention_purge.sql)）**：`purge_audit_logs` 每月清 24 個月前的列。**逃生口＝雙鎖**（交易域 GUC `audit.allow_purge` 只有 purge fn 開＋`current_user`＝table owner；SECURITY DEFINER 以 owner 身分執行、直接 service_role delete 不是 owner）⇒ 即使未來重演 blanket grant 也刪不掉；`UPDATE`/`TRUNCATE` 恆擋。**時鐘用 DB 的 `now()`、不收 `p_now`**（呼叫端傳未來時間即可洗掉全表——與 binding-PII 前例的有意分歧，因早刪 audit 不可逆）。`audit.substrate_enabled`／`audit.retention_purge` retention-exempt；只在真的刪了才寫 marker（否則永久灌爆）。verifier 釘 **fn owner ＝ table owner**（否則鎖2 連合法 purge 都擋）。UI 文案翻面「紀錄保留 24 個月，逾期後由定期維運作業清除」，**部署硬前置**＝prod cron 先設好（runbook §13）。 |
 | 16 | 停車樣態分析（先聚合） | admin＋歷史 | L | ✅（5） | 開放 P3 決策支援；價值隨營運週數累積；不列具名 No-show 排名。 |
-| 17 | 營運狀態頁 B＋C | admin/ops＋sidebar | M | ✅（3） | B 摺疊技術細節；C（有 #19）完整 ops 只給系統管理員。UTC→台北、改名、移 sidebar 最下。 |
+| 17 | 營運狀態頁 B＋C | admin/ops＋sidebar | M | ✅ **完成（Wave 3 3b）** | 頁改名「通知系統狀態」。**B**：白話健康摘要當主角、技術細節與死信重送摺疊 `<details>`（異常時預設展開）、時間 UTC→台北（重用 `fmtTaipeiDateTime`、標時區）、sidebar 移最下。**C 以實作為準**：幹事**不放行進 `/admin/ops`**，改在「本週概覽」看白話健康——`notificationHealth`（healthy/attention/unavailable）與技術 `ops` **拆兩欄**（`ops!==null ⟺ view_ops` 不變、幹事只收 enum 不落地計數），異常→「通知系統異常，請聯絡系統管理員」linkless 列；**health 查詢失敗隔離**（不連帶清空 P2/牧養、不 fail-open 當正常）；🎉 重定義為「此角色需處理的事項」。無 migration。 |
 | 18 | 側欄 IA 兩區 | admin sidebar | S–M | ✅（3） | 日常/系統維運，分區線＝#19 角色邊界。 |
 | 19 | Admin 角色分級（兩級）＋新增管理者 | admin/accounts＋橫切 | M–L（地基） | ✅（**2C**） | 系統管理員/幹事；`role` enum（預留唯讀）。**session：敏感操作每 request 從 DB 讀 active+role**（既有 session 已重查 `disabled_at` [adminAuth.ts:36](../parking-system/server/http/adminAuth.ts#L36)，role 沿同路、不塞 cookie）；role 變更/停用 bump `session_version` 或刪 sessions；sidebar 隱藏只 UX。guardrails：不停用/降級最後一位系統管理員、不自我升權、禁自我降/停、CLI bootstrap=系統管理員、UI 預設幹事、重設密碼撤 sessions。role matrix 明確定義。 |
 | 20 | 匯入中文 header＋reason 對照 | lib/memberImport | S | ✅（0） | ✅ reason 值已驗證＝現有 canonical（[DB enum p2_reason 0001:7](../parking-system/supabase/migrations/0001_enums_core.sql#L7)、TS `P2Reason`）：`mobility_long/mobility_short/pregnancy/elderly_companion/child_companion`（1–4 只是 CSV 輸入碼）。做法：**中文→canonical 集中在單一 `REASON_ALIASES` constant**，實作前對照 `memberImport.ts`/DB enum，別讓 parser/UI/DB 各一套。**未知→preview 錯誤要人工選、不 silently map、不解析模糊備註判敏感資格**。 |
@@ -81,8 +81,8 @@
 **Wave 1：低風險交付 UX** — #23→#24／#30／#29／#12／#27／#5A
 **Wave 2A：寫入治理地基** — #15 Audit substrate ✅ **全部完成**。**拆三刀：2A-1 substrate ✅（PR #38 / `8513912`）／2A-2 read-only viewer ✅（PR #39 / `d2e6890`，app-only 無 migration）／2A-3 retention ✅（PR #43 / `5db33bc`，migration `0034`）**
 **Wave 2B：關鍵 Admin 寫入**（需 #15、不需 #19）— **2B-1 #14A 車位容量 ✅（PR #40 / `8de24a0`，migration `0031`）／#10 P2 覆核：2B-2a 模型 ✅（PR #41 / `155c7f7`，migration `0032`）、2B-2b 寫入 RPC＋UI ✅（PR #42 / `c536b01`，migration `0033`）⇒ Wave 2B 交付阻擋全部解除／2B-2c 佇列列內操作（非阻擋，可留交付後）**
-**Wave 2C：角色地基** — #19 Admin roles＋session 撤銷＋role matrix
-**Wave 3：其餘管理功能** — **3a #8 概覽＋#9 徽章 ✅ 完成**；剩 #17 ops 頁 B＋C／#18 側欄兩區／#5B 名冊敏感權限／#14B override（規則未定）
+**Wave 2C：角色地基 ✅ 全部完成** — #19 Admin roles＋session 撤銷＋role matrix。**2C-1 兩層角色（系統管理員／幹事）✅（PR #45 `76e93f8`，migration `0035`）／2C-2 帳號管理 UI＋create/role/revoke RPC ✅（PR #46 `ca9de80`，migration `0036`）**
+**Wave 3：其餘管理功能** — **3a #8 概覽＋#9 徽章 ✅ 完成**；**3b #17 通知系統狀態 B＋C ✅ 完成**；剩 #18 側欄兩區／#5B 名冊敏感權限／#14B override（規則未定）
 **Wave 4：通知便利性** — 通用 destination model→#7→#6A（#6B 後續）→#3（最後，語意最敏感）→#4／#26
 **Wave 5：會員自助與分析** — #28／#11／#16／#13
 **Deferred/不做**：#2 ❌
@@ -92,13 +92,14 @@
 ## 交付分級
 
 **交付前必修**：文件同步、#25、#20、#21、#22、#23、#24、#27、#30
-**強烈建議交付前 — 全部完成 ✅**：#5A ✅、**#15 ✅（2A-1／2A-2／2A-3 全完成）→ 稽核有邊界、可清理**、**#14A ✅（2B-1）→ 容量已不需 SQL**、**#10 ✅（2B-2a＋2B-2b）→ 資格已不需 CSV**（幹事可自行核准/撤銷，且 CSV 不再能推翻人工決定；2B-2c 佇列列內操作為便利化、不阻擋交付）、#12 ✅。**⇒ 此清單已清空，開發面可進正式交付收尾**（剩交付後 ops，見 runbook §8/§13；及非阻擋 backlog：2B-2c、Wave 2C #19、retire `admin_reserved`）。
+**強烈建議交付前 — 全部完成 ✅**：#5A ✅、**#15 ✅（2A-1／2A-2／2A-3 全完成）→ 稽核有邊界、可清理**、**#14A ✅（2B-1）→ 容量已不需 SQL**、**#10 ✅（2B-2a＋2B-2b）→ 資格已不需 CSV**（幹事可自行核准/撤銷，且 CSV 不再能推翻人工決定；2B-2c 佇列列內操作為便利化、不阻擋交付）、#12 ✅。**⇒ 此清單已清空，開發面可進正式交付收尾**（剩交付後 ops，見 runbook §8/§13；及非阻擋 backlog：2B-2c、retire `admin_reserved`）。**Wave 2C #19 角色地基已完成**（見動工順序）。
 
 ### Audit retention 政策（✅ 已實作於 2A-3 / `0034`）
 **線上保留 24 個月、每月清理一次；不宣稱永久保存。** 理由：涵蓋兩個完整年度週期足以處理資格/容量/帳號/操作爭議；本系統非金融、醫療或法定會計帳冊，無支持永久保存的內控需求；audit 雖已最小化仍含 actor/entity stable ID，無限保存違反資料最小化；「量不大所以永不刪」不是治理政策。
 規則：cutoff `created_at < now() - interval '24 months'`／受限 `SECURITY DEFINER` maintenance function／bounded batches／purge 只記 cutoff＋deleted_count，**不記被刪 ID 或其 metadata**。
 **`audit.substrate_enabled` 與 `audit.retention_purge` 為 retention-exempt**——保留「trail 從何時開始、歷史依哪個政策被清」。
 ✅ 實作（`0034`）：0030 的 append-only trigger 擋掉**所有** DELETE，purge 的逃生口＝**雙鎖**——交易域 GUC `audit.allow_purge`（只有 `purge_audit_logs` 用 `set_config(...,true)` 開）＋ `current_user` ＝ table owner（SECURITY DEFINER 以 owner 執行、直接 service_role delete 不是 owner）。**時鐘用 DB `now()`、RPC 不收 `p_now`**（呼叫端傳未來時間即可洗全表；審查必改 1，與 binding-PII 前例的有意分歧）。verifier 釘 fn owner ＝ table owner（否則鎖2 連合法 purge 都擋）。UI 文案翻面的**部署硬前置**＝prod cron 先設好（runbook §13）。
-**可交付後迭代**：#3、#4、#6、#8、#9、#11、#14B、#16、#17、#18、#19、#28、#5B
+**可交付後迭代**：#3、#4、#6、#11、#14B、#16、#17、#18、#28、#5B（#8／#9／#19 ✅ 已完成）
 > #3 雖方便但人工重發 PIN 已能運作；反而 #10/#14A 仍碰 SQL 的交付風險更高。角色分級（#19）可留交付後。
+> **更新（2026-07-25）**：#19（Wave 2C-1／2C-2）已完成 merged，此處「可留交付後」已成歷史脈絡。
 > **更新（2026-07-17）**：#14A（2B-1）與 #10（2B-2a＋2B-2b）皆已完成 ⇒ **上句所指的交付風險已消除**，容量與 P2 資格都有 audited 的 Admin UI 路徑。僅存的「仍需手打 SQL」缺口是 **runbook §12.1 Step 0 的遠期 demo event 容量**（`/admin/capacity` 刻意只給當週/次週，見 §8 Wave 2B-1），屬 demo 走查而非同工日常營運。

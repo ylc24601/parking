@@ -24,10 +24,12 @@ const NAV: Array<{ href: string; label: string; icon: string; capability?: Admin
   { href: '/admin/import', label: '名單匯入', icon: '📥' },
   { href: '/admin/print', label: '列印點名表', icon: '🖨' },
   { href: '/admin/capacity', label: '車位設定', icon: '🅿️' },
-  { href: '/admin/ops', label: '營運狀態', icon: '📊', capability: 'view_ops' },
   { href: '/admin/audit', label: '稽核記錄', icon: '📜', capability: 'view_audit' },
   { href: '/admin/pastoral', label: '牧養關懷', icon: '💚' },
   { href: '/admin/staff-pin', label: '現場 PIN 管理', icon: '🔑' },
+  // #17 B: 通知系統狀態 sits at the bottom — an infrastructure surface, not daily
+  // church-admin work. (#18 will formalise the day-to-day / system split with a divider.)
+  { href: '/admin/ops', label: '通知系統狀態', icon: '📊', capability: 'view_ops' },
 ]
 
 // Boundary-safe: /admin matches only itself; a section matches itself and its nested

@@ -8,7 +8,7 @@ import NoPermission from '../NoPermission'
 import OpsDashboard from './OpsDashboard'
 
 export const metadata: Metadata = {
-  title: '營運狀態 · 管理後台',
+  title: '通知系統狀態 · 管理後台',
 }
 
 // Operational numbers must be live, so this is uncacheable. A SINGLE health snapshot

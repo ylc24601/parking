@@ -39,16 +39,36 @@ function Stat({ label, value }: { label: string; value: number }) {
   )
 }
 
-// One actionable todo: label + count, linking to the page that clears it.
-function TodoRow({ href, label, count, tone }: { href: string; label: string; count: number; tone: BadgeTone }) {
+// A count-less row (a clerk's notification verdict, #17 C) carries its severity in the
+// container colour instead of a badge — otherwise a danger row would look like plain text.
+const NOTICE_TONE: Record<BadgeTone, string> = {
+  danger: 'border-danger-fg/30 bg-danger-bg text-danger-fg',
+  warning: 'border-warning-fg/30 bg-warning-bg text-warning-fg',
+  info: 'border-border bg-page text-muted',
+  success: 'border-success-fg/30 bg-success-bg text-success-fg',
+  priority: 'border-priority-fg/30 bg-priority-bg text-priority-fg',
+  neutral: 'border-border bg-page text-muted',
+}
+
+// A todo row. With an href it links to the page that clears it and shows a count badge;
+// without one it is a non-interactive notice tinted by tone (#17 C: clerk health verdict).
+function TodoRow({ href, label, count, tone }: { href?: string; label: string; count?: number; tone: BadgeTone }) {
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className="flex items-center justify-between gap-3 rounded-lg border border-border bg-page px-4 py-3 text-sm transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+      >
+        <span className="font-medium text-ink">{label}</span>
+        {count !== undefined && <Badge tone={tone}>{count}</Badge>}
+      </Link>
+    )
+  }
   return (
-    <Link
-      href={href}
-      className="flex items-center justify-between gap-3 rounded-lg border border-border bg-page px-4 py-3 text-sm transition-colors hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-    >
-      <span className="font-medium text-ink">{label}</span>
-      <Badge tone={tone}>{count}</Badge>
-    </Link>
+    <div className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-sm font-medium ${NOTICE_TONE[tone]}`}>
+      <span>{label}</span>
+      {count !== undefined && <Badge tone={tone}>{count}</Badge>}
+    </div>
   )
 }
 
@@ -56,8 +76,10 @@ export default function AdminOverview({ overview }: { overview: WeekOverview }) 
   const router = useRouter()
   const { counts, snapshotAt } = useAdminTodos()
 
-  // Rows (incl. a healthy "通知待送" backlog) come from the shared pure builder, so 🎉
-  // shows iff there is genuinely nothing — never while a backlog is queued.
+  // Rows come from the shared pure builder, so 🎉 shows iff it returns [] — meaning
+  // "nothing THIS ROLE needs to handle" (#17 C). A superadmin's healthy-but-draining
+  // backlog still produces its own "通知待送" row, so their 🎉 is genuine; a clerk's plain
+  // verdict has no backlog to surface, so a draining queue correctly shows no row.
   const todos = counts ? buildAdminTodoRows(counts) : []
 
   return (
@@ -104,12 +126,12 @@ export default function AdminOverview({ overview }: { overview: WeekOverview }) 
           </p>
         ) : todos.length === 0 ? (
           <p className="rounded-lg border border-border bg-page px-4 py-6 text-center text-sm text-muted">
-            目前沒有待辦事項 🎉
+            目前沒有需要處理的事項 🎉
           </p>
         ) : (
           <div className="flex flex-col gap-2">
             {todos.map(t => (
-              <TodoRow key={t.href} href={t.href} label={t.label} count={t.count} tone={t.tone} />
+              <TodoRow key={t.id} href={t.href} label={t.label} count={t.count} tone={t.tone} />
             ))}
           </div>
         )}

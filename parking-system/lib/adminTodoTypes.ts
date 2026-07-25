@@ -5,6 +5,13 @@ import type { WeekStage } from '@/lib/weekStage'
 // these, and importing server/services/* would bundle the service-role Supabase
 // client into the client (see lib/capacityAdminTypes.ts for the same reasoning).
 
+// Plain-language notification-system verdict, available to EVERY admin (#17 C). Split out
+// from `ops` on purpose: `ops` still means "this admin may see the technical ops data"
+// (⟺ view_ops), while this three-state readout is the cross-role signal a clerk sees on
+// the overview. 'attention' ⟺ the ops page's 異常; 'unavailable' ⟺ the health query
+// couldn't be reached — never treated as healthy (fail-safe).
+export type NotificationHealth = 'healthy' | 'attention' | 'unavailable'
+
 export interface AdminTodoCounts {
   // Members whose P2 eligibility is due for a human review as of today. An EXACT count
   // over a minimal date-only candidate set (listEligibilityTodoCandidates), classified by
@@ -13,7 +20,11 @@ export interface AdminTodoCounts {
   p2Review: number
   // Open pastoral-care alerts (v1: a single count; open/overdue split is deferred).
   pastoralOpen: number
-  // Notification-pipeline health — ops domain, so null for a clerk (no view_ops).
+  // Cross-role plain verdict (clerks see this on the overview; carries NO technical counts).
+  notificationHealth: NotificationHealth
+  // Technical ops data — present iff the admin has view_ops AND health was fetched. A clerk
+  // always gets null (no counts leak to their client); a superadmin gets null only when the
+  // health query failed (⟺ notificationHealth === 'unavailable').
   ops: {
     backlog: number    // rows due to send now (informational "通知待送 N")
     attention: number  // drives the badge; 0 when the ops verdict is healthy (⟺ 正常)
