@@ -1056,4 +1056,37 @@ begin
   raise notice 'PASS: role management RPCs present, SECURITY DEFINER, named-arg contract + return type pinned';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 34 assertions passed =='
+-- ── Member roster export audit RPC (Wave 3 3d / #5B-a) ───────────────────────────
+-- 0037's log_member_roster_export: present, SECURITY DEFINER + pinned search_path,
+-- service_role-only execute, returns jsonb, owner-matched with the audit writer.
+do $$
+declare
+  v_sig constant text := 'log_member_roster_export(uuid,uuid,uuid,integer)';
+  v_writer_owner oid := (select proowner from pg_proc
+    where oid = to_regprocedure('private.append_audit_log(audit_actor_type,uuid,uuid,text,text,text,uuid,uuid,uuid,audit_result,jsonb)'));
+begin
+  if to_regprocedure(v_sig) is null then
+    raise exception 'FAIL: % missing', v_sig;
+  end if;
+  if not exists (select 1 from pg_proc where oid = to_regprocedure(v_sig) and prosecdef
+      and array_to_string(proconfig, ',') like '%search_path%') then
+    raise exception 'FAIL: % must be SECURITY DEFINER with pinned search_path', v_sig;
+  end if;
+  if has_function_privilege('anon', v_sig, 'execute')
+     or has_function_privilege('authenticated', v_sig, 'execute')
+     or has_function_privilege('public', v_sig, 'execute') then
+    raise exception 'FAIL: % must be executable only by service_role', v_sig;
+  end if;
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception 'FAIL: service_role lacks execute on %', v_sig;
+  end if;
+  if (select prorettype from pg_proc where oid = to_regprocedure(v_sig)) <> 'jsonb'::regtype then
+    raise exception 'FAIL: % must return jsonb', v_sig;
+  end if;
+  if (select proowner from pg_proc where oid = to_regprocedure(v_sig)) <> v_writer_owner then
+    raise exception 'FAIL: % owner <> append_audit_log owner', v_sig;
+  end if;
+  raise notice 'PASS: member roster export audit RPC present, SECURITY DEFINER, owner-matched, service_role-only';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 35 assertions passed =='

@@ -1291,6 +1291,48 @@ begin
   raise notice 'PASS: role management RPCs — signatures, arg names, return type, owner, grants all pinned';
 end $$;
 
+-- ── 41. Member roster export audit RPC (Wave 3 3d / #5B-a) ───────────────────────
+-- The audited, DB-authoritative gate for the roster CSV export (0037): exact signature +
+-- arg names, SECURITY DEFINER + pinned search_path, owner-equality with the audit writer
+-- (only the writer's owner may reach it), and service_role-only execute.
+do $$
+declare
+  v_sig constant text := 'log_member_roster_export(uuid,uuid,uuid,integer)';
+  v_expected_args constant text := 'p_acting_admin_id uuid, p_acting_session_id uuid, p_request_id uuid, p_row_count integer';
+  v_writer_owner oid := (select proowner from pg_proc
+    where oid = to_regprocedure('private.append_audit_log(audit_actor_type,uuid,uuid,text,text,text,uuid,uuid,uuid,audit_result,jsonb)'));
+begin
+  if to_regprocedure(v_sig) is null then
+    raise exception 'FAIL: % missing (exact signature)', v_sig;
+  end if;
+  if not exists (select 1 from pg_proc where oid = to_regprocedure(v_sig) and prosecdef) then
+    raise exception 'FAIL: % must be SECURITY DEFINER to reach the audit writer', v_sig;
+  end if;
+  if not exists (select 1 from pg_proc where oid = to_regprocedure(v_sig)
+      and array_to_string(proconfig, ',') like '%search_path%') then
+    raise exception 'FAIL: SECURITY DEFINER % must pin search_path', v_sig;
+  end if;
+  if has_function_privilege('anon', v_sig, 'execute')
+     or has_function_privilege('authenticated', v_sig, 'execute')
+     or has_function_privilege('public', v_sig, 'execute') then
+    raise exception 'FAIL: % must be executable only by service_role', v_sig;
+  end if;
+  if not has_function_privilege('service_role', v_sig, 'execute') then
+    raise exception 'FAIL: service_role lacks execute on %', v_sig;
+  end if;
+  if pg_get_function_arguments(to_regprocedure(v_sig)) is distinct from v_expected_args then
+    raise exception 'FAIL: % argument names drifted', v_sig;
+  end if;
+  if (select prorettype from pg_proc where oid = to_regprocedure(v_sig)) <> 'jsonb'::regtype then
+    raise exception 'FAIL: % must return jsonb', v_sig;
+  end if;
+  if (select proowner from pg_proc where oid = to_regprocedure(v_sig)) <> v_writer_owner then
+    raise exception 'FAIL: % owner <> append_audit_log owner — it could not reach the writer', v_sig;
+  end if;
+
+  raise notice 'PASS: member roster export audit RPC — signature, owner, search_path, grants pinned';
+end $$;
+
 -- ── 40b. The role RPCs actually behave (behavioural) ─────────────────────────────
 -- no-op writes nothing; username collision is typed and unaudited; a role change writes
 -- exactly one row with the actor's snapshot and the target's from/to; revoke writes even

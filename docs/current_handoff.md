@@ -1137,6 +1137,28 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 
 ---
 
+## 6.47 Wave 3 slice 3d — 名冊匯出（#5B-a，2026-07-26）
+
+#5B 拆三刀，本刀＝**5B-a 名冊匯出（僅系統管理員、含 audit）**；5B-b 敏感欄位顯示分級、5B-c 批次 → post-delivery deferred。**migration `0037`**（db:verify local 48→**49** / remote 34→**35**）。5A 刻意不做匯出（bulk PII 一次性外流風險最高），#19 角色就緒後才決定誰可匯出。
+
+**能力/路由**：新 capability `export_members`（superadmin✓/clerk✗）。`POST /api/admin/members/export`——**body-less POST（非 GET，避免 `<Link>` prefetch 誤觸匯出＋audit）**＋`guardAdminOrigin`（CSRF，比照 logout）＋`Cache-Control: no-store`（全 PII 不得快取）。members 頁只有 superadmin 看得到「匯出 CSV」按鈕。
+
+**三道 boundary**：UI 可見性（`can` 過濾按鈕）／HTTP capability（route `can` gate）／**DB pre-egress authz+audit**（0037 `log_member_roster_export`：`FOR SHARE` 重新讀 acting admin，仍是 active superadmin 才寫 audit＋回 ok；denied 不稽核＝無 PII 外流無須記）。**不宣稱消除所有 egress race**（已送位元收不回）。
+
+**內容契約**：姓名／**完整電話**／目前 active 車牌（`；`併）／中文角色／LINE綁定(是/否)。**排除** P2 事由/眷屬/生日/user id/raw line_id。UTF-8 BOM＋CRLF＋**spreadsheet formula injection 中和**（`= + - @`/前導 tab→prefix `'`）。**非 round-trip**（人類可讀行政匯出；匯入欄位語意不同）。`ROLE_LABEL` 由 `MemberTable`/明細頁各自一份 → 統一到 `lib/memberAdminTypes.ts`。
+
+**讀取＝keyset（非 offset）**：`repo.listMembersForExportPage` 以 immutable `(created_at, id)` 游標＋`created_at < createdBefore(=exportStartedAt)` cutoff——offset 分頁在 live roster 中途新增/刪除會 dup/skip；keyset+cutoff 保證匯出中新增者（`created_at ≥ 開始時刻`）不混入、不 shift。**游標傳 RAW created_at 字串、不經 Date**（會截 microsecond、破 tied-ts）。PostgREST `.or()` 內時間戳**雙引號**才不把 `:`/`+` 當 filter 語法（已實測）。active-plate 附掛抽共用 helper 與 `listMembers` 共用（`is_active` 不 drift）。
+
+**服務順序（audit 邊界）**：keyset 讀到底 → 記憶體 `(display_name,id)` 排序 → **先完整 serialize CSV** → 才 DB reauth+audit（0037）→ 才回。故 serialize 失敗不留 false-success audit；reauth 拒絕（中途降權）回 typed `forbidden`→route 403、不回 CSV。`requestId` 由 route 產生下傳。client：**先檢 `res.ok`**（403 JSON 不當 csv 下載）＋blob download 自設 `a.download`（blob: URL 不繼承 Content-Disposition，filename parser 只收 `members-\d{8}\.csv`）。
+
+**audit viewer**：`auditPresentation` 加 `member_roster.export`（reads `row_count`→「匯出筆數 N」、label「匯出會友名冊」）；`auditViewService` entity label `member_roster→會友名冊`（entity_id null）。
+
+**驗證**：tsc/eslint/build ✅；`npm test`（+csv/service/route/roles）、`RUN_DB_TESTS=1`（+member-export.db：superadmin audit row／clerk・disabled 無列／keyset 完整性 tied-ts／cutoff 排除中途新增）全綠；db:reset 0001–0037＋db:verify **49**。headless 走查（superadmin 匯出下載＋audit 顯示／clerk 無按鈕・直呼 403／foreign Origin 403）發布 Artifact。
+
+**部署**：0037 additive（old-app+new-DB OK、new-app+old-DB export 失敗）；先 migration→`db:verify:remote`→app→superadmin smoke。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。

@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { taipeiToday } from '@/lib/taipeiDate'
 import { deriveEligibilityStatus, type EligibilityStatus } from '@/lib/eligibilityStatus'
 import { p2ReasonLabel } from '@/lib/p2Reason'
+import { ROLE_LABEL } from '@/lib/memberAdminTypes'
 import { getAdminSession } from '@/server/http/adminAuth'
 import { getMemberDetail, type MemberDetail } from '@/server/services/memberAdminService'
 import Badge, { type BadgeTone } from '../../../ui/Badge'
@@ -23,9 +24,6 @@ export const revalidate = 0
 
 const UUID_FORMAT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-const ROLE_LABEL: Record<string, string> = {
-  user: '會友', full_time_staff: '全職同工', staff: '同工', admin: '管理員',
-}
 const DEP_KIND_LABEL: Record<string, string> = { impaired: '身障', child: '幼兒', elder: '長者' }
 
 export default async function AdminMemberDetailPage({ params }: { params: Promise<{ id: string }> }) {

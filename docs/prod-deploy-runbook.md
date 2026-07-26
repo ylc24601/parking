@@ -71,7 +71,7 @@ npx supabase db push
 npx supabase migration list          # AFTER push — compare against the line below
 ```
 
-**Acceptance: every one of the 36 local migration files (`0001`–`0036`) appears as an
+**Acceptance: every one of the 37 local migration files (`0001`–`0037`) appears as an
 applied remote entry, in the same order, with matching version ids.** No remote-only
 entries, no local-only entries, no pending entries. If there is any discrepancy, **stop
 and investigate the cause — do not run `supabase migration repair` to force the list
@@ -105,8 +105,8 @@ npm run db:verify:remote
 unset SUPABASE_DB_URL
 ```
 
-Expect **`verify_schema_prod.sql: all 34 assertions passed`**. This is a **different,
-independent check** from the local `npm run db:verify` (33/33) — the local one exercises
+Expect **`verify_schema_prod.sql: all 35 assertions passed`**. This is a **different,
+independent check** from the local `npm run db:verify` (49) — the local one exercises
 behavior via DML inside a rolled-back transaction and depends on seed data (so it cannot
 run against a fresh cloud database); this one is catalog-only (tables/indexes/
 constraints/RPC signatures/grants) and has no DML dependency. Their counts are not

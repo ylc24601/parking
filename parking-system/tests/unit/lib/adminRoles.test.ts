@@ -6,14 +6,15 @@ import { ADMIN_ROLE_LABEL, can, type AdminCapability, type AdminRole } from '@/l
 // rather than derived — a test that computed the expectation the same way the code does
 // would agree with any bug.
 //
-// The three capabilities exist because those three surfaces are NOT open to every admin.
-// Everything else (bindings, members, eligibility, import, print, capacity, pastoral,
-// staff PIN) is deliberately absent from the matrix: a capability for "what everyone can
-// do" would make the lack of a check elsewhere look like an oversight.
+// The capabilities exist because those surfaces are NOT open to every admin. Everything else
+// (bindings, members browse, eligibility, import, print, capacity, pastoral, staff PIN) is
+// deliberately absent from the matrix: a capability for "what everyone can do" would make the
+// lack of a check elsewhere look like an oversight. export_members (#5B-a) is superadmin-only
+// bulk-PII egress and joins the restricted set.
 
 const EXPECTED: Record<AdminRole, Record<AdminCapability, boolean>> = {
-  superadmin: { manage_admin_accounts: true, view_ops: true, view_audit: true },
-  clerk: { manage_admin_accounts: false, view_ops: false, view_audit: false },
+  superadmin: { manage_admin_accounts: true, view_ops: true, view_audit: true, export_members: true },
+  clerk: { manage_admin_accounts: false, view_ops: false, view_audit: false, export_members: false },
 }
 
 describe('admin capability matrix', () => {

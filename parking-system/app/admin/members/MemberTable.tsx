@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Badge from '../../ui/Badge'
-import type { MemberSearchItem } from '@/lib/memberAdminTypes'
+import { ROLE_LABEL, type MemberSearchItem } from '@/lib/memberAdminTypes'
 
 // Wave 1c (#5A) — the member list, shared by search results and the roster browse. Both show the
 // exact same five columns; two copies would drift (see lib/staffRow for the same lesson).
@@ -11,13 +11,6 @@ import type { MemberSearchItem } from '@/lib/memberAdminTypes'
 //
 // Presentational only: no hooks, so it renders in both a server component (roster) and a client
 // one (search). Empty/loading/error states belong to the caller — this renders rows.
-
-export const ROLE_LABEL: Record<string, string> = {
-  user: '會友',
-  full_time_staff: '全職同工',
-  staff: '同工',
-  admin: '管理員',
-}
 
 export default function MemberTable({ items }: { items: MemberSearchItem[] }) {
   return (
