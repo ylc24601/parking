@@ -1123,7 +1123,7 @@ Wave 3 第二刀。`/admin/ops`「營運狀態」→**改名「通知系統狀�
 
 ---
 
-## 6.46 Wave 3 slice 3c — 側欄 IA 兩區（#18，2026-07-25）
+## 6.46 Wave 3 slice 3c — 側欄 IA 兩區（#18，2026-07-26）
 
 Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：日常（8 項，全 admin）／系統維運（帳號管理·稽核記錄·通知系統狀態，皆系統管理員專屬）。**視覺只有一條分界線、無可見區標**（使用者拍板）。**無 migration**，db:verify 48。**純呈現＋一個 client-safe data helper**，路由/caching/auth 契約不變（依 AGENTS 前置已讀 Next 16.2.9 navigation/`Link` 文件，確認 restructure 不影響 per-`Link` prefetch/client transition）。
 
