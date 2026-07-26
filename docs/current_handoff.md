@@ -1123,6 +1123,20 @@ Wave 3 第二刀。`/admin/ops`「營運狀態」→**改名「通知系統狀�
 
 ---
 
+## 6.46 Wave 3 slice 3c — 側欄 IA 兩區（#18，2026-07-25）
+
+Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：日常（8 項，全 admin）／系統維運（帳號管理·稽核記錄·通知系統狀態，皆系統管理員專屬）。**視覺只有一條分界線、無可見區標**（使用者拍板）。**無 migration**，db:verify 48。**純呈現＋一個 client-safe data helper**，路由/caching/auth 契約不變（依 AGENTS 前置已讀 Next 16.2.9 navigation/`Link` 文件，確認 restructure 不影響 per-`Link` prefetch/client transition）。
+
+**關鍵**：`daily`/`system` 是 **IA 分區、非 auth boundary**——真 gate 仍在各 page/API 的 capability 檢查，側欄只 UX。新 `lib/adminNav.ts`：`ADMIN_NAV`（`as const satisfies readonly AdminNavItem[]`，唯讀防 mutate；`buildAdminNav` 內 widen 到 `readonly AdminNavItem[]` 讓 `as const` 窄化後仍能讀 optional `capability`）＋`buildAdminNav(role)`（**capability 過濾先於 zone 分組**）。`zone` **顯式標注、不從 capability 推斷**——今日「system ⟺ capability-gated」成立，但顯式化讓 IA 與權限解耦（#5B 若讓某日常項帶 capability，仍留 daily）。**幹事的 system 區為空 ⇒ 元件不渲染 divider/system group**，看到的與今日一致（扁平日常）。
+
+`AdminSidebar` 抽 `renderLink`（daily/system 共用、零視覺變更）；兩區各包 `role="group"`＋`aria-label`（「日常管理」「系統維運」）**讓螢幕報讀取得與視覺分界等義的分組**（aria-label 不可見、不違反「無可見區標」；分界線本身 `aria-hidden` 純裝飾）。`Divider` responsive：手機細直線、桌機細橫線。`isActive`/`CountPill`/`badgeForHref`/`useAdminTodos`/`adminSidebarBadge.ts` 全不變。
+
+**驗證**：tsc/eslint/build ✅（路由清單不變）；`npm test` **1400**（+4 adminNav：兩角色分區、href 唯一、「system 皆 capability-gated」標為**目前產品政策非型別保證**）；`RUN_DB_TESTS=1` **1700**；db:verify **48**。headless 走查（兩角色桌機/手機）發布 walkthrough Artifact。
+
+**部署**：純 app 變更、無 migration。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
