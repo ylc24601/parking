@@ -2,35 +2,23 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { can, type AdminCapability, type AdminRole } from '@/lib/adminRoles'
+import type { AdminRole } from '@/lib/adminRoles'
+import { buildAdminNav, type AdminNavItem } from '@/lib/adminNav'
 import { badgeForHref } from '@/lib/adminSidebarBadge'
 import LogoutButton from './LogoutButton'
 import { useAdminTodos } from './AdminTodoProvider'
 
-// Persistent back-office nav (Slice 3.5 follow-up). Routes are unchanged — this is a
-// shared shell over the existing admin pages, not an SPA. Rendered only when the
-// layout has a session; it does NOT gate auth (pages/APIs keep their own checks).
+// Persistent back-office nav (Slice 3.5 follow-up; two-zone IA in Wave 3 / #18). Routes are
+// unchanged — this is a shared shell over the existing admin pages, not an SPA. Rendered only
+// when the layout has a session; it does NOT gate auth (pages/APIs keep their own checks).
 // print:hidden on the shell: no admin page should print its navigation, and /admin/print
 // is a paper sheet that must come out clean.
 //
-// Wave 2C-2 (#19): an item may carry a `capability`. Hiding it is UX ONLY — the real
-// gate is the server-side check on each page and API (a clerk who types the URL still
-// gets 「權限不足」). Items with no capability are open to every admin.
-const NAV: Array<{ href: string; label: string; icon: string; capability?: AdminCapability }> = [
-  { href: '/admin/bindings', label: '綁定審核', icon: '🔗' },
-  { href: '/admin/members', label: '會友管理', icon: '👥' },
-  { href: '/admin/accounts', label: '帳號管理', icon: '⚙️', capability: 'manage_admin_accounts' },
-  { href: '/admin/eligibility', label: '資格審查', icon: '🏷️' },
-  { href: '/admin/import', label: '名單匯入', icon: '📥' },
-  { href: '/admin/print', label: '列印點名表', icon: '🖨' },
-  { href: '/admin/capacity', label: '車位設定', icon: '🅿️' },
-  { href: '/admin/audit', label: '稽核記錄', icon: '📜', capability: 'view_audit' },
-  { href: '/admin/pastoral', label: '牧養關懷', icon: '💚' },
-  { href: '/admin/staff-pin', label: '現場 PIN 管理', icon: '🔑' },
-  // #17 B: 通知系統狀態 sits at the bottom — an infrastructure surface, not daily
-  // church-admin work. (#18 will formalise the day-to-day / system split with a divider.)
-  { href: '/admin/ops', label: '通知系統狀態', icon: '📊', capability: 'view_ops' },
-]
+// #18: items split into 「日常」 / 「系統維運」 zones (see lib/adminNav.ts). The divider shows
+// ONLY when the system zone is non-empty (i.e. a superadmin) — a clerk sees the flat daily
+// list with no divider, exactly as before. The zones carry meaning to assistive tech via
+// role="group"/aria-label; the divider itself is decorative. Hiding an item is UX ONLY —
+// the real gate is the server-side check on each page and API.
 
 // Boundary-safe: /admin matches only itself; a section matches itself and its nested
 // routes (so /admin/members/[id] keeps 會友管理 active) — never a bare startsWith that
@@ -55,12 +43,50 @@ function CountPill({ href, count }: { href: string; count: number }) {
   )
 }
 
+// The separator between the two zones (#18). Purely decorative (aria-hidden) — the grouping
+// meaning is on the role="group" wrappers. A vertical hairline in the mobile row, a
+// horizontal rule in the desktop column.
+function ZoneDivider() {
+  return (
+    <span
+      aria-hidden
+      className="w-px shrink-0 self-stretch bg-border mx-1 lg:mx-0 lg:my-2 lg:h-px lg:w-full lg:self-auto"
+    />
+  )
+}
+
+// Each zone lays out like the old flat nav did (mobile: a shrink-0 row; desktop: a full-width
+// column), so the visual is unchanged apart from the divider between the two groups.
+const ZONE_CLASS = 'flex shrink-0 gap-1 lg:w-full lg:flex-col lg:gap-0.5'
+
 export default function AdminSidebar({ username, role }: { username: string; role: AdminRole }) {
   const pathname = usePathname()
   const homeActive = pathname === '/admin'
-  const nav = NAV.filter(item => !item.capability || can(role, item.capability))
+  const { daily, system } = buildAdminNav(role)
   // Snapshot counts (null = couldn't fetch → no badges, never treated as "all zero").
   const { counts } = useAdminTodos()
+
+  const renderLink = (item: AdminNavItem) => {
+    const active = isActive(pathname, item.href)
+    const badge = counts ? badgeForHref(item.href, counts) : null
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        aria-current={active ? 'page' : undefined}
+        className={`inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border-b-2 px-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 lg:border-b-0 ${
+          active
+            ? 'border-primary font-semibold text-primary lg:bg-success-bg lg:shadow-[inset_2px_0_0_var(--color-primary)]'
+            : 'border-transparent text-ink hover:text-primary lg:hover:bg-page'
+        }`}
+      >
+        <span aria-hidden>{item.icon}</span>
+        {item.label}
+        {badge !== null && badge > 0 && <CountPill href={item.href} count={badge} />}
+      </Link>
+    )
+  }
+
   return (
     <div className="sticky top-0 z-20 flex flex-col border-b border-border bg-surface print:hidden lg:h-dvh lg:w-56 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
       {/* brand + username (mobile: logout shares this row) */}
@@ -80,31 +106,21 @@ export default function AdminSidebar({ username, role }: { username: string; rol
         </div>
       </div>
 
-      {/* nav — mobile: one horizontally-scrollable row; desktop: vertical, grows to push logout down */}
+      {/* nav — mobile: one horizontally-scrollable row; desktop: vertical, grows to push logout down.
+          #18: two zones (日常 / 系統維運) with a divider that shows only when the system zone exists. */}
       <nav
         aria-label="管理後台導覽"
         className="flex gap-1 overflow-x-auto overscroll-x-contain px-3 pb-2 lg:flex-1 lg:flex-col lg:gap-0.5 lg:overflow-x-visible lg:px-2 lg:pb-2"
       >
-        {nav.map(item => {
-          const active = isActive(pathname, item.href)
-          const badge = counts ? badgeForHref(item.href, counts) : null
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={active ? 'page' : undefined}
-              className={`inline-flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border-b-2 px-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 lg:border-b-0 ${
-                active
-                  ? 'border-primary font-semibold text-primary lg:bg-success-bg lg:shadow-[inset_2px_0_0_var(--color-primary)]'
-                  : 'border-transparent text-ink hover:text-primary lg:hover:bg-page'
-              }`}
-            >
-              <span aria-hidden>{item.icon}</span>
-              {item.label}
-              {badge !== null && badge > 0 && <CountPill href={item.href} count={badge} />}
-            </Link>
-          )
-        })}
+        <div role="group" aria-label="日常管理" className={ZONE_CLASS}>
+          {daily.map(renderLink)}
+        </div>
+        {system.length > 0 && <ZoneDivider />}
+        {system.length > 0 && (
+          <div role="group" aria-label="系統維運" className={ZONE_CLASS}>
+            {system.map(renderLink)}
+          </div>
+        )}
       </nav>
 
       {/* desktop: logout pinned at the bottom (reachable via the sidebar's own scroll) */}
