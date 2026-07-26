@@ -71,14 +71,14 @@ npx supabase db push
 npx supabase migration list          # AFTER push — compare against the line below
 ```
 
-**Acceptance: every one of the 36 local migration files (`0001`–`0036`) appears as an
+**Acceptance: every one of the 37 local migration files (`0001`–`0037`) appears as an
 applied remote entry, in the same order, with matching version ids.** No remote-only
 entries, no local-only entries, no pending entries. If there is any discrepancy, **stop
 and investigate the cause — do not run `supabase migration repair` to force the list
 green.**
 
 ```bash
-ls supabase/migrations/*.sql | wc -l   # sanity: should print 36
+ls supabase/migrations/*.sql | wc -l   # sanity: should print 37
 ```
 
 > ⚠️ **`0035` (admin roles) must be applied BEFORE the app that goes with it.** It is not
@@ -105,8 +105,8 @@ npm run db:verify:remote
 unset SUPABASE_DB_URL
 ```
 
-Expect **`verify_schema_prod.sql: all 34 assertions passed`**. This is a **different,
-independent check** from the local `npm run db:verify` (33/33) — the local one exercises
+Expect **`verify_schema_prod.sql: all 35 assertions passed`**. This is a **different,
+independent check** from the local `npm run db:verify` (49) — the local one exercises
 behavior via DML inside a rolled-back transaction and depends on seed data (so it cannot
 run against a fresh cloud database); this one is catalog-only (tables/indexes/
 constraints/RPC signatures/grants) and has no DML dependency. Their counts are not
@@ -131,6 +131,13 @@ app calls three RPCs that do not exist until it lands — so app-first makes 新
 3. **Deploy the app.**
 4. **Smoke `/admin/accounts`** — log in and load the page. That single request exercises
    the new column on the session read, so it fails loudly if the order was wrong.
+
+> **`0037` (member roster export, Wave 3 3d / #5B-a) is the same additive DB-first shape.** It
+> adds `log_member_roster_export` + `db_now`, removes/changes nothing: old app + new DB is fine;
+> new app + old DB fails **only** the roster export (RPC missing). The verifier's last assertion
+> is now the member-export one (`all 35 assertions` remote / `49` local). Same order: migration
+> → `db:verify:remote` → app → **smoke by exporting once from `/admin/members` as a superadmin
+> and confirming the row in `/admin/audit`**.
 
 **Why it is one-way:**
 

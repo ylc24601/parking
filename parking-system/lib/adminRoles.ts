@@ -29,6 +29,7 @@ export type AdminCapability =
   | 'manage_admin_accounts' // /admin/accounts + its three write APIs
   | 'view_ops'              // /admin/ops + ops/requeue
   | 'view_audit'            // /admin/audit
+  | 'export_members'        // POST /api/admin/members/export (bulk-PII roster CSV)
 
 // A matrix rather than `role === 'superadmin'`, and `satisfies` rather than a switch:
 // adding a role OR a capability then fails to compile at exactly this table, which is
@@ -36,8 +37,8 @@ export type AdminCapability =
 // reliably error under this project's TS config, and a bare inequality against
 // 'superadmin' would silently grant a future third role everything a clerk can do.
 const ROLE_CAPABILITIES = {
-  superadmin: { manage_admin_accounts: true, view_ops: true, view_audit: true },
-  clerk: { manage_admin_accounts: false, view_ops: false, view_audit: false },
+  superadmin: { manage_admin_accounts: true, view_ops: true, view_audit: true, export_members: true },
+  clerk: { manage_admin_accounts: false, view_ops: false, view_audit: false, export_members: false },
 } satisfies Record<AdminRole, Record<AdminCapability, boolean>>
 
 export function can(role: AdminRole, capability: AdminCapability): boolean {

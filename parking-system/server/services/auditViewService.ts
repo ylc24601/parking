@@ -153,6 +153,7 @@ function actorLabel(row: AuditLogRow, adminNames: Map<string, string>): string {
 const ENTITY_TYPE_LABEL: Record<string, string> = {
   admin_account: '管理員帳號',
   audit: '稽核記錄',
+  member_roster: '會友名冊', // #5B-a export rows; entity_id is null so this renders as the bare label
 }
 
 // 2A-2 resolves ONLY admin_account entities to a name. Everything else renders as

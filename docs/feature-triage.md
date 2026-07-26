@@ -1,6 +1,6 @@
 # 功能想法 Triage（rev.3 — 兩輪外部審查後接近定稿）
 
-> 目的：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A（全）✅、2B（全）✅、2C #19 ✅（PR #45/#46）、3a #8/#9 ✅（PR #47）、3b #17 ✅（PR #48）、3c #18 ✅**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
+> 目的：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A（全）✅、2B（全）✅、2C #19 ✅（PR #45/#46）、3a #8/#9 ✅（PR #47）、3b #17 ✅（PR #48）、3c #18 ✅、3d #5B-a ✅**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
 > rev.1（2026-07-16）：30 條判定＋動工順序。
 > rev.2：一輪審查，修規格＋改 delivery-first 排序。
 > rev.3：二輪審查，修實作語意（PIN 旋轉、commit-then-dispatch、雙真相、actor 模型、拒絕科學記號…）＋拆 Wave 2A/2B/2C。
@@ -29,7 +29,7 @@
 | 3 | PIN 自動發同工 LINE 群 | webhook/通知/cron | **M＋安全 design review** | ✅（4） | ⚠️ **cron retry 反覆旋轉 PIN＝最大風險**。明碼不落地→push 失敗**無法重送同碼**，只能撤舊碼產新碼。**service 邊界**：`issueAndSendToGroup(eventId)`（cron 唯一入口、一次性；內部 issue 回明碼→in-process 交 push，明碼不持久化）／`rotateAndSend(eventId)`（**admin 專用**，撤上一組再產新碼送）。**push 失敗＝不自動 retry、標記「派送失敗」**，管理者手動「重新發碼並再送」（＝旋轉）。每次旋轉寫 audit。groupId 走 **allowlist/啟用流程**，不 auto-trust webhook。需獨立 design review。 |
 | 4 | PIN 個別私訊值班人 | 通知＋綁定＋輪值表 | L | ✅ defer（4） | 需同工完成 OA 綁定；全自動需輪值表 model。 |
 | 5A | 名冊瀏覽（最小欄位、server 分頁） | admin/members | M | ✅（1） | server pagination；欄位僅姓名/遮罩電話/車牌摘要/狀態；**不匯出、不 bulk、不預載敏感事由**，點入才讀完整。可在 role 前上（現有 admin session gate）；明確接受「全名冊可見」姿態先於 role。 |
-| 5B | 名冊匯出/批次/敏感欄位權限 | admin/members | M | ✅（3） | **依賴 #19**：誰可看完整電話/匯出/批次/敏感資格。 |
+| 5B | 名冊匯出/批次/敏感欄位權限 | admin/members | M | **拆三：5B-a ✅ 完成（Wave 3 3d）／5B-b·5B-c deferred** | **依賴 #19**。**5B-a 名冊匯出**（僅系統管理員、含 audit）✅：新 capability `export_members`＋POST `/api/admin/members/export`（body-less、`guardAdminOrigin`、`no-store`）＋keyset 讀（cutoff）＋spreadsheet-injection 防護＋migration `0037` `log_member_roster_export`（FOR SHARE 重新授權＋audit `member_roster.export`，denied 不稽核）。**非 round-trip**（人類可讀行政匯出）。**5B-b 敏感欄位顯示分級**（明細頁依角色遮罩眷屬/生日）＋**5B-c 批次** → **post-delivery deferred**（無具體需求；今日幹事仍看完整電話/P2 事由，本刀不碰）。 |
 | 6A | Admin 憑車牌移車（第一版） | admin/members＋通知 | M | ✅（4） | 走通用通知目的地模型。含：憑車牌搜尋、車主解析、**未綁 LINE gating（明示無法通知不假送）**、二次確認、遮罩姓名+完整車牌核對、可選原因（擋出入口/車燈/施工/其他）、同車牌 5–10min 冷卻、reservation-independent dedupe、enqueue、**當次操作結果**、audit。送出後只顯示「通知已排入傳送，暫時無法送達會自動重試」。role：幹事可用、不看 ops 內部（#19 matrix）。 |
 | 6B | 移車通知歷史/狀態（polish） | admin/members | M | ✅ defer（後續） | 最近通知時間+狀態、重送入口/歷史。**避免第一版耦合完整 outbox 狀態 UI**（pending/processing/sent/retrying/failed）。 |
 | 7 | 移車/急件即時通知 | 通知/dispatcher | S–M | ✅（4） | **commit 後才 dispatch**：txn（業務寫入＋enqueue）→**commit**→回業務成功→**commit 後** best-effort「只 claim 這筆/dedupe key」bounded dispatch→LINE 失敗不回滾、cron 續 retry。（不可在 txn 未 commit 時觸發 dispatcher——另一連線看不到 row/讀到未完成狀態。）UI 三態文案：已排入／已送達／暫時失敗稍後重試。 |
@@ -82,7 +82,7 @@
 **Wave 2A：寫入治理地基** — #15 Audit substrate ✅ **全部完成**。**拆三刀：2A-1 substrate ✅（PR #38 / `8513912`）／2A-2 read-only viewer ✅（PR #39 / `d2e6890`，app-only 無 migration）／2A-3 retention ✅（PR #43 / `5db33bc`，migration `0034`）**
 **Wave 2B：關鍵 Admin 寫入**（需 #15、不需 #19）— **2B-1 #14A 車位容量 ✅（PR #40 / `8de24a0`，migration `0031`）／#10 P2 覆核：2B-2a 模型 ✅（PR #41 / `155c7f7`，migration `0032`）、2B-2b 寫入 RPC＋UI ✅（PR #42 / `c536b01`，migration `0033`）⇒ Wave 2B 交付阻擋全部解除／2B-2c 佇列列內操作（非阻擋，可留交付後）**
 **Wave 2C：角色地基 ✅ 全部完成** — #19 Admin roles＋session 撤銷＋role matrix。**2C-1 兩層角色（系統管理員／幹事）✅（PR #45 `76e93f8`，migration `0035`）／2C-2 帳號管理 UI＋create/role/revoke RPC ✅（PR #46 `ca9de80`，migration `0036`）**
-**Wave 3：其餘管理功能** — **3a #8 概覽＋#9 徽章 ✅ 完成**；**3b #17 通知系統狀態 B＋C ✅ 完成**；**3c #18 側欄兩區 ✅ 完成**；剩 #5B 名冊敏感權限／#14B override（規則未定）
+**Wave 3：其餘管理功能** — **3a #8 概覽＋#9 徽章 ✅ 完成**；**3b #17 通知系統狀態 B＋C ✅ 完成**；**3c #18 側欄兩區 ✅ 完成**；**3d #5B-a 名冊匯出 ✅ 完成**；剩 **#14B override**（規則未定、需先產品決策）。#5B-b 顯示分級／#5B-c 批次 → post-delivery deferred
 **Wave 4：通知便利性** — 通用 destination model→#7→#6A（#6B 後續）→#3（最後，語意最敏感）→#4／#26
 **Wave 5：會員自助與分析** — #28／#11／#16／#13
 **Deferred/不做**：#2 ❌
@@ -99,7 +99,7 @@
 規則：cutoff `created_at < now() - interval '24 months'`／受限 `SECURITY DEFINER` maintenance function／bounded batches／purge 只記 cutoff＋deleted_count，**不記被刪 ID 或其 metadata**。
 **`audit.substrate_enabled` 與 `audit.retention_purge` 為 retention-exempt**——保留「trail 從何時開始、歷史依哪個政策被清」。
 ✅ 實作（`0034`）：0030 的 append-only trigger 擋掉**所有** DELETE，purge 的逃生口＝**雙鎖**——交易域 GUC `audit.allow_purge`（只有 `purge_audit_logs` 用 `set_config(...,true)` 開）＋ `current_user` ＝ table owner（SECURITY DEFINER 以 owner 執行、直接 service_role delete 不是 owner）。**時鐘用 DB `now()`、RPC 不收 `p_now`**（呼叫端傳未來時間即可洗全表；審查必改 1，與 binding-PII 前例的有意分歧）。verifier 釘 fn owner ＝ table owner（否則鎖2 連合法 purge 都擋）。UI 文案翻面的**部署硬前置**＝prod cron 先設好（runbook §13）。
-**可交付後迭代**：#3、#4、#6、#11、#14B、#16、#28、#5B（#8／#9／#17／#18／#19 ✅ 已完成）
+**可交付後迭代**：#3、#4、#6、#11、#14B、#16、#28、#5B-b／#5B-c（#8／#9／#17／#18／#19／#5B-a ✅ 已完成）
 > #3 雖方便但人工重發 PIN 已能運作；反而 #10/#14A 仍碰 SQL 的交付風險更高。角色分級（#19）可留交付後。
 > **更新（2026-07-25）**：#19（Wave 2C-1／2C-2）已完成 merged，此處「可留交付後」已成歷史脈絡。
 > **更新（2026-07-17）**：#14A（2B-1）與 #10（2B-2a＋2B-2b）皆已完成 ⇒ **上句所指的交付風險已消除**，容量與 P2 資格都有 audited 的 Admin UI 路徑。僅存的「仍需手打 SQL」缺口是 **runbook §12.1 Step 0 的遠期 demo event 容量**（`/admin/capacity` 刻意只給當週/次週，見 §8 Wave 2B-1），屬 demo 走查而非同工日常營運。

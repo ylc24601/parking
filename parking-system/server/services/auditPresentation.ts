@@ -386,6 +386,18 @@ const ACTIONS: Record<string, AuditActionDefinition> = {
       ]
     },
   },
+  // Wave 3 3d (#5B-a). A superadmin exported the member roster (bulk-PII egress). The metadata
+  // is a count only — 0037 never writes a member id, name, or any exported value — so the row
+  // records HOW MANY were in the export, never whom.
+  'member_roster.export': {
+    label: '匯出會友名冊',
+    reads: ['row_count'],
+    render: metadata => {
+      const n = metadata.row_count
+      if (typeof n !== 'number') return 'unreadable'
+      return [{ label: '匯出筆數', value: String(n) }]
+    },
+  },
 }
 
 export const UNKNOWN_ACTION_DETAIL = '詳細資料目前無法顯示'

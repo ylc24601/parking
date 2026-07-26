@@ -96,6 +96,14 @@ export interface MemberSearchRow {
   plates: string[]
 }
 
+// Wave 3 3d (#5B-a) — a roster row for the CSV export: MemberSearchRow plus the created_at
+// the keyset pager uses as its cursor. created_at is the RAW string as returned by the DB;
+// it is never round-tripped through Date (that truncates microseconds and would break the
+// cursor at sub-millisecond timestamp ties).
+export interface MemberExportRow extends MemberSearchRow {
+  created_at: string
+}
+
 // Wave 2B-1 (#14A) — the editable capacity state of one week, plus the inputs the
 // preview needs. admin_reserved is carried even though 0031 pins it to 0: it is still a
 // term in computeCapacity, so passing it explicitly keeps the preview honest rather
@@ -936,6 +944,29 @@ export interface ParkingRepository {
   // by (display_name, id): a total order is what makes offset paging correct — searchMembers sorts
   // in JS after fetching, which cannot page. Masking happens in the service, same as search.
   listMembers(args: { limit: number; offset: number }): Promise<{ rows: MemberSearchRow[]; total: number }>
+  // Wave 3 3d (#5B-a) — one keyset page of the roster for the CSV export. Unlike listMembers'
+  // offset paging (which can dup/skip a member if the roster mutates mid-export), this pages by
+  // the IMMUTABLE (created_at, id) cursor with a created_at < createdBefore cutoff, so a
+  // concurrent insert can neither shift the window nor appear in this export. afterCreatedAt/
+  // afterId null = first page. Ordered (created_at, id); the service re-sorts for display.
+  listMembersForExportPage(args: {
+    createdBefore: string
+    afterCreatedAt: string | null
+    afterId: string | null
+    limit: number
+  }): Promise<MemberExportRow[]>
+  // Wave 3 3d (#5B-a) — DB-authoritative gate + audit for a roster export (0037). Re-reads the
+  // acting admin FOR SHARE and appends the audit row only if still an active superadmin; denied
+  // paths write nothing (a refused export leaks no PII). ok:false → route maps to 403.
+  logMemberRosterExport(args: {
+    actingAdminId: string
+    actingSessionId: string
+    requestId: string
+    rowCount: number
+  }): Promise<{ ok: boolean; reason?: string }>
+  // Wave 3 3d (#5B-a) — the DB clock (0037 db_now), so the export cutoff is on the same clock
+  // as users.created_at rather than the app host's. Returns the raw ISO string.
+  getDbNow(): Promise<string>
   // Phase 8 Slice 2 — full admin member detail (raw PII). Null if the user doesn't exist.
   getMemberAdminDetail(userId: string): Promise<MemberAdminDetailRow | null>
   // Phase 8 Slice 4 — P2-eligible members due for review at/before cutoffDate. Runs TWO
@@ -994,6 +1025,33 @@ export function createParkingRepository(
       .maybeSingle()
     if (error) throw new Error(`getUpcomingScheduledEvent failed: ${error.message}`)
     return (data as WeeklyEventRow | null) ?? null
+  }
+
+  // Shared active-plate attach for the roster reads (listMembers + the export pager), so the
+  // is_active filter and (created_at, id) plate order can't drift between browse and export.
+  // Chunked by PLATE_LOOKUP_CHUNK: .in() inlines every UUID into the request line, so a few
+  // hundred ids (the export pages up to 200) would risk a 414 — the same reason the constant
+  // exists. Each user's vehicles share its user_id, so a user falls entirely in one chunk and
+  // its plate order is preserved.
+  async function activePlatesByUser(idList: string[]): Promise<Map<string, string[]>> {
+    const byUser = new Map<string, string[]>()
+    for (let i = 0; i < idList.length; i += PLATE_LOOKUP_CHUNK) {
+      const chunk = idList.slice(i, i + PLATE_LOOKUP_CHUNK)
+      const { data, error } = await client
+        .from('vehicles')
+        .select('user_id, license_plate')
+        .eq('is_active', true)
+        .in('user_id', chunk)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+      if (error) throw new Error(`activePlatesByUser failed: ${error.message}`)
+      for (const r of (data ?? []) as Array<{ user_id: string; license_plate: string }>) {
+        const arr = byUser.get(r.user_id) ?? []
+        arr.push(r.license_plate)
+        byUser.set(r.user_id, arr)
+      }
+    }
+    return byUser
   }
 
   return {
@@ -2378,24 +2436,7 @@ export function createParkingRepository(
       // `.in('user_id', [])`, whose behaviour isn't consistent across clients.
       if (users.length === 0) return { rows: [], total: count }
 
-      const idList = users.map(u => u.id)
-      const { data: plateRows, error: pe } = await client
-        .from('vehicles')
-        .select('user_id, license_plate')
-        .eq('is_active', true)
-        .in('user_id', idList)
-        // id breaks created_at ties so the plate shown first in 'ABC-1234 ＋2' is stable.
-        .order('created_at', { ascending: true })
-        .order('id', { ascending: true })
-      if (pe) throw new Error(`listMembers plates fetch failed: ${pe.message}`)
-
-      const platesByUser = new Map<string, string[]>()
-      for (const r of (plateRows ?? []) as Array<{ user_id: string; license_plate: string }>) {
-        const arr = platesByUser.get(r.user_id) ?? []
-        arr.push(r.license_plate)
-        platesByUser.set(r.user_id, arr)
-      }
-
+      const platesByUser = await activePlatesByUser(users.map(u => u.id))
       const rows = users.map(u => ({
         id: u.id,
         display_name: u.display_name,
@@ -2405,6 +2446,61 @@ export function createParkingRepository(
         plates: platesByUser.get(u.id) ?? [],
       }))
       return { rows, total: count }
+    },
+
+    async listMembersForExportPage({ createdBefore, afterCreatedAt, afterId, limit }) {
+      // Keyset over the IMMUTABLE (created_at, id): a concurrent insert (created_at >= now)
+      // is excluded by the cutoff and cannot shift the window, so no member is duped or
+      // skipped across pages (offset paging cannot promise that). The compound cursor is
+      // needed because created_at is NOT unique — a bulk import gives every row the same
+      // statement now() — so id breaks the tie. The timestamp is double-quoted in the .or()
+      // so PostgREST treats the ':'/'+' as data, not filter syntax.
+      let query = client
+        .from('users')
+        .select('id, display_name, phone_number, role, line_id, created_at')
+        .lt('created_at', createdBefore)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(limit)
+      if (afterCreatedAt !== null && afterId !== null) {
+        query = query.or(
+          `created_at.gt."${afterCreatedAt}",and(created_at.eq."${afterCreatedAt}",id.gt.${afterId})`,
+        )
+      }
+      const { data, error } = await query
+      if (error) throw new Error(`listMembersForExportPage failed: ${error.message}`)
+
+      const users = (data ?? []) as Array<{
+        id: string; display_name: string; phone_number: string | null; role: string; line_id: string | null; created_at: string
+      }>
+      if (users.length === 0) return []
+      const platesByUser = await activePlatesByUser(users.map(u => u.id))
+      return users.map(u => ({
+        id: u.id,
+        display_name: u.display_name,
+        phone_number: u.phone_number,
+        role: u.role,
+        line_id: u.line_id,
+        created_at: u.created_at,
+        plates: platesByUser.get(u.id) ?? [],
+      }))
+    },
+
+    async logMemberRosterExport({ actingAdminId, actingSessionId, requestId, rowCount }) {
+      const { data, error } = await client.rpc('log_member_roster_export', {
+        p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
+        p_request_id: requestId,
+        p_row_count: rowCount,
+      })
+      if (error) throw new Error(`log_member_roster_export failed: ${error.message}`)
+      return data as { ok: boolean; reason?: string }
+    },
+
+    async getDbNow() {
+      const { data, error } = await client.rpc('db_now')
+      if (error) throw new Error(`db_now failed: ${error.message}`)
+      return data as string
     },
 
     async getMemberAdminDetail(userId) {

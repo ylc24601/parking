@@ -1,8 +1,10 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import { can } from '@/lib/adminRoles'
 import { getAdminSession } from '@/server/http/adminAuth'
 import { listMembersPage } from '@/server/services/memberAdminService'
+import ExportMembersButton from './ExportMembersButton'
 import MemberSearch from './MemberSearch'
 import MemberTable from './MemberTable'
 import { parsePage } from './parsePage'
@@ -23,7 +25,8 @@ export default async function AdminMembersPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }) {
-  if (!(await getAdminSession())) redirect('/admin')
+  const session = await getAdminSession()
+  if (!session) redirect('/admin')
 
   const requestedPage = parsePage((await searchParams).page)
   const { items, page, totalPages, total } = await listMembersPage({ page: requestedPage })
@@ -34,8 +37,10 @@ export default async function AdminMembersPage({
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-10 text-ink">
-      <header>
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight">會友管理</h1>
+        {/* Bulk-PII roster export — superadmin only (#5B-a). Hiding it is UX; the route gates. */}
+        {can(session.role, 'export_members') && <ExportMembersButton />}
       </header>
 
       <MemberSearch />

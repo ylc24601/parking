@@ -11,6 +11,9 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     getWeeklyEventBySunday: vi.fn(async () => ({ id: 'event-1', sunday_date: '2026-06-21', status: 'open' })),
     getWaitingRank: vi.fn(async () => 1),
     listMembers: vi.fn(async () => ({ rows: [], total: 0 })),
+    listMembersForExportPage: vi.fn(async () => []),
+    logMemberRosterExport: vi.fn(async () => ({ ok: true })),
+    getDbNow: vi.fn(async () => '2026-07-26T15:00:00.000000+00:00'),
     // Wave 2A-2 — audit timeline read. Empty by default: an empty log is the
     // graceful case, so tests that don't care stay unaffected.
     listAuditLogs: vi.fn(async () => ({ rows: [] })),
