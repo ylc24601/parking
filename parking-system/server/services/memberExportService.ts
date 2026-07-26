@@ -31,10 +31,21 @@ export type MemberExportResult =
   | { ok: true; csv: string; filename: string; rowCount: number }
   | { ok: false; reason: 'forbidden' }
 
+// Phones are stored canonical (`^09[0-9]{8}$`), i.e. a leading-zero all-digit string.
+// Excel, on double-clicking a CSV, coerces numeric text to a number and DROPS the leading
+// zero (0912345678 → 912345678) — so every single phone would be corrupted for the exact
+// reader (行政同工) this file is for. Since this is a human-readable, non-round-trip export,
+// format to 0912-345-678: the dashes make Excel keep it as text and it reads more clearly.
+// A non-canonical value (shouldn't exist given the DB constraint) falls through unchanged.
+export function formatPhoneForExport(phone: string | null): string {
+  if (!phone) return ''
+  return phone.replace(/^(\d{4})(\d{3})(\d{3})$/, '$1-$2-$3')
+}
+
 function toCsvRow(m: MemberExportRow): string[] {
   return [
     m.display_name,
-    m.phone_number ?? '',
+    formatPhoneForExport(m.phone_number),
     m.plates.join('；'), // active plates only (repo), joined into one cell — NOT a re-import shape
     ROLE_LABEL[m.role] ?? m.role,
     m.line_id !== null ? '是' : '否', // derived flag, never the raw line_id

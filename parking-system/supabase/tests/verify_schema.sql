@@ -1330,7 +1330,26 @@ begin
     raise exception 'FAIL: % owner <> append_audit_log owner — it could not reach the writer', v_sig;
   end if;
 
-  raise notice 'PASS: member roster export audit RPC — signature, owner, search_path, grants pinned';
+  -- db_now() ships in the SAME migration (0037) and is a runtime dependency of the export:
+  -- the service reads it for the membership cutoff before paging the roster. If it were
+  -- missing or grant-drifted, the export route would 500 in prod even though the audit RPC
+  -- above verified clean — so it must be pinned by the SAME contract, not left unchecked.
+  if to_regprocedure('db_now()') is null then
+    raise exception 'FAIL: db_now() missing — the export cutoff has no DB clock to read';
+  end if;
+  if (select prorettype from pg_proc where oid = to_regprocedure('db_now()')) <> 'timestamptz'::regtype then
+    raise exception 'FAIL: db_now() must return timestamptz';
+  end if;
+  if has_function_privilege('anon', 'db_now()', 'execute')
+     or has_function_privilege('authenticated', 'db_now()', 'execute')
+     or has_function_privilege('public', 'db_now()', 'execute') then
+    raise exception 'FAIL: db_now() must be executable only by service_role';
+  end if;
+  if not has_function_privilege('service_role', 'db_now()', 'execute') then
+    raise exception 'FAIL: service_role lacks execute on db_now()';
+  end if;
+
+  raise notice 'PASS: member roster export audit RPC + db_now cutoff clock — signature, owner, search_path, grants pinned';
 end $$;
 
 -- ── 40b. The role RPCs actually behave (behavioural) ─────────────────────────────

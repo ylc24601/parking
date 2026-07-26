@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeMockRepo, asRepo } from './mockRepo'
-import { exportMembersCsv } from '@/server/services/memberExportService'
+import { exportMembersCsv, formatPhoneForExport } from '@/server/services/memberExportService'
 import type { AuditActor } from '@/server/services/auditContext'
 import type { MemberExportRow } from '@/server/repositories/parkingRepository'
 
@@ -18,6 +18,18 @@ const row = (over: Partial<MemberExportRow> = {}): MemberExportRow => ({
   ...over,
 })
 
+describe('formatPhoneForExport', () => {
+  it('dash-groups a canonical mobile so Excel keeps the leading 0', () => {
+    expect(formatPhoneForExport('0912345678')).toBe('0912-345-678')
+  })
+  it('null → empty cell', () => {
+    expect(formatPhoneForExport(null)).toBe('')
+  })
+  it('leaves a non-canonical value unchanged (defensive; DB constraint prevents these)', () => {
+    expect(formatPhoneForExport('123')).toBe('123')
+  })
+})
+
 describe('exportMembersCsv', () => {
   it('superadmin → CSV of the minimal fields (full phone, joined active plates, 中文 role, 是/否), then audited', async () => {
     const repo = makeMockRepo({ listMembersForExportPage: vi.fn(async () => [row()]) })
@@ -28,7 +40,8 @@ describe('exportMembersCsv', () => {
     expect(res.rowCount).toBe(1)
     expect(res.csv.charCodeAt(0)).toBe(0xfeff) // BOM
     expect(res.csv).toContain('姓名,電話,車牌,角色,LINE綁定\r\n')
-    expect(res.csv).toContain('王小明,0912345678,ABC-1234；DEF-5678,會友,是')
+    // Phone is dash-grouped so Excel keeps the leading 0 (see formatPhoneForExport).
+    expect(res.csv).toContain('王小明,0912-345-678,ABC-1234；DEF-5678,會友,是')
     // No sensitive-eligibility columns are even representable (rows never carry them).
     expect(res.csv).not.toContain('事由')
     expect(repo.logMemberRosterExport).toHaveBeenCalledWith(
