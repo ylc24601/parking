@@ -20,6 +20,11 @@ describe('neutralizeSpreadsheetCell — formula injection', () => {
       expect(neutralizeSpreadsheetCell(v)).toBe(`'${v}`)
     }
   })
+  it('also neutralizes full-width CJK formula leads (＝＋－＠)', () => {
+    for (const v of ['＝1+1', '＋1', '－1', '＠SUM(1)']) {
+      expect(neutralizeSpreadsheetCell(v)).toBe(`'${v}`)
+    }
+  })
   it('leaves safe values alone', () => {
     expect(neutralizeSpreadsheetCell('王小明')).toBe('王小明')
     expect(neutralizeSpreadsheetCell('ABC-1234')).toBe('ABC-1234')

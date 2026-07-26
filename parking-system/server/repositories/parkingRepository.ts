@@ -964,6 +964,9 @@ export interface ParkingRepository {
     requestId: string
     rowCount: number
   }): Promise<{ ok: boolean; reason?: string }>
+  // Wave 3 3d (#5B-a) — the DB clock (0037 db_now), so the export cutoff is on the same clock
+  // as users.created_at rather than the app host's. Returns the raw ISO string.
+  getDbNow(): Promise<string>
   // Phase 8 Slice 2 — full admin member detail (raw PII). Null if the user doesn't exist.
   getMemberAdminDetail(userId: string): Promise<MemberAdminDetailRow | null>
   // Phase 8 Slice 4 — P2-eligible members due for review at/before cutoffDate. Runs TWO
@@ -1026,21 +1029,27 @@ export function createParkingRepository(
 
   // Shared active-plate attach for the roster reads (listMembers + the export pager), so the
   // is_active filter and (created_at, id) plate order can't drift between browse and export.
+  // Chunked by PLATE_LOOKUP_CHUNK: .in() inlines every UUID into the request line, so a few
+  // hundred ids (the export pages up to 200) would risk a 414 — the same reason the constant
+  // exists. Each user's vehicles share its user_id, so a user falls entirely in one chunk and
+  // its plate order is preserved.
   async function activePlatesByUser(idList: string[]): Promise<Map<string, string[]>> {
     const byUser = new Map<string, string[]>()
-    if (idList.length === 0) return byUser
-    const { data, error } = await client
-      .from('vehicles')
-      .select('user_id, license_plate')
-      .eq('is_active', true)
-      .in('user_id', idList)
-      .order('created_at', { ascending: true })
-      .order('id', { ascending: true })
-    if (error) throw new Error(`activePlatesByUser failed: ${error.message}`)
-    for (const r of (data ?? []) as Array<{ user_id: string; license_plate: string }>) {
-      const arr = byUser.get(r.user_id) ?? []
-      arr.push(r.license_plate)
-      byUser.set(r.user_id, arr)
+    for (let i = 0; i < idList.length; i += PLATE_LOOKUP_CHUNK) {
+      const chunk = idList.slice(i, i + PLATE_LOOKUP_CHUNK)
+      const { data, error } = await client
+        .from('vehicles')
+        .select('user_id, license_plate')
+        .eq('is_active', true)
+        .in('user_id', chunk)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+      if (error) throw new Error(`activePlatesByUser failed: ${error.message}`)
+      for (const r of (data ?? []) as Array<{ user_id: string; license_plate: string }>) {
+        const arr = byUser.get(r.user_id) ?? []
+        arr.push(r.license_plate)
+        byUser.set(r.user_id, arr)
+      }
     }
     return byUser
   }
@@ -2486,6 +2495,12 @@ export function createParkingRepository(
       })
       if (error) throw new Error(`log_member_roster_export failed: ${error.message}`)
       return data as { ok: boolean; reason?: string }
+    },
+
+    async getDbNow() {
+      const { data, error } = await client.rpc('db_now')
+      if (error) throw new Error(`db_now failed: ${error.message}`)
+      return data as string
     },
 
     async getMemberAdminDetail(userId) {

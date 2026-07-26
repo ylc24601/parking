@@ -75,3 +75,12 @@ end $$;
 
 revoke all on function log_member_roster_export(uuid, uuid, uuid, int) from public, anon, authenticated;
 grant execute on function log_member_roster_export(uuid, uuid, uuid, int) to service_role;
+
+-- The export's membership cutoff must come from the DB clock, not the app (Vercel) clock:
+-- the two can skew, and users.created_at is set by the DB's now(), so filtering
+-- `created_at < <app now>` could mis-classify a member created near the export start. This
+-- reads the same clock as the column it bounds. NOTE: it fixes a stable upper bound — it is
+-- NOT a transaction snapshot (the export's keyset pages are separate statements).
+create function db_now() returns timestamptz language sql stable as $$ select now() $$;
+revoke all on function db_now() from public, anon, authenticated;
+grant execute on function db_now() to service_role;

@@ -44,6 +44,16 @@ describe('exportMembersCsv', () => {
     expect(repo.logMemberRosterExport).not.toHaveBeenCalled()
   })
 
+  it('non-admin actor → throws (bulk-PII boundary distrusts the plain actor); roster/audit untouched', async () => {
+    const repo = makeMockRepo({ listMembersForExportPage: vi.fn(async () => [row()]) })
+    const memberActor: AuditActor = { actorType: 'member', actorId: 'm-1', actorSessionId: 's-1', actorRoleSnapshot: null }
+    await expect(
+      exportMembersCsv({ role: 'superadmin', actor: memberActor, requestId: 'req-1', now: NOW }, asRepo(repo)),
+    ).rejects.toThrow()
+    expect(repo.listMembersForExportPage).not.toHaveBeenCalled()
+    expect(repo.logMemberRosterExport).not.toHaveBeenCalled()
+  })
+
   it('DB reauth forbidden (demoted mid-request) → typed forbidden, no CSV', async () => {
     const repo = makeMockRepo({
       listMembersForExportPage: vi.fn(async () => [row()]),

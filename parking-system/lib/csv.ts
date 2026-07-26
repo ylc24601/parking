@@ -11,7 +11,9 @@
 // This neutralization is also why the export is NOT a lossless re-import format (a neutralized
 // cell no longer equals its source) — see server/services/memberExportService.ts.
 
-const FORMULA_LEAD = /^[=+\-@\t\r\n]/
+// ASCII formula leads plus their full-width CJK counterparts (＝＋－＠): this is a
+// Traditional-Chinese dataset, and OWASP notes some locales/apps evaluate the full-width forms.
+const FORMULA_LEAD = /^[=+\-@＝＋－＠\t\r\n]/
 
 // Prefix a spreadsheet-dangerous cell with ' (applied BEFORE CSV quoting).
 export function neutralizeSpreadsheetCell(value: string): string {

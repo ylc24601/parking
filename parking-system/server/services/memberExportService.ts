@@ -2,7 +2,7 @@ import { can, type AdminRole } from '@/lib/adminRoles'
 import { ROLE_LABEL } from '@/lib/memberAdminTypes'
 import { toSpreadsheetCsv } from '@/lib/csv'
 import { taipeiToday } from '@/lib/taipeiDate'
-import type { AuditActor } from '@/server/services/auditContext'
+import { requireAdminActor, type AuditActor } from '@/server/services/auditContext'
 import {
   createParkingRepository,
   type MemberExportRow,
@@ -48,12 +48,14 @@ export async function exportMembersCsv(
   // App-side defense in depth. The route's can() is the first gate; the DB reauth below is
   // authoritative. Authorisation refusal is a TYPED result, never an exception → route 403.
   if (!can(params.role, 'export_members')) return { ok: false, reason: 'forbidden' }
-  if (params.actor.actorId === null || params.actor.actorSessionId === null) {
-    // An export must carry a known admin actor; a missing one is a threading bug, not a 403.
-    throw new Error('exportMembersCsv: actor requires actorId and actorSessionId')
-  }
+  // Don't trust the AuditActor plain object at this bulk-PII boundary: require an admin actor
+  // with a session (throws on anything else — a threading bug, not a 403). Returns narrowed ids.
+  const { adminId, sessionId } = requireAdminActor(params.actor)
 
-  const createdBefore = params.now.toISOString()
+  // Cutoff on the DB clock (not the app host's), the same clock users.created_at is set by.
+  // It fixes a stable upper bound so keyset pages don't chase a moving tail — NOT a strict
+  // transaction snapshot (the pages are separate statements).
+  const createdBefore = await repo.getDbNow()
 
   // Keyset page to completion. The cursor is the RAW created_at string from the DB — never
   // round-tripped through Date, which truncates microseconds and would break sub-millisecond
@@ -78,8 +80,8 @@ export async function exportMembersCsv(
 
   // DB-authoritative reauth + audit (0037). ok:false = demoted/disabled mid-request → forbidden.
   const logged = await repo.logMemberRosterExport({
-    actingAdminId: params.actor.actorId,
-    actingSessionId: params.actor.actorSessionId,
+    actingAdminId: adminId,
+    actingSessionId: sessionId,
     requestId: params.requestId,
     rowCount: all.length,
   })

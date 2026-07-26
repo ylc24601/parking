@@ -78,7 +78,7 @@ and investigate the cause — do not run `supabase migration repair` to force th
 green.**
 
 ```bash
-ls supabase/migrations/*.sql | wc -l   # sanity: should print 36
+ls supabase/migrations/*.sql | wc -l   # sanity: should print 37
 ```
 
 > ⚠️ **`0035` (admin roles) must be applied BEFORE the app that goes with it.** It is not
@@ -131,6 +131,13 @@ app calls three RPCs that do not exist until it lands — so app-first makes 新
 3. **Deploy the app.**
 4. **Smoke `/admin/accounts`** — log in and load the page. That single request exercises
    the new column on the session read, so it fails loudly if the order was wrong.
+
+> **`0037` (member roster export, Wave 3 3d / #5B-a) is the same additive DB-first shape.** It
+> adds `log_member_roster_export` + `db_now`, removes/changes nothing: old app + new DB is fine;
+> new app + old DB fails **only** the roster export (RPC missing). The verifier's last assertion
+> is now the member-export one (`all 35 assertions` remote / `49` local). Same order: migration
+> → `db:verify:remote` → app → **smoke by exporting once from `/admin/members` as a superadmin
+> and confirming the row in `/admin/audit`**.
 
 **Why it is one-way:**
 

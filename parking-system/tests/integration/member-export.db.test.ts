@@ -56,6 +56,7 @@ describe.skipIf(!RUN)('member roster export (#5B-a) — local DB integration', (
   })
 
   afterAll(async () => {
+    for (const id of createdUsers) await sb.from('vehicles').delete().eq('user_id', id)
     for (const id of createdUsers) await sb.from('users').delete().eq('id', id)
     for (const id of createdAdmins) {
       await sb.from('admin_sessions').delete().eq('admin_id', id)
@@ -142,5 +143,30 @@ describe.skipIf(!RUN)('member roster export (#5B-a) — local DB integration', (
     }
     expect(seen).toContain(before)
     expect(seen).not.toContain(after)
+  })
+
+  it('active-plate lookup chunks past 100 ids — no plate dropped at the 100-boundary', async () => {
+    const N = 101
+    // created_at 2000 so ONLY these match the cutoff (seed is 2026, other tests are 2099);
+    // all tied so they land in one keyset page (< limit 200) and the plate lookup gets all 101.
+    const createdBefore = '2000-02-01T00:00:00Z'
+    const users: Array<{ id: string; license_plate: string }> = []
+    for (let i = 0; i < N; i++) {
+      const id = randomUUID() as string
+      createdUsers.push(id)
+      users.push({ id, license_plate: `CHK${U}${String(i).padStart(3, '0')}` })
+    }
+    await sb.from('users').insert(
+      users.map(u => ({ id: u.id, display_name: `CHK-${U}`, phone_number: phoneFor(), created_at: '2000-01-01T00:00:00+00:00' })),
+    ).throwOnError()
+    await sb.from('vehicles').insert(
+      users.map(u => ({ user_id: u.id, license_plate: u.license_plate, is_active: true })), // license_plate_normalized is generated
+    ).throwOnError()
+
+    const page = await repo.listMembersForExportPage({ createdBefore, afterCreatedAt: null, afterId: null, limit: 200 })
+    const idset = new Set<string>(users.map(u => u.id))
+    const mine = page.filter(p => idset.has(p.id))
+    expect(mine).toHaveLength(N) // all 101, before the 2026 seed
+    expect(mine.every(p => p.plates.length === 1)).toBe(true) // each keeps its plate across the 100-chunk boundary
   })
 })
