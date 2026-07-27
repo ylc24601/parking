@@ -25,6 +25,15 @@
 
 > 出處：[delivery-model-and-roadmap.md](delivery-model-and-roadmap.md) roadmap §5「post-delivery ops」。順序有意義：真 PII 落地前先升 Pro；真送出前先簽文案。
 
+### 1.0 部署安全：關掉 Vercel 自動切換 production domain（交付前必做）
+
+> **為什麼在最前面**：這一條不做，下面每一條「改完部署」的步驟都可能被搶跑。已有三次同型漂移（[current_handoff.md](current_handoff.md) §6.37／§6.41／§6.48），最近一次是 `0035` 進 main 後 Vercel 立刻切了 app、migration 三天後才套用。
+
+- **Who**：dev
+- [ ] **Vercel → Settings → Environments → Production → Branch Tracking → 關掉 Auto-assign Custom Production Domains**（Production branch 維持 `main`）
+- **Verify**：關掉後隨便 merge 一次，Deployments 頁該筆狀態應為 **Staged**、production domain 仍指向前一版（**Current**）；手動 **Promote** 後才變 Current，且不會 rebuild。
+- **之後每次含 migration 的 release**：merge → `db push` → `db:verify:remote` → 在 staged URL smoke → Promote → 在正式 domain smoke。順序與 A/B/R 相容性判斷見 [prod-deploy-runbook.md](prod-deploy-runbook.md) §1.5、§2.5。
+
 ### 1.1 資料保護：備份 ＋ 不被暫停（真 PII 落地前）
 
 > **決策（2026-07-18）：先不升 Pro**（省 ~US$25/月）⇒ 走 **Free ＋自管備份**。可隨時回頭改：升 Pro 是 dashboard 一鍵、就地升級（同 project ref/URL/key、資料不動、Vercel env 不需改），升完每日備份自動開。

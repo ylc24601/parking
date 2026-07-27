@@ -1159,6 +1159,49 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 
 ---
 
+## 6.48 Wave 2C＋Wave 3 上 prod：migration 補推，並發現部署順序被 auto-deploy 破壞（2026-07-27）
+
+**起因**：使用者問「最近的改動要怎麼更新到 prod、會不會動到 Supabase 的資料」。查證發現 prod 的 app 與 DB 已經分岔。
+
+**實測到的狀態**：
+
+| | 事實 | 怎麼確認的 |
+|---|---|---|
+| prod app | 已含 Wave 2C-2 之後的 build | `GET /admin/accounts` 回 **307**（導向登入）而非 404——該路由是 `ca9de80` 才加的 |
+| prod DB | 停在 **`0034`** | `npx supabase db push` 列出的待套用清單正好是 `0035`／`0036`／`0037` |
+| 落差期間 | `0035` 於 **2026-07-24** 進 main（`76e93f8`），migration 直到 **07-27** 才套用 | `git log --diff-filter=A` |
+
+也就是說，那三天 prod 上跑的 app 每個 admin request 都在 `select admin_accounts.role`，而該欄位不存在。**是否真的有人在那個窗口打過後台，本紀錄未查證**——prod 目前沒有真會友資料（go-live §1.3 未做）也沒有任何 clerk 帳號，唯一可能受影響的是開發者自己的後台操作。
+
+**根因**：runbook §1.5 規定的順序是 `migration → db:verify:remote → app → smoke`，但 Vercel 的 Git Integration 預設 **push 到 production branch 即自動 promote**。所以「merge」等於「部署 app」，而 migration 仍是人工步驟 ⇒ **只要 PR 同時含 app code 與 migration，就必然先產生 `new app + old DB`**。文件寫的順序與實際的部署觸發機制不一致，紀律補不起來。
+
+**這是同型漂移的第三次**：§6.37 是 prod schema 落後六支 migration（被還原演練意外抓到）、§6.41 是本機修正沒 commit／push 而 prod 仍送舊文案、本次是部署順序被 auto-deploy 破壞。前兩次都當成個案處理，這次改成處理機制。
+
+**處置（本次實際執行）**：
+
+1. `npx supabase db push` → `0035`／`0036`／`0037` 三支套用成功。
+   - CLI 在**三支都 apply 完之後**噴一則 `failed to cache migrations catalog` warning（pg-delta 在 edge-runtime 容器內找不到 `/workspace/supabase/.temp/pgdelta/pgdelta-target-ca.crt`；本機該檔實際存在）。**屬 CLI 本機快取步驟的路徑問題，未觸及遠端資料庫**；判定依據是三行 `Applying migration ...` 皆無 SQL 錯誤，且下一步的獨立驗證通過。
+2. `npm run db:verify:remote` → **`all 35 assertions passed`**（34→35，最後一條即 `0037` 的 member-export）。
+3. Smoke：**使用者回報通過**（清單：登入 `/admin`／`/admin/accounts` 變更角色／`/admin/members` 匯出 CSV 後在 `/admin/audit` 查證／密碼重設按鈕。本紀錄依使用者回報，未逐項留存證據）。
+
+**資料影響（事前逐行審查）**：三支之中只有 `0035` 會寫既有資料——`update admin_accounts set role = 'superadmin'`（刻意：回填成 clerk 會讓所有人一次失去帳號管理權且沒有 UI 可要回來）。`0036`／`0037` 只 `create function`，套用當下零列異動。**無任何 drop table／delete／truncate 打到會友、車輛、預約或稽核資料。**
+
+**操作摩擦（記一筆，會重複發生）**：`db:verify:remote` 第一次跑失敗成 `password authentication failed for user "YLC"`——因為 `SUPABASE_DB_URL` 沒設，`psql` 退回預設值去連本機 socket。這是 runbook §1.4「用完即 `unset`」的必然後果（正確的取捨），但錯誤訊息會誤導成「密碼錯了」。**每次跑都要重新 export；看到 `Password for user ...` 提示就代表變數是空的，直接中止、不要輸入。**
+
+**制度性修正（本刀同時交付）**：
+
+- **runbook §1.5 改寫成 "Production release compatibility gate"** — 從「有 migration 一律先 DB」升級成先答兩題（A＝old app + new DB 安全嗎／B＝new app + old DB 安全嗎），由答案決定順序；四象限含 **A❌B❌ ⇒ 禁止單次 release、必須 expand → migrate app → contract**。教判斷原則而非記指令。另補第三題 **R（上一個 production deployment + 新 DB）**，並接回 §5 的 forward-fix。
+- **runbook §2.5（新增）＋ Vercel 設定** — Production branch 維持 `main`，但關掉 **Auto-assign Custom Production Domains**（Settings → Environments → Production → Branch Tracking）。merge 後 build 停在 **Staged**、production domain 仍是舊版，`db push` + verify 通過後才手動 **Promote**（不 rebuild）。**這是把 §1.5 從「靠紀律」變成「機制上做不到違反」的關鍵**。
+- **`.github/PULL_REQUEST_TEMPLATE.md`（新增）** — 每個含 migration 的 PR 在 merge 前填 A／B／順序／R／smoke 項目。
+- **否決 `release` branch**（本來的第一提案）：技術可行，但把要追蹤的版本指標從兩個（app／DB）變成四個（`main`／`release`／正在服務的 deployment／DB schema），還多一套 branch policy 要交給教會繼承。staged deployment 用一個 toggle 解同一個 race。留作 fallback。
+- **否決「merge 前先 db push」**：同樣能消除 race，但會讓 prod 跑著一支尚未存在於 `main` 的 migration——merge 若因故沒完成，repository 就不再是 production 的 source of truth。staged 流程同時保住順序與 source of truth。
+
+**外部審查修正了兩處**（採納）：① 我原本舉 `0032` 當「兩邊都不安全」的例子是**錯的**——它 drop `p2_eligible` 之後用**同名、同讀取介面**重建成 generated column（`generated always as (review_status = 'approved') stored`），header 自己就寫了 `old app + new DB : compatible`，是 A✅/B❌，而且正好是**刻意保留舊介面的好範例**，文件改成正面示範。② `0035` 的 `NOT VALID` CHECK 屬**歷史資料不得被偽造**（data migration），不是 app↔schema 部署相容性，兩者不要混在一起教——runbook 已加註區隔。
+
+**尚未做**：Vercel 那個 toggle 是 dashboard 操作，需由使用者在 UI 關掉；本刀只交付文件與 PR template。**關掉之前，上述流程仍然只是文件。**
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
