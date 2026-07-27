@@ -71,14 +71,14 @@ npx supabase db push
 npx supabase migration list          # AFTER push — compare against the line below
 ```
 
-**Acceptance: every one of the 37 local migration files (`0001`–`0037`) appears as an
+**Acceptance: every one of the 38 local migration files (`0001`–`0038`) appears as an
 applied remote entry, in the same order, with matching version ids.** No remote-only
 entries, no local-only entries, no pending entries. If there is any discrepancy, **stop
 and investigate the cause — do not run `supabase migration repair` to force the list
 green.**
 
 ```bash
-ls supabase/migrations/*.sql | wc -l   # sanity: should print 37
+ls supabase/migrations/*.sql | wc -l   # sanity: should print 38
 ```
 
 > ⚠️ **`0035` (admin roles) must be applied BEFORE the app that goes with it.** It is not
@@ -105,7 +105,7 @@ npm run db:verify:remote
 unset SUPABASE_DB_URL
 ```
 
-Expect **`verify_schema_prod.sql: all 35 assertions passed`**. This is a **different,
+Expect **`verify_schema_prod.sql: all 36 assertions passed`**. This is a **different,
 independent check** from the local `npm run db:verify` (49) — the local one exercises
 behavior via DML inside a rolled-back transaction and depends on seed data (so it cannot
 run against a fresh cloud database); this one is catalog-only (tables/indexes/
@@ -139,7 +139,8 @@ in the migration header and in the PR description
 | ❌ | ✅ | **App → DB.** Rare here; it means the migration removes something only the old app used. |
 | ❌ | ❌ | **A single release is forbidden.** Split into expand → migrate app → contract (below). |
 
-**Worked examples from this repo — all four of them are A✅/B❌:**
+**Worked examples from this repo — every one of them is B❌, and two of the five are only
+*almost* A✅:**
 
 | migration | A (old app + new DB) | B (new app + old DB) |
 |---|---|---|
@@ -147,6 +148,7 @@ in the migration header and in the PR description
 | `0035` admin roles | ⚠️ **almost** — see the `reset_admin_password` window below. Everything else is unchanged, and every existing account is backfilled to `superadmin`, so the old app behaves exactly as before. | ❌ the app selects `admin_accounts.role`, which does not exist yet — **every** admin request fails. |
 | `0036` admin role management | ✅ adds three RPCs, changes nothing. | ❌ 新增管理者 / 變更角色 / 撤銷 session call RPCs that do not exist. |
 | `0037` member roster export | ✅ adds `log_member_roster_export` + `db_now`, removes/changes nothing. | ❌ the roster export — and **only** the roster export — fails. |
+| `0038` member maintenance | ⚠️ **almost** — signatures all preserved, the import identity guard reuses the existing `phone_name_conflict` discriminant so the old importer fails closed, and the `matched_user_id_at_capture` column is additive. **The window:** the LIFF approval refusal is renamed `phone_not_found` → `unmatched_at_capture`, and the old approve route 500s on a reason it does not list. Nothing is written — the RPC refusal is a typed return — so this is availability on one admin action, not correctness. Same shape as `0035`'s window below. | ❌ 新增會友 / 改姓名手機 / 車輛啟用停用 call four RPCs that do not exist. |
 
 **The A❌/B❌ case, and why it cannot be one release.** Rename `foo` to `bar` and ship an app
 that reads only `bar`: DB-first breaks the old app (no `foo`), app-first breaks the new app

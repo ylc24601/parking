@@ -2,7 +2,7 @@
 
 > 最後更新：2026-07-27 ｜ **Phase 9 已收官；production demo walkthrough 完成並清回 baseline；尚未匯入正式教會會員資料**。Post-Phase-9 功能軌（[feature-triage.md](feature-triage.md)）：Wave -1/0/0.1/1 ✅、**Wave 2A #15 稽核全完成（2A-1／2A-2／2A-3 retention）、Wave 2B-1 #14A ✅、Wave 2B-2a＋2B-2b #10 ✅ ⇒ 容量／P2 資格不需 SQL／CSV，稽核有邊界可清理**、**Wave 2C #19 admin 角色分級 ✅（2C-1／2C-2）**、**Wave 3 ✅（3a #8＋#9／3b #17／3c #18／3d #5B-a）**。**「交付前必修」與「強烈建議交付前」兩節皆已清空 ⇒ 開發面無交付阻擋**（剩交付後 ops，走查照 **[go-live-checklist.md](go-live-checklist.md)**＝單一權威清單）；驗證見 §8。**唯一 active 剩片＝#14B 申請開放 override**（規則未定、待產品決策，非技術阻擋）。 ｜ 範圍：Phase 0–2 全部、Phase 3（Staff 現場頁 + v2 全切片）、Phase 4（notification dispatcher A–F）、Phase 5/5B（LINE webhook + binding 擷取/審核/CLI）、Phase 6（會友資料匯入）、Phase 7（會員 LIFF：登入/綁定/申請/取消/遞補確認/正在路上）、Phase 8（Admin UI Slice 1–8）、Phase 9（production deploy + prod demo-complete 收官）全數完成——詳見 §6.13–§6.36；post-Phase-9 各刀見 §6.37–§6.48。
 >
-> **現況：開發面無交付阻擋、prod 已站起並跑完完整 demo（見 §6.36）、staged deployment 部署制度已上線並實跑驗收（見 §6.48／§6.48.1）。剩交付後 ops（非開發軌）**：**[go-live-checklist.md](go-live-checklist.md) §0 三個負責人尚未指派**（OA token owner／copy approver／scheduler on-call；不指派不啟動）、資料備份（**決策 2026-07-18：先不升 Pro、走 Free ＋自管加密備份**——備份 gate 不因不付而消失，只是換做法；**程式已在 main（PR #44）但尚待教會 arm**：age 金鑰／private bucket／GitHub Secrets／lifecycle／`HEARTBEAT_URL`／`BACKUP_ENABLED=true`＋一次還原演練，見 §1.1）、**匯入真會友 CSV（§1.3）**、**pilot 分批放行（§1.7）**。**已完成的 ops**：staged deployment（§1.0）、教會正式 OA/channel token（§1.2／§6.38）、通知文案 sign-off（§1.4／§6.39）、12 個 cron 含 audit purge（§1.5／§6.40）、開啟真實送出 `NOTIFICATION_TRANSPORT=line`（§1.6／§6.41）。**交付日照 [go-live-checklist.md](go-live-checklist.md)**（單一權威走查清單，整合 runbook §8/§13＋go-live-readiness §1/§5）。非阻擋功能 backlog（#26 通知 LIFF deep-link、2B-2c、#5B-b／#5B-c、a11y）見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)；**`server-only` 邊界已於 Tier 0-1（PR #54）完成，見 §6.49；會友資料維護（單筆新增／改姓名手機／車輛停用恢復＋匯入身分守衛）已於 Tier 0-2（migration `0038`）完成，見 §6.50——這一刀帶 migration，A✅/B❌，prod 必須先 `db push` 再 promote**。
+> **現況：開發面無交付阻擋、prod 已站起並跑完完整 demo（見 §6.36）、staged deployment 部署制度已上線並實跑驗收（見 §6.48／§6.48.1）。剩交付後 ops（非開發軌）**：**[go-live-checklist.md](go-live-checklist.md) §0 三個負責人尚未指派**（OA token owner／copy approver／scheduler on-call；不指派不啟動）、資料備份（**決策 2026-07-18：先不升 Pro、走 Free ＋自管加密備份**——備份 gate 不因不付而消失，只是換做法；**程式已在 main（PR #44）但尚待教會 arm**：age 金鑰／private bucket／GitHub Secrets／lifecycle／`HEARTBEAT_URL`／`BACKUP_ENABLED=true`＋一次還原演練，見 §1.1）、**匯入真會友 CSV（§1.3）**、**pilot 分批放行（§1.7）**。**已完成的 ops**：staged deployment（§1.0）、教會正式 OA/channel token（§1.2／§6.38）、通知文案 sign-off（§1.4／§6.39）、12 個 cron 含 audit purge（§1.5／§6.40）、開啟真實送出 `NOTIFICATION_TRANSPORT=line`（§1.6／§6.41）。**交付日照 [go-live-checklist.md](go-live-checklist.md)**（單一權威走查清單，整合 runbook §8/§13＋go-live-readiness §1/§5）。非阻擋功能 backlog（#26 通知 LIFF deep-link、2B-2c、#5B-b／#5B-c、a11y）見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)；**`server-only` 邊界已於 Tier 0-1（PR #54）完成，見 §6.49；會友資料維護（單筆新增／改姓名手機／車輛停用恢復＋匯入身分守衛）已於 Tier 0-2（migration `0038`）完成，見 §6.50——這一刀帶 migration，**A⚠️ almost**（LIFF 審核理由改名，舊 app 在 migration→Promote 之間會 500，資料無風險）／B❌，prod 必須先 `db push` 再 promote**。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
 > 程式碼根目錄：`parking-system/`（`@/*` alias 指向該目錄）
 
@@ -1317,9 +1317,15 @@ A 的 LINE 用舊號碼 P1 重送申請       ← 改號碼之後才發生的新
 
 | | 判斷 | 理由 |
 |---|---|---|
-| **A：舊 app ＋ 新 DB** | ✅ | 五支既有 RPC 全部維持**完全相同的簽名**；身分守衛沿用既有 status（見上 ③）；新欄位為 additive；capture/approve 回傳 shape 不變 |
+| **A：舊 app ＋ 新 DB** | ⚠️ **almost** | 五支既有 RPC 全部維持**完全相同的簽名**；身分守衛沿用既有 status（見上 ③）；新欄位 additive；capture/approve 回傳 **shape** 不變。**唯一的窗口見下** |
 | **B：新 app ＋ 舊 DB** | ❌ | 新 app 會呼叫四支尚不存在的 RPC |
-| **R：上一版 production ＋ 新 DB** | ✅ | 同 A |
+| **R：上一版 production ＋ 新 DB** | ⚠️ | 同 A，同一個窗口 |
+
+**A 不是無條件 ✅——外部審查抓到的，我原本寫錯了。** `0038` 把 LIFF 審核的拒絕理由由 `phone_not_found` 改名為 `unmatched_at_capture`，而**目前 production 上跑的舊 app** 以白名單列舉可接受的 outcome（[approve/route.ts](../parking-system/app/api/admin/bindings/approve/route.ts) `REVIEW_OUTCOMES`），不在名單內一律 `500`。所以在 `db push` 到 Promote 之間，幹事審核一筆 snapshot 為 null 的 LIFF 申請會收到 500。
+
+**資料沒有風險**：RPC 的拒絕是 typed return、零寫入，500 只是舊 route 拒絕渲染它不認得的理由。這是**單一 admin 動作的可用性窗口，不是正確性問題**，形狀與 `0035` 的 `reset_admin_password` 窗口相同（runbook §1.5）。**處置：不要停在這個狀態**——`db push` → `db:verify:remote` → staged smoke → Promote 一氣呵成。
+
+考慮過的替代方案是「DB continue 回舊的 `phone_not_found`、只改 UI 用語」，**否決**：snapshot 的整個重點就是這個拒絕**不再**代表「現在沒有人用這支電話」，為了省幾分鐘窗口而保留舊線路名稱，等於保住這一刀要消滅的那個心智模型。
 
 ⇒ **順序：舊 app + 舊 DB → 舊 app + 新 DB → 新 app + 新 DB。migration 必須在 promote 之前套用**（runbook §1.5）。
 
@@ -1384,7 +1390,7 @@ A 的 LINE 用舊號碼 P1 重送申請       ← 改號碼之後才發生的新
 | `npm run db:reset`（0001–0038 全新套用） | ✅ |
 | migrations | `0001–0038`｜`db:verify` **local 全通過（+6 blocks）**／`verify_schema_prod.sql` **36**（尚未對 prod 實跑） |
 
-> **`db:verify:remote` 仍是 §6.48 當時的 35**：`0038` 尚未套用到 prod。**prod 端必須先 `db push` 再 promote**（A✅/B❌，見 §6.50）。
+> **`db:verify:remote` 仍是 §6.48 當時的 35**：`0038` 尚未套用到 prod。**prod 端必須先 `db push` 再 promote**（A⚠️/B❌，見 §6.50 的窗口說明）。
 > **前一次盤點（`250d0c8`，1426 passed／migrations 0001–0037／db:verify 49）**：程式碼自 `314d838`（Wave 3 3d）之後未再變動，其後兩刀（`b3d1af5`／`250d0c8`）皆 docs-only。
 > **Wave 2C 與 Wave 3 六刀（PR #45–#50）不在本節的「前一刀」鏈上**：eslint／`next build`／`RUN_DB_TESTS=1` 整合測試／headless 走查的實跑證據，各自記在 **§6.42–§6.47** 的「驗證」段；prod 端 migration 套用與稽核佐證的 smoke 見 **§6.48**。本節「前一刀」鏈保留 PR #44 以前的歷史紀錄、不回填。
 

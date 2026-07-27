@@ -93,9 +93,16 @@ export type SetMemberVehicleActiveResult =
   | { ok: true; vehicleId: string; isActive: boolean }
   | { ok: false; reason: MemberMaintenanceReason; unfinished?: number }
 
-// A refusal the RPC returned without a reason would be a contract violation, not a
-// business state — but 500ing on it would be worse than useless to the operator, so it
-// collapses to the most conservative reason each action has.
+// Collapses BOTH degenerate cases onto each action's most conservative reason:
+//   * no reason at all — a contract violation, not a business state;
+//   * a reason string this build does not know.
+//
+// The second one only arises if the DB is AHEAD of the app (a migration applied but the
+// app not yet promoted — see 0038's header on that window). The operator then gets a
+// definite-sounding message that is not the real refusal. That is the deliberate trade:
+// a wrong-but-actionable message beats a 500, and the window is minutes long by procedure.
+// It is NOT a forward-compatibility contract — a new DB reason must still be added here,
+// and to MemberMaintenanceReason, in the same slice that introduces it.
 function reasonOf(raw: string | undefined, fallback: MemberMaintenanceReason): MemberMaintenanceReason {
   if (raw === undefined) return fallback
   return isKnownReason(raw) ? raw : fallback

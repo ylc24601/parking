@@ -133,7 +133,10 @@ export default function MemberIdentityForm({
         <div className="rounded-xl border border-warning-fg/30 bg-warning-bg px-4 py-3 text-sm text-warning-fg">
           <p className="font-semibold">更換手機號碼會作廢這位會友尚未審核的 LINE 綁定申請</p>
           <p className="mt-1">
-            綁定申請是以送出當下的手機號碼認人，號碼換了就必須重認，否則舊號碼日後給了別人時，這位會友的 LINE 會綁到別人身上。請在存檔後告知他重新於 LINE 送出綁定。
+            綁定申請是以送出當下的手機號碼認人的，號碼換了之後那份身分依據就過期了，所以系統會把它作廢。請在存檔後告知他用新號碼重新於 LINE 送出綁定。
+          </p>
+          <p className="mt-1">
+            舊申請不會被重新對到日後拿到舊號碼的人——審核時認的是送出當下對到的會友，不會重新用號碼去找人。
           </p>
         </div>
       )}

@@ -24,14 +24,32 @@
 --
 -- There is NO user-merge tool, by choice. See docs/member-import-ops.md for the residual risk.
 --
--- ── Deployment: old app + new DB is SAFE; new app + old DB is NOT ────────────────
---   A (old app + new DB) ✅ — every replaced function keeps its exact signature. The identity
---     guard reuses the EXISTING 'phone_name_conflict' discriminant (see import_member), so an
---     old client fails closed and reports a conflict instead of miscounting a skipped member
---     as updated. The new snapshot column is additive and the capture/approval return shapes
---     are unchanged.
+-- ── Deployment: A is ALMOST safe — there is one narrow window. B is not safe. ────
+--   A (old app + new DB) ⚠️ **almost** — every replaced function keeps its exact signature,
+--     the identity guard reuses the EXISTING 'phone_name_conflict' discriminant (see
+--     import_member) so an old client fails closed rather than miscounting a skipped member
+--     as updated, and the snapshot column is additive with the capture/approval return
+--     SHAPES unchanged.
+--
+--     The exception, stated plainly because a silent one is worse: this migration renames
+--     the LIFF approval refusal 'phone_not_found' → 'unmatched_at_capture'. The currently
+--     deployed app lists the accepted outcomes explicitly
+--     (app/api/admin/bindings/approve/route.ts REVIEW_OUTCOMES) and 500s on anything else,
+--     so between `db push` and Promote, approving a LIFF claim whose snapshot is null
+--     returns a 500 to the operator.
+--
+--     NO data is at risk: the RPC's refusal is a typed return that writes nothing, and the
+--     500 is the old route declining to render a reason it does not know. It is a
+--     availability window on ONE admin action, not a correctness problem — the same shape
+--     as 0035's reset_admin_password window (prod-deploy-runbook.md §1.5). Do not linger in
+--     this state: run verify → staged smoke → Promote as one continuous operation.
+--
+--     The alternative — keep emitting 'phone_not_found' from the DB and rename only in the
+--     UI — was rejected. The whole point of the snapshot is that this refusal no longer
+--     means "no member has this phone NOW"; keeping the old wire name to save a few minutes
+--     of window would preserve exactly the mental model this slice exists to delete.
 --   B (new app + old DB) ❌ — the new app calls the four RPCs below, which do not exist yet.
---   R (previous production deployment + new DB) ✅ — same reasoning as A.
+--   R (previous production deployment + new DB) ⚠️ — same window as A, same reasoning.
 -- ⇒ Production traffic order: old app + old DB → old app + new DB → new app + new DB.
 --   The DB migration must land BEFORE the new app is promoted (prod-deploy-runbook.md §1.5).
 
