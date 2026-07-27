@@ -236,6 +236,11 @@ With that off, every release runs:
    > body hash `957e19d0…` → `14f830e5…` and `age` 9149 → 0, while the byte *length* stayed
    > identical at 11088 — so compare hashes, never sizes. Next.js output is not byte-identical
    > across builds even when the source is unchanged, which is what makes this work.
+   >
+   > **Measured again on the `0038` promote (same day):** hash `4cd183dd…` → `5a234d19…`,
+   > `age` 39556 → 0, `ETag` `4746df32…` → `9c7455a9…` — and the length was **11088 for the
+   > third time**. Three independent promotes, three identical byte counts. Treat "the size
+   > is the same" as carrying no information at all here.
 8. **Confirm auto-assignment is still OFF.** A plain promote should not re-enable it — but a
    rollback → undo cycle does (see the constraint note above), and this is the one invariant
    whose failure is silent. One glance at the setting closes the loop.

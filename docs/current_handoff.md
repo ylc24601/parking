@@ -1365,6 +1365,48 @@ advisory lock 這組原本**證不了**，是外部審查抓到的：第一個 t
 
 ---
 
+### 6.51 Tier 0-2 上 production（2026-07-27）—— staged smoke 抓到一個真缺陷
+
+第一次**完整照 runbook §1.5 走完**的帶 migration 發布：`merge → staged build → db push → db:verify:remote → staged smoke → Promote → 指紋比對`。
+
+| 步驟 | 結果 |
+|---|---|
+| 三方身分核對（Dashboard 帳號實查／本地 link metadata／文件記載） | ✅ 三者皆 `ybhszryuvoutkzkixsbk`（parking-prod・Tokyo・ACTIVE_HEALTHY） |
+| `supabase migration list`（push 前） | `0001–0037` applied，`0038` local-only |
+| `supabase db push` | ✅ `0038` 套用 |
+| `migration list`（push 後） | ✅ 38 local ＝ 38 remote，**零 local-only、零 remote-only** |
+| `db:verify:remote` | ✅ **36/36**（35→36） |
+| staged smoke（7 項） | ⚠️ **6 過 1 失** —— 見下 |
+| Promote | ✅ |
+| 指紋比對 | ✅ `etag 4746df32…→9c7455a9…`／`sha256 4cd183dd…→5a234d19…`／`age 39556→0` |
+
+> **bytes 又是 11088（第三次）而 hash 變了。** runbook「比 hash，永遠不要比 size」現在有三次獨立實測背書。
+
+#### staged smoke 抓到的缺陷：稽核頁把這一刀的每一列顯示成「未知動作」
+
+```
+vehicle.reactivate（未知動作）   vehicle（ID 尾碼 e64320）   已完成
+詳細資料目前無法顯示
+```
+
+兩個缺口都在**讀取端**：`auditPresentation.ts` 五個 action 全未登記、`auditViewService` 的 `ENTITY_TYPE_LABEL` 沒有 `member`／`vehicle`。**稽核資料本身完整正確**（actor／身分快照／entity／result／request id 齊全），所以是純顯示問題，修好後**已寫下的列會回溯地正確顯示** —— 這一點決定了「先 promote 或先修」的取捨。
+
+**這是 Tier 0-2 計畫 §6.8 白紙黑字點名過的一條**，實作漏了，兩輪外部審查也沒抓到。原因單一且可一般化：**沒有任何東西把「migration 寫進去的 action」與「渲染它的 registry」連起來**，所以漏掉不會讓任何測試變紅。修復（PR #56 / `d07de07`）加的第一個測試就是那條缺席的連結，而非 label 檢查；反向對照 21＋2 紅。
+
+**使用者選擇「先修好再一起 Promote」**，窗口因此多開約 40 分鐘。這是合理的取捨：修復是 app-only、零 migration，而上線一個稽核不可讀的版本，對一個以問責為目的的功能而言代價不對稱。
+
+#### 這次 smoke 真正證明了什麼（而不是「看起來會動」）
+
+- **第 5 項是最強的一項**：prod DB 裡一筆**真實**的待審 LIFF 申請，由新 app 算出 `unmatched_at_capture` 並渲染新文案 —— 同時證明 RPC、`REVIEW_OUTCOMES` 白名單、文案三者在**真環境**串通，並反向證實窗口存在（同一筆在舊 app 上就是 500）。
+- **第 6 項意外抓到真實案例**：一位真的換過號碼的會友。舊行為會建立**第二個他**；`0038` 判成 `identity_candidate` 整列略過，並在畫面上指向正解（會友管理改手機）。
+- **同名守衛的證據是「缺席」**：`homonym_requires_confirmation` 刻意不寫稽核列，而稽核裡**只有一列「新增會友」** —— 若守衛失效會有第二列。
+- **「零不印」在 prod 跑出來了**：`member.identity_change` 只顯示「異動欄位：手機」，沒有「連帶作廢 0 筆」。
+
+#### 兩件遺留（皆非阻擋）
+
+1. **smoke 建立的測試會友是「真實姓名＋假號碼」**。真名冊 CSV 進來時會被判成 identity conflict 而略過（守衛正常運作）；正解＝會友管理改成真號碼。**不要讓它在兩個月後變成一個無人記得的謎題。**
+2. **一次 PII 誤提交**：`git add -A` 把使用者放在 `docs/import-templates/` 的測試 CSV 掃進 PR #56 的第一個 commit，並推上 **public** repo。已 force-push 移除並改為 **allowlist 式 `.gitignore`**（該目錄預設全忽略、只放行三份已交付檔）。經查外流內容為「牧師姓名＋範本原有的假號碼假車牌」，實際新增曝光僅「姓名出現在教會停車名冊」，而該關聯本即公開 ⇒ 判定不需請 GitHub 清除。**真正該記取的不是外流多嚴重，是在 public repo 上用了 `git add -A`。**
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
@@ -1395,17 +1437,18 @@ advisory lock 這組原本**證不了**，是外部審查抓到的：第一個 t
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：`feat/member-maintenance-0038`（2026-07-27，Tier 0-2 實跑）
+### Current HEAD 最近驗證：`main`（2026-07-27，Tier 0-2 **已上 production**）
 
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` ／ `npx eslint .` ／ `npm run build` | ✅ |
 | `npm test`（不接 DB） | ✅ **1461 passed**／107 test files；另 323 tests・41 files skipped（DB-gated） |
-| `RUN_DB_TESTS=1 npm test` | ✅ **1784 passed**／148 files（**0 skipped**——本刀整批實跑，非只跑新檔） |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1810 passed**／148 files（**0 skipped**——整批實跑，非只跑新檔） |
 | `npm run db:reset`（0001–0038 全新套用） | ✅ |
-| migrations | `0001–0038`｜`db:verify` **local 全通過（+6 blocks）**／`verify_schema_prod.sql` **36**（尚未對 prod 實跑） |
+| migrations | `0001–0038`｜`db:verify` **local 全通過（+6 blocks）**／`verify_schema_prod.sql` **36** |
+| **`db:verify:remote`（對 production 實跑）** | ✅ **36/36**（35→36） |
 
-> **`db:verify:remote` 仍是 §6.48 當時的 35**：`0038` 尚未套用到 prod。**prod 端必須先 `db push` 再 promote**（A⚠️/B❌，見 §6.50 的窗口說明）。
+> **`0038` 已套用到 production 並已 promote（2026-07-27）**：窗口已關閉，詳見 §6.51 的部署實錄。
 > **前一次盤點（`250d0c8`，1426 passed／migrations 0001–0037／db:verify 49）**：程式碼自 `314d838`（Wave 3 3d）之後未再變動，其後兩刀（`b3d1af5`／`250d0c8`）皆 docs-only。
 > **Wave 2C 與 Wave 3 六刀（PR #45–#50）不在本節的「前一刀」鏈上**：eslint／`next build`／`RUN_DB_TESTS=1` 整合測試／headless 走查的實跑證據，各自記在 **§6.42–§6.47** 的「驗證」段；prod 端 migration 套用與稽核佐證的 smoke 見 **§6.48**。本節「前一刀」鏈保留 PR #44 以前的歷史紀錄、不回填。
 
