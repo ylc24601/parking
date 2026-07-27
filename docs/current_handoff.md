@@ -1244,7 +1244,8 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 
 **兩個實跑才知道的事實，已回寫 runbook §1.5：**
 
-- **staged deployment 的每一個 domain 都受 Vercel Deployment Protection 保護**（專案別名／`*-git-main-*` 分支別名／唯一 `*-<hash>-*` 部署 URL 全部 302 到 `vercel.com/sso-api`）。所以第 5 步的「在 staged URL smoke」**必須用瀏覽器、且已登入 Vercel 帳號**，`curl` 只會拿到轉址。**這是好事**：staged build 帶著 Production env（真的 Supabase 憑證），在 promote 之前不該公開可達。實測當下只有正式 domain 回 200。
+- **本專案目前的 Deployment Protection 設定下**，staged deployment 的自動產生 domain 均受 Vercel Authentication 保護。**實測（2026-07-27）**：三個 staged domain（專案別名／`*-git-main-*` 分支別名／唯一 `*-<hash>-*` 部署 URL）全部 302 到 `vercel.com/sso-api`，只有正式 domain 回 200。所以第 5 步的「在 staged URL smoke」**必須用瀏覽器、且已登入 Vercel 帳號**，`curl` 只會拿到轉址。
+  **⚠️ 這是專案設定，不是 staged deployment 的固有性質**——Protection 的 scope 由專案設定決定，Vercel 的預設也隨版本改過。上面那行是**有日期的實測**，不是平台保證：**要重新確認，不要沿用假設**。這道保護是必要的（staged build 帶著 Production env ＝ 真的 Supabase 憑證，promote 前不該公開可達），所以**哪天 staged domain 對未驗證請求回 200，那是要處理的發現，不是方便**。
 - **看不出差異的 release 要靠指紋證明 cutover**。docs-only 的情況下「站台載得起來」什麼都沒證明，而 Vercel 的徽章是對 Vercel 自身狀態的陳述，不是對「使用者實際收到什麼」的陳述。promote 前後各打一次正式 domain 比對 `ETag`／body hash／`age` 才是客觀證據。**注意比雜湊、不要比長度**——本次前後 HTML 都是 11088 bytes，內容卻不同。
 
 > **這一節本身就是這套制度的第一份產出**：規則、驗收、與驗收發現的兩處修正，走的是同一條 staged 流程。
