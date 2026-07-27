@@ -185,8 +185,15 @@ With that off, every release runs:
    everything that is about to be deployed — the migration included.
 3. **Apply the migration** — `npx supabase db push` (§1.3).
 4. **Verify it landed** — `npm run db:verify:remote` (§1.4). **Stop-gate: if this fails, do
-   not promote.** Production is then sitting in `old app + new DB`, which is exactly the
-   state step 1 certified as safe (A) — that is what the A answer is *for*.
+   not promote.** Production is then sitting in `old app + new DB`, which is the state step 1
+   answered for — that is what the A answer is *for*.
+
+   **If A is `⚠️ almost` rather than `✅`, halting here has a known, bounded cost** — read
+   your own A cell for what it is (`0038`'s, for instance, is that one admin action 500s).
+   That cost does not license promoting an app whose migration did not verify: an
+   availability window is recoverable, a promoted-but-unverified release is not necessarily.
+   **Stay in the window and find out why the verify failed.** What `⚠️ almost` does change is
+   urgency — do not wander off, and do not leave it overnight.
 5. **Smoke the staged deployment at its own URL**, before it serves anyone. It already has
    the Production env, so admin flows exercise the real cloud DB.
    - **Open it in a browser, signed in to the Vercel account.** **Under this project's current

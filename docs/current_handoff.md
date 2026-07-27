@@ -1311,7 +1311,7 @@ A 的 LINE 用舊號碼 P1 重送申請       ← 改號碼之後才發生的新
 
 **② 同名確認是「集合」決策，不是「單筆」決策。** 「我確認這不是 A」不等於「⋯⋯也不是 B」。因此確認的是**當下那一組 id**，比對用集合相等（順序無意義、重複無意義）；集合在確認期間變了 ⇒ `homonym_confirmation_stale` ＋ 稽核 `conflict`，UI **從新清單重畫**而不是沿用畫面上的舊清單。另外：`homonym_requires_confirmation` **不寫稽核**（那是流程第一步，不是拒絕；每次預覽都記會把稽核灌爆），但**回 409 而不是 200**——沒有建立任何東西，200 會讓「已建立」與「請先確認」對只看狀態碼的呼叫端長得一樣。
 
-**③ 匯入的身分守衛刻意沿用舊 status。** 回 `phone_name_conflict` ＋ 新的 `conflict_kind` 判別子，而不是發明新 status：**舊版前端只看得懂 status ⇒ fail closed，把該筆當衝突略過，而不會誤記成 updated**。這正是 A（舊 app + 新 DB）真的安全、而不只是「勉強能跑」的原因。守衛住在 RPC 而非 TypeScript，則讓 **dry-run 與 apply 的一致性是結構性的**——同一支函式回答兩者。
+**③ 匯入的身分守衛刻意沿用舊 status。** 回 `phone_name_conflict` ＋ 新的 `conflict_kind` 判別子，而不是發明新 status：**舊版前端只看得懂 status ⇒ fail closed，把該筆當衝突略過，而不會誤記成 updated**。這讓**匯入這條路徑**在「舊 app + 新 DB」下仍然安全——注意這只是匯入路徑，**不足以把整體 A 判成 ✅**（綁定審核那條路徑的窗口見下）。守衛住在 RPC 而非 TypeScript，則讓 **dry-run 與 apply 的一致性是結構性的**——同一支函式回答兩者。
 
 ### 部署（A/B/R）
 
@@ -1323,7 +1323,9 @@ A 的 LINE 用舊號碼 P1 重送申請       ← 改號碼之後才發生的新
 
 **A 不是無條件 ✅——外部審查抓到的，我原本寫錯了。** `0038` 把 LIFF 審核的拒絕理由由 `phone_not_found` 改名為 `unmatched_at_capture`，而**目前 production 上跑的舊 app** 以白名單列舉可接受的 outcome（[approve/route.ts](../parking-system/app/api/admin/bindings/approve/route.ts) `REVIEW_OUTCOMES`），不在名單內一律 `500`。所以在 `db push` 到 Promote 之間，幹事審核一筆 snapshot 為 null 的 LIFF 申請會收到 500。
 
-**資料沒有風險**：RPC 的拒絕是 typed return、零寫入，500 只是舊 route 拒絕渲染它不認得的理由。這是**單一 admin 動作的可用性窗口，不是正確性問題**，形狀與 `0035` 的 `reset_admin_password` 窗口相同（runbook §1.5）。**處置：不要停在這個狀態**——`db push` → `db:verify:remote` → staged smoke → Promote 一氣呵成。
+**資料沒有風險**：RPC 的拒絕是 typed return、零寫入，500 只是舊 route 拒絕渲染它不認得的理由。這是**單一 admin 動作的可用性窗口，不是正確性問題**，形狀與 `0035` 的 `reset_admin_password` 窗口相同（runbook §1.5）。**處置：不要停在這個狀態**——`db push` → `db:verify:remote` → staged smoke → Promote，**中間不要插入別的工作、也不要隔天再回來**。
+
+但「不要停留」**不是「照推不誤」**：`db:verify:remote` 或 staged smoke 只要有一項不通過，**就不要 Promote**。窗口是可用性成本，promote 一個沒驗過的 app 是正確性成本，兩者不對等。此時的正解是**留在窗口內**把失敗查清楚——舊 app 在窗口裡照常運作，只有「審核一筆對不到人的 LIFF 申請」這個動作會 500。
 
 考慮過的替代方案是「DB continue 回舊的 `phone_not_found`、只改 UI 用語」，**否決**：snapshot 的整個重點就是這個拒絕**不再**代表「現在沒有人用這支電話」，為了省幾分鐘窗口而保留舊線路名稱，等於保住這一刀要消滅的那個心智模型。
 
@@ -1337,8 +1339,21 @@ A 的 LINE 用舊號碼 P1 重送申請       ← 改號碼之後才發生的新
 | `npm run db:verify` | ✅ 全通過，**新增 6 個 block**（§42 結構／42b 名字鍵與 claim shape／42c create_member 同名集合／42d 身分不可被改指（含上面①那條完整路徑）／42e 車輛生命週期／42f 匯入身分守衛） |
 | `verify_schema_prod.sql` | ✅ **36**（新增 0038 catalog-only block；**既有 #23 從 `vehicles_plate_normalized_key` 改寫為 `vehicles_active_plate_uq`**——舊斷言會在 prod 直接失敗） |
 | `npx tsc --noEmit` ／ `npx eslint .` ／ `npm run build` | ✅ |
-| `npm test`（不接 DB） | ✅ **1461 passed**／319 skipped（DB-gated） |
-| `RUN_DB_TESTS=1 npm test` | ✅ **1779 passed / 147 files**（+41；新增 `member-maintenance.db.test.ts` 9 例、`member-import.db.test.ts` 身分守衛 4 例） |
+| `npm test`（不接 DB） | ✅ **1461 passed**／323 skipped（DB-gated） |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1784 passed / 148 files**（+46；新增 `member-maintenance.db.test.ts` 9 例、`member-import.db.test.ts` 身分守衛 4 例、`member-maintenance-race.db.test.ts` **4 例雙連線併發**） |
+
+#### 併發測試：兩把鎖各自用「反向對照」證明是承重的
+
+`member-maintenance-race.db.test.ts` 開**兩條原始 `pg` 連線**、手動交錯 transaction，釘住本刀新增的兩個鎖協定。重點不在多 4 個綠燈，而在**每個斷言都做過反向對照**——把 `0038` 的那一行拿掉、確認測試真的會紅：
+
+| 協定 | 反向對照結果 |
+|---|---|
+| `apply_reservation` 的 `vehicles … for share` | 拿掉後 **4 個裡恰好 1 個紅**。另一個方向**沒有**鎖也會擋——插入 reservation 為了驗證複合 FK 會對 `vehicles` 取隱含的 `FOR KEY SHARE`，本來就與 `FOR UPDATE` 衝突。**這件事寫進測試註解**：那一個測試記錄協定，但**不**證明本刀新增的那一行 |
+| `member_identity_binding` advisory lock | 拿掉後**兩個綁定測試都紅** |
+
+advisory lock 這組原本**證不了**，是外部審查抓到的：第一個 transaction 的 RPC 已跑完，手上握著它會拿的**每一個 row lock**，所以第二個 transaction 就算沒有 advisory lock 也照樣會卡住——**outcome test 分辨不出兩者**，刪掉那行仍會全綠。改法是用**第三條閒置連線查 `pg_locks`**，斷言等待中的 backend 是 `locktype='advisory'`、`granted=false`、且 `classid`/`objid` 就是 `hashtext('member_identity_binding')`（在 SQL 內即時算，不寫死）。這才是「**卡在取 advisory lock 那一步，也就是在任何 row lock 之前**」——協定本身。
+
+順帶修掉測試自身的一個衛生問題（做反向對照時炸出來的）：`afterAll` 的清理若跑在**失敗測試尚未 commit 的 transaction 內**，會跟著被丟棄，殘留 fixture 讓**下一次**在 `beforeAll` 撞 `weekly_events_sunday_date_key` ⇒ 一個紅測試會變成一整個紅檔案。已在清理前先 `rollback`。
 
 **既有測試抓到的三件事**（皆已修，且都是真的問題而非測試包袱）：① 上面 ①的 500；② `admin-auth.db.test.ts` 手工插入的 liff pending fixture 沒有快照欄位 ⇒ 該 fixture 造出了 **app 已不可能產生的形狀**，已改為一併解析 `matched_user_id_at_capture`；③ 會友明細的車輛清單現在包含**已停用**列（帶 id、使用中優先），搜尋／名冊仍只看使用中——「賣掉了」與「從來沒有」是不同的答案，而恢復使用也需要那一列。
 
@@ -1385,8 +1400,8 @@ A 的 LINE 用舊號碼 P1 重送申請       ← 改號碼之後才發生的新
 | 指令 | 結果 |
 |------|------|
 | `npx tsc --noEmit` ／ `npx eslint .` ／ `npm run build` | ✅ |
-| `npm test`（不接 DB） | ✅ **1461 passed**／107 test files；另 319 tests・40 files skipped（DB-gated） |
-| `RUN_DB_TESTS=1 npm test` | ✅ **1779 passed**／147 files（**0 skipped**——本刀整批實跑，非只跑新檔） |
+| `npm test`（不接 DB） | ✅ **1461 passed**／107 test files；另 323 tests・41 files skipped（DB-gated） |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1784 passed**／148 files（**0 skipped**——本刀整批實跑，非只跑新檔） |
 | `npm run db:reset`（0001–0038 全新套用） | ✅ |
 | migrations | `0001–0038`｜`db:verify` **local 全通過（+6 blocks）**／`verify_schema_prod.sql` **36**（尚未對 prod 實跑） |
 

@@ -22,6 +22,8 @@ import { Client } from 'pg'
 //       pending_binding → users. Opposite orders, so 0038 puts a shared advisory lock in
 //       front of both. Without it this is a textbook deadlock (40P01), and its trigger is
 //       mundane: one clerk edits a phone while another approves that member's binding.
+//       Proven through pg_locks rather than through the outcome — see ADVISORY_WAIT below
+//       for why the outcome alone would have been evidence for nothing.
 //
 // Gated: `RUN_DB_TESTS=1` + reachable local Supabase (prereq: `npm run db:reset`).
 try {
@@ -47,9 +49,48 @@ const PHONE_B1 = `0955${N6}`
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
+// Is backend `pid` blocked on OUR advisory lock, specifically?
+//
+// Why this and not just "the query had not returned yet": a blocked query proves only that
+// SOMETHING is holding SOMETHING. In both tests below the first transaction has already run
+// its RPC to completion, so it holds every row lock that RPC takes — meaning the second
+// transaction would block on a row lock even if the advisory lock did not exist. An outcome
+// test therefore cannot tell the advisory lock apart from the row locks it was added to
+// front-run, and would stay green after deleting the line it exists to defend.
+//
+// pg_locks can tell them apart. `locktype='advisory'` + `granted=false` says the waiter is
+// stopped at the advisory acquire — i.e. BEFORE any row lock, which is the whole protocol.
+// The classid/objid pair pins it to hashtext('member_identity_binding') rather than to any
+// advisory lock at all: this file must not go green on some unrelated lock elsewhere.
+// (pg_advisory_xact_lock(bigint) splits the key into classid = high 32 bits, objid = low 32,
+// objsubid = 1. Recomputed in SQL rather than hardcoded, so it survives a hashtext change.)
+const ADVISORY_WAIT = `
+  select count(*)::int as n
+    from pg_locks
+   where pid = $1
+     and locktype = 'advisory'
+     and not granted
+     and objsubid = 1
+     and classid = (hashtext('member_identity_binding')::bigint >> 32)::oid
+     and objid   = (hashtext('member_identity_binding')::bigint & 4294967295)::oid`
+
 describe.skipIf(!RUN)('0038 lock protocols — concurrent transactions', () => {
   let a: Client
   let b: Client
+  // A third, always-idle connection. It has to be a third: asking `b` about `b` is
+  // impossible while `b` is the one blocked, and asking `a` would mean issuing a query on
+  // the transaction whose locks are the thing under observation.
+  let observer: Client
+  let pidB: number
+
+  // Assert `b` is parked on the advisory lock right now. Negative control: delete
+  // `perform pg_advisory_xact_lock(hashtext('member_identity_binding'))` from either RPC in
+  // 0038 and this fails — b then waits on a row lock, and this count is 0.
+  async function expectBlockedOnAdvisoryLock() {
+    const held = await observer.query(ADVISORY_WAIT, [pidB])
+    expect(held.rows[0].n).toBe(1)
+  }
+
   const eventA = randomUUID()
   const eventB = randomUUID()
   const userA = randomUUID()
@@ -62,8 +103,11 @@ describe.skipIf(!RUN)('0038 lock protocols — concurrent transactions', () => {
   beforeAll(async () => {
     a = new Client({ connectionString: DB_URL })
     b = new Client({ connectionString: DB_URL })
+    observer = new Client({ connectionString: DB_URL })
     await a.connect()
     await b.connect()
+    await observer.connect()
+    pidB = (await b.query('select pg_backend_pid() as pid')).rows[0].pid
     await a.query(
       `insert into weekly_events (id, sunday_date, total_capacity, status)
        values ($1, $2, 23, 'open'), ($3, $4, 23, 'open')`,
@@ -91,7 +135,16 @@ describe.skipIf(!RUN)('0038 lock protocols — concurrent transactions', () => {
 
   afterAll(async () => {
     if (RUN) {
-      await a.query(`delete from audit_logs where actor_id = $1`, [adminId]).catch(() => {})
+      // Every test here leaves `a` mid-transaction until its own commit. If one fails before
+      // that commit, the cleanup below would run INSIDE the doomed transaction and be
+      // discarded with it — leaving fixtures that make the NEXT run fail in beforeAll on a
+      // duplicate sunday_date, i.e. one red test silently becomes a red file. Found by
+      // running the negative control below.
+      await a.query('rollback').catch(() => {})
+      await b.query('rollback').catch(() => {})
+      // audit_logs is deliberately append-only (private.audit_logs_block_mutation), so the
+      // rows these tests write stay. That is the design, not a leak: they are scoped to a
+      // throwaway admin id.
       await a.query(`delete from pending_binding where line_user_id like $1`, [`RACE38-${T}%`])
       await a.query(`delete from reservations where weekly_event_id in ($1, $2)`, [eventA, eventB])
       await a.query(`delete from weekly_events where id in ($1, $2)`, [eventA, eventB])
@@ -102,6 +155,7 @@ describe.skipIf(!RUN)('0038 lock protocols — concurrent transactions', () => {
     }
     await a?.end()
     await b?.end()
+    await observer?.end()
   })
 
   // ── (1) vehicle retirement vs apply ────────────────────────────────────────────
@@ -201,6 +255,8 @@ describe.skipIf(!RUN)('0038 lock protocols — concurrent transactions', () => {
       .then(res => { settled = true; return res })
     await wait(300)
     expect(settled).toBe(false)
+    // Not merely blocked — blocked ON THE ADVISORY LOCK, before it reaches pending_binding.
+    await expectBlockedOnAdvisoryLock()
 
     await a.query('commit')
     const res = await approve
@@ -236,6 +292,9 @@ describe.skipIf(!RUN)('0038 lock protocols — concurrent transactions', () => {
       .then(res => { settled = true; return res })
     await wait(300)
     expect(settled).toBe(false)
+    // The other direction, pinned the same way: update_member_identity stops at the advisory
+    // acquire, which is what keeps the two opposite row-lock orders from meeting.
+    await expectBlockedOnAdvisoryLock()
 
     await a.query('commit')
     const res = await change

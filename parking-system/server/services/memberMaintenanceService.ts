@@ -64,10 +64,8 @@ export const MEMBER_MAINTENANCE_STATUS: Record<MemberMaintenanceReason, number> 
   unfinished_reservations: 409,
 }
 
-// A reason the DB returned that this build has no mapping for. Reachable in exactly one
-// direction — new DB, old app (deployment case A) — and it must not become a 500: the
-// mutation genuinely did not happen, and the operator needs to be told that, not shown a
-// crash. 409 with the raw reason is the honest answer; the DB's audit row holds the truth.
+// Does this build have a mapping for the reason the DB returned? Sole caller is `reasonOf`
+// below, which is where the "no" branch is decided — see that comment for what happens then.
 export function isKnownReason(reason: string): reason is MemberMaintenanceReason {
   return Object.prototype.hasOwnProperty.call(MEMBER_MAINTENANCE_STATUS, reason)
 }

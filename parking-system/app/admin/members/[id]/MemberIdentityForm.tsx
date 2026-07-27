@@ -12,9 +12,12 @@ import { memberMaintenanceMessage } from '@/lib/memberMaintenanceTypes'
 // or eligibility. The member is addressed by id here; the old phone is never a lookup key.
 //
 // A phone change is confirmed explicitly because it has a consequence the operator cannot
-// see from this screen: it rejects that member's outstanding LINE binding claims. It has
-// to — a freed phone can be re-issued, and a claim resolved later would bind this member's
-// LINE account to whoever holds the number by then. The member simply re-submits.
+// see from this screen: it rejects that member's outstanding LINE binding claims. Not
+// because the claim would otherwise bind to the wrong person — 0038's capture-time snapshot
+// closed that off, and approval no longer looks anyone up by phone. It is that the claim's
+// identity evidence was "whoever holds this number", and this member no longer does. The
+// member re-submits, and the new claim carries a snapshot that is true. That is a real cost
+// to a real person, which is why it gets a confirmation step rather than a silent side effect.
 export default function MemberIdentityForm({
   userId,
   displayName,
