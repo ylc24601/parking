@@ -154,6 +154,10 @@ const ENTITY_TYPE_LABEL: Record<string, string> = {
   admin_account: '管理員帳號',
   audit: '稽核記錄',
   member_roster: '會友名冊', // #5B-a export rows; entity_id is null so this renders as the bare label
+  // Tier 0-2 (0038). Both render as label + ID suffix, never as a name or a plate —
+  // see the note below on why there is no generic entity-name resolver.
+  member: '會友',
+  vehicle: '車輛',
 }
 
 // 2A-2 resolves ONLY admin_account entities to a name. Everything else renders as

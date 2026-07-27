@@ -129,6 +129,32 @@ function dashIfNull(v: unknown): string {
   return typeof v === 'string' && v.length > 0 ? v : '—'
 }
 
+// Tier 0-2 (0038). Shared by the member.* and vehicle.* actions below so one refusal
+// reads the same wherever it surfaces — same discipline as DENIED_REASON_LABEL.
+const MEMBER_MAINTENANCE_DENIED_REASON: Record<string, string> = {
+  acting_admin_disabled: '操作者帳號已停用',
+  phone_in_use: '手機號碼已被其他會友使用',
+  homonym_confirmation_stale: '確認期間名冊已變動，同名清單與當時不同',
+  active_plate_owned_by_other: '此車牌目前屬於其他會友',
+  unfinished_reservations: '該車尚有未結束的預約',
+}
+
+// The three vehicle actions differ only in their label: 0038 writes '{}' on success
+// and a bare reason on refusal for all of them. Written once so a future fourth
+// vehicle action cannot quietly get a different refusal vocabulary.
+function vehicleAction(label: string): AuditActionDefinition {
+  return {
+    label,
+    reads: ['reason'],
+    render: metadata => {
+      if (!('reason' in metadata)) return []
+      const reason = metadata.reason
+      if (typeof reason !== 'string') return 'unreadable'
+      return [{ label: '未執行原因', value: MEMBER_MAINTENANCE_DENIED_REASON[reason] ?? reason }]
+    },
+  }
+}
+
 const ACTIONS: Record<string, AuditActionDefinition> = {
   // #14A. effective_capacity_from/to are read straight from the row rather than
   // recomputed here: the formula already lives in two places on purpose (the pure
@@ -398,6 +424,67 @@ const ACTIONS: Record<string, AuditActionDefinition> = {
       return [{ label: '匯出筆數', value: String(n) }]
     },
   },
+
+  // ── Tier 0-2 (0038) member maintenance ─────────────────────────────────────
+  // None of these carry a name, a phone or a plate: 0038 writes counts and booleans
+  // only, and the entity_id is the id of the thing acted on. So the reader learns
+  // WHAT was done to WHICH record, never what the values were — which is the point.
+  // To see the current values you open that member's page, where the ordinary
+  // permission checks apply.
+  'member.create': {
+    label: '新增會友',
+    reads: ['homonym_confirmed', 'candidate_count', 'reason'],
+    render: metadata => {
+      if ('reason' in metadata) {
+        const reason = metadata.reason
+        if (typeof reason !== 'string') return 'unreadable'
+        return [{ label: '未執行原因', value: MEMBER_MAINTENANCE_DENIED_REASON[reason] ?? reason }]
+      }
+      const confirmed = yesNo(metadata.homonym_confirmed)
+      const count = metadata.candidate_count
+      if (confirmed === null || typeof count !== 'number') return 'unreadable'
+      // The interesting row is the confirmed one: it means the operator was shown
+      // existing members with the same name and decided this is a different person.
+      // Saying how many they were shown is what makes that decision reviewable.
+      return confirmed === '是'
+        ? [{ label: '同名確認', value: `已確認與名冊中 ${count} 位同名會友不同人` }]
+        : [{ label: '同名確認', value: '名冊中無同名會友' }]
+    },
+  },
+  'member.identity_change': {
+    label: '修改會友姓名／手機',
+    reads: ['name_changed', 'phone_changed', 'bindings_invalidated', 'reason'],
+    render: metadata => {
+      if ('reason' in metadata) {
+        const reason = metadata.reason
+        if (typeof reason !== 'string') return 'unreadable'
+        return [{ label: '未執行原因', value: MEMBER_MAINTENANCE_DENIED_REASON[reason] ?? reason }]
+      }
+      const name = yesNo(metadata.name_changed)
+      const phone = yesNo(metadata.phone_changed)
+      const invalidated = metadata.bindings_invalidated
+      if (name === null || phone === null || typeof invalidated !== 'number') return 'unreadable'
+
+      const changed = [name === '是' ? '姓名' : null, phone === '是' ? '手機' : null].filter(Boolean)
+      const details: AuditDetail[] = [
+        { label: '異動欄位', value: changed.length > 0 ? changed.join('、') : '無' },
+      ]
+      // Only when it happened. A permanent「0 筆」line would train the reader to skip
+      // this row, and this is the consequence the operator most needs to have noticed:
+      // somebody has to tell that member to submit their LINE binding again.
+      if (invalidated > 0) {
+        details.push({ label: '連帶作廢', value: `待審 LINE 綁定申請 ${invalidated} 筆` })
+      }
+      return details
+    },
+  },
+  // 0038 writes '{}' on success for all three: the action label plus the vehicle
+  // entity id already say everything, and the plate itself is deliberately absent.
+  // The refusals are where the substance is — especially unfinished_reservations,
+  // which is the guard that stops a car being retired out from under a live booking.
+  'vehicle.add': vehicleAction('新增車牌'),
+  'vehicle.deactivate': vehicleAction('停用車牌'),
+  'vehicle.reactivate': vehicleAction('恢復使用車牌'),
 }
 
 export const UNKNOWN_ACTION_DETAIL = '詳細資料目前無法顯示'

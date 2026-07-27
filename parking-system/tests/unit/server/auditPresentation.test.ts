@@ -391,3 +391,103 @@ describe('renderAuditDetails — malformed shapes fail safe, never throw', () =>
     expect(JSON.stringify(r)).not.toContain('secret')
   })
 })
+
+// ── Tier 0-2 (0038) member maintenance ───────────────────────────────────────
+// These exist because the slice shipped WITHOUT them and prod showed
+// 「vehicle.reactivate（未知動作）／詳細資料目前無法顯示」on a real staged smoke.
+// The plan called for this registry entry explicitly and the implementation missed
+// it; nothing failed, because no test connected the two sides. So the first test
+// below is not a label check — it is the drift guard that was absent: every action
+// 0038 writes must be registered HERE, or the audit trail for the only write path
+// the church has to member data is unreadable.
+describe('renderAuditDetails — 0038 member maintenance actions are registered', () => {
+  // Mirrors the `v_action` literals in 0038_member_maintenance.sql. A new audited
+  // action in a later migration must be added here AND to the registry.
+  const ACTIONS_0038 = [
+    'member.create',
+    'member.identity_change',
+    'vehicle.add',
+    'vehicle.deactivate',
+    'vehicle.reactivate',
+  ] as const
+
+  it.each(ACTIONS_0038)('%s has a human label, not the raw code', action => {
+    expect(auditActionLabel(action)).not.toBe(action)
+  })
+
+  it.each(ACTIONS_0038)('%s never falls back to「未知動作」', action => {
+    // '{}' is what the vehicle actions actually write on success, so this is the
+    // real shape, not a placeholder.
+    expect(renderAuditDetails(action, {}).fallback).not.toBe(UNKNOWN_ACTION_DETAIL)
+  })
+
+  it.each(ACTIONS_0038)('%s reads every key 0038 writes on refusal', action => {
+    // Every refusal path in 0038 writes exactly {reason}. An unsupportedCount above
+    // zero here would mean the registry is silently dropping the only thing a denied
+    // row has to say.
+    const r = renderAuditDetails(action, { reason: 'acting_admin_disabled' })
+    expect(r.unsupportedCount).toBe(0)
+    expect(r.fallback).toBeNull()
+    expect(r.details).toEqual([{ label: '未執行原因', value: '操作者帳號已停用' }])
+  })
+})
+
+describe('renderAuditDetails — 0038 success rows say what was decided', () => {
+  it('a confirmed homonym create records that a human made that call', () => {
+    const r = renderAuditDetails('member.create', { homonym_confirmed: true, candidate_count: 2 })
+    expect(r.unsupportedCount).toBe(0)
+    expect(r.details).toEqual([
+      { label: '同名確認', value: '已確認與名冊中 2 位同名會友不同人' },
+    ])
+  })
+
+  it('an ordinary create says there was nobody to confirm', () => {
+    const r = renderAuditDetails('member.create', { homonym_confirmed: false, candidate_count: 0 })
+    expect(r.details).toEqual([{ label: '同名確認', value: '名冊中無同名會友' }])
+  })
+
+  it('a phone change surfaces the binding claims it invalidated', () => {
+    // The consequence the operator most needs to have noticed: somebody has to tell
+    // that member to submit their LINE binding again.
+    const r = renderAuditDetails('member.identity_change', {
+      name_changed: false, phone_changed: true, bindings_invalidated: 1,
+    })
+    expect(r.details).toEqual([
+      { label: '異動欄位', value: '手機' },
+      { label: '連帶作廢', value: '待審 LINE 綁定申請 1 筆' },
+    ])
+  })
+
+  it('omits the invalidation line when there was none, rather than printing 0 筆', () => {
+    const r = renderAuditDetails('member.identity_change', {
+      name_changed: true, phone_changed: true, bindings_invalidated: 0,
+    })
+    expect(r.details).toEqual([{ label: '異動欄位', value: '姓名、手機' }])
+  })
+
+  it('a vehicle success row carries no details — and no fallback either', () => {
+    const r = renderAuditDetails('vehicle.deactivate', {})
+    expect(r.details).toEqual([])
+    expect(r.fallback).toBeNull()
+    expect(r.unsupportedCount).toBe(0)
+  })
+
+  it('the refusal that matters most reads as a sentence', () => {
+    const r = renderAuditDetails('vehicle.deactivate', { reason: 'unfinished_reservations' })
+    expect(r.details).toEqual([{ label: '未執行原因', value: '該車尚有未結束的預約' }])
+  })
+})
+
+describe('0038 rows still leak nothing', () => {
+  it.each([
+    ['member.create', { homonym_confirmed: true, candidate_count: 1, display_name: '王小明', phone_number: '0912345678' }],
+    ['member.identity_change', { name_changed: true, phone_changed: true, bindings_invalidated: 0, phone_to: '0987654321' }],
+    ['vehicle.add', { license_plate: 'ABC-1234' }],
+  ])('%s renders none of the identifying keys a future writer might add', (action, metadata) => {
+    const serialized = JSON.stringify(renderAuditDetails(action, metadata))
+    expect(serialized).not.toContain('王小明')
+    expect(serialized).not.toContain('0912345678')
+    expect(serialized).not.toContain('0987654321')
+    expect(serialized).not.toContain('ABC-1234')
+  })
+})
