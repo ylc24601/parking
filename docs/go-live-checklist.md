@@ -30,7 +30,7 @@
 > **為什麼在最前面**：這一條不做，下面每一條「改完部署」的步驟都可能被搶跑。已有三次同型漂移（[current_handoff.md](current_handoff.md) §6.37／§6.41／§6.48），最近一次是 `0035` 進 main 後 Vercel 立刻切了 app、migration 三天後才套用。
 
 - **Who**：dev
-- [ ] **Vercel → Settings → Environments → Production → Branch Tracking → 關掉 Auto-assign Custom Production Domains**（Production branch 維持 `main`）
+- [x] **已完成並驗證（2026-07-27，見 [current_handoff.md](current_handoff.md) §6.48）**：Vercel → Settings → Environments → Production → Branch Tracking → 關掉 **Auto-assign Custom Production Domains**（Production branch 維持 `main`）。以建立本規則的 docs-only PR #51 實跑驗收：merge 後停在 **Staged**、正式 domain 仍服務舊 **Current**，Promote 後才切換（指紋比對證實），promote 未動到 toggle。
 - **Verify**：**不要另外製造測試 commit**——拿建立這條規則的那支 docs-only PR 當第一次驗收（無 migration、A✅B✅、blast radius 最低，即使 toggle 沒設成功而直上 production 也只是文件）。merge 後 Deployments 該筆狀態應為 **Staged**、production domain 仍指向前一版（**Current**）；手動 **Promote** 後才變 Current，且不會 rebuild。
 - ⚠️ **這個設定會自己還原**：Instant Rollback 之後 Vercel 會自動關掉 auto-assign，而「Undo Rollback」**又會把它打開**。**每次 rollback 後回頭確認一次**（見 [prod-deploy-runbook.md](prod-deploy-runbook.md) §1.5／§2.5）。
 - ⚠️ **本專案是 Vercel Hobby**：Instant Rollback **只保證回得到「上一個 production deployment」**（Pro/Enterprise 才能挑任一曾服務過 production 的版本）。不要把「挑一個更舊的已知良好版本」當成 recovery plan。

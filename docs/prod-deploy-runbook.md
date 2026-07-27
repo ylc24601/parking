@@ -186,12 +186,37 @@ With that off, every release runs:
    not promote.** Production is then sitting in `old app + new DB`, which is exactly the
    state step 1 certified as safe (A) — that is what the A answer is *for*.
 5. **Smoke the staged deployment at its own URL**, before it serves anyone. It already has
-   the Production env, so admin flows exercise the real cloud DB. *Exception:* LINE/LIFF
-   flows cannot be smoked here — the webhook and LIFF endpoint are bound to the production
-   domain, so those wait for step 7.
-6. **Promote** — deployment ellipsis (…) → **Promote**. This reassigns the domain and does
-   **not** rebuild, so what goes live is the exact artifact smoked in step 5.
-7. **Smoke on the production domain.**
+   the Production env, so admin flows exercise the real cloud DB.
+   - **Open it in a browser, signed in to the Vercel account.** Every domain assigned to a
+     staged deployment (project alias, `*-git-main-*` branch alias, and the unique
+     `*-<hash>-*` deployment URL) sits behind Vercel Deployment Protection and 302s to
+     `vercel.com/sso-api`. `curl` and other non-browser tools get the redirect, not the app.
+   - That protection is *desirable*, not an obstacle: a staged build carries Production env
+     — real Supabase credentials — and must not be publicly reachable before it is promoted.
+     Verified 2026-07-27: only the production domain answered 200; all three staged domains
+     redirected to SSO.
+   - *Exception:* LINE/LIFF flows cannot be smoked here — the webhook and LIFF endpoint are
+     bound to the production domain, so those wait for step 7.
+6. **Promote** — deployment ellipsis (…) → **Promote**. **Before confirming, check the domain
+   list in the dialog and make sure the production domain is in it**; if it is not, stop, the
+   domain does not belong where you assume. This reassigns the domain and does **not**
+   rebuild, so what goes live is the exact artifact smoked in step 5.
+7. **Smoke on the production domain**, and **prove the cutover actually happened**.
+
+   > **When a release has no visible change** (docs-only, refactor, config), "the site loads"
+   > proves nothing — and the Vercel badge is a claim about Vercel's state, not about what
+   > users receive. Fingerprint the production domain **before** promoting and again after:
+   >
+   > ```bash
+   > curl -s https://<production-domain>/ -o /tmp/p.html -D /tmp/h.txt
+   > grep -iE '^(etag|age)' /tmp/h.txt; shasum -a 256 /tmp/p.html
+   > ```
+   >
+   > A changed `ETag`/body hash, plus `age` resetting to ~0, is objective evidence that the
+   > domain is serving a different artifact. **Measured 2026-07-27 across the first promote:**
+   > body hash `957e19d0…` → `14f830e5…` and `age` 9149 → 0, while the byte *length* stayed
+   > identical at 11088 — so compare hashes, never sizes. Next.js output is not byte-identical
+   > across builds even when the source is unchanged, which is what makes this work.
 8. **Confirm auto-assignment is still OFF.** A plain promote should not re-enable it — but a
    rollback → undo cycle does (see the constraint note above), and this is the one invariant
    whose failure is silent. One glance at the setting closes the loop.
