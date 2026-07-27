@@ -192,6 +192,9 @@ With that off, every release runs:
 6. **Promote** — deployment ellipsis (…) → **Promote**. This reassigns the domain and does
    **not** rebuild, so what goes live is the exact artifact smoked in step 5.
 7. **Smoke on the production domain.**
+8. **Confirm auto-assignment is still OFF.** A plain promote should not re-enable it — but a
+   rollback → undo cycle does (see the constraint note above), and this is the one invariant
+   whose failure is silent. One glance at the setting closes the loop.
 
 For an **A❌/B✅** release the same flow applies with steps 3–4 moved after step 6.
 

@@ -1171,7 +1171,7 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 | prod DB | 停在 **`0034`** | `npx supabase db push` 列出的待套用清單正好是 `0035`／`0036`／`0037` |
 | 落差期間 | `0035` 於 **2026-07-24** 進 main（`76e93f8`），migration 直到 **07-27** 才套用 | `git log --diff-filter=A` |
 
-也就是說，那三天 prod 上跑的 app 每個 admin request 都在 `select admin_accounts.role`，而該欄位不存在。**是否真的有人在那個窗口打過後台，本紀錄未查證**——prod 目前沒有真會友資料（go-live §1.3 未做）也沒有任何 clerk 帳號，唯一可能受影響的是開發者自己的後台操作。
+也就是說，那三天 prod 上跑的 app 每個 admin request 都在 `select admin_accounts.role`，而該欄位不存在。**是否真的有人在那個窗口打過後台，本紀錄未查證**——prod **尚未匯入正式教會會友名冊**（go-live §1.3 未做），僅有先前真機驗證留下的**單筆真人資料**（§6.36），也沒有任何 clerk 帳號，唯一可能受影響的是開發者自己的後台操作。
 
 **根因**：runbook §1.5 規定的順序是 `migration → db:verify:remote → app → smoke`，但 Vercel 的 Git Integration 預設 **push 到 production branch 即自動 promote**。所以「merge」等於「部署 app」，而 migration 仍是人工步驟 ⇒ **只要 PR 同時含 app code 與 migration，就必然先產生 `new app + old DB`**。文件寫的順序與實際的部署觸發機制不一致，紀律補不起來。
 
@@ -1187,7 +1187,7 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
    | 台北時間 | action | result | metadata | 驗到什麼 |
    |---|---|---|---|---|
    | 09:02:56 | `admin_account.create` | success | | `0036` `create_admin_account`（建為 clerk） |
-   | 09:05:43 | `member_roster.export` | success | `row_count=1` | `0037` `log_member_roster_export`；列數與 prod 現有 1 位 live member 一致（§6.36） |
+   | 09:05:43 | `member_roster.export` | success | `row_count=1` | `0037` `log_member_roster_export`；列數與 prod 現況一致——尚未匯入正式教會會友名冊，僅先前真機驗證留下的單筆真人資料（§6.36） |
    | 10:07:54 | `admin_account.password_reset` | success | `sessions_revoked=true` | `0035` 的 5-arg `reset_admin_password` 走**成功**路徑（非 `cannot_target_self` denied 分支） |
    | 10:08:16 | （`admin_sessions` 新列） | | | 以新帳號＋新密碼實際登入成功 ⇒ 重設password 端到端成立，不只是 RPC 有回 ok |
    | 10:25:30 | `admin_account.password_reset` | success | `sessions_revoked=true` | 第二次重設——第一次的一次性密碼未記下。正是 UI 自己的指引（「帳號已建立但未取得密碼，請用『重設密碼』重新產生」） |
