@@ -1340,11 +1340,11 @@ A 的 LINE 用舊號碼 P1 重送申請       ← 改號碼之後才發生的新
 | `verify_schema_prod.sql` | ✅ **36**（新增 0038 catalog-only block；**既有 #23 從 `vehicles_plate_normalized_key` 改寫為 `vehicles_active_plate_uq`**——舊斷言會在 prod 直接失敗） |
 | `npx tsc --noEmit` ／ `npx eslint .` ／ `npm run build` | ✅ |
 | `npm test`（不接 DB） | ✅ **1461 passed**／323 skipped（DB-gated） |
-| `RUN_DB_TESTS=1 npm test` | ✅ **1784 passed / 148 files**（+46；新增 `member-maintenance.db.test.ts` 9 例、`member-import.db.test.ts` 身分守衛 4 例、`member-maintenance-race.db.test.ts` **4 例雙連線併發**） |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1784 passed / 148 files**（+46；新增 `member-maintenance.db.test.ts` 9 例、`member-import.db.test.ts` 身分守衛 4 例、`member-maintenance-race.db.test.ts` **4 例併發：兩條交錯 transaction ＋ 一條 `pg_locks` observer**） |
 
 #### 併發測試：兩把鎖各自用「反向對照」證明是承重的
 
-`member-maintenance-race.db.test.ts` 開**兩條原始 `pg` 連線**、手動交錯 transaction，釘住本刀新增的兩個鎖協定。重點不在多 4 個綠燈，而在**每個斷言都做過反向對照**——把 `0038` 的那一行拿掉、確認測試真的會紅：
+`member-maintenance-race.db.test.ts` 開**三條原始 `pg` 連線**——兩條交錯 transaction、外加**一條全程閒置的 observer**（查 `pg_locks` 用；不能問卡住的那條，也不該用鎖正被觀測的那條）——釘住本刀新增的兩個鎖協定。重點不在多 4 個綠燈，而在**每個斷言都做過反向對照**——把 `0038` 的那一行拿掉、確認測試真的會紅：
 
 | 協定 | 反向對照結果 |
 |---|---|

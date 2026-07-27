@@ -211,6 +211,11 @@ With that off, every release runs:
      convenience.**
    - *Exception:* LINE/LIFF flows cannot be smoked here — the webhook and LIFF endpoint are
      bound to the production domain, so those wait for step 7.
+   - **Stop-gate: if any staged smoke check fails, do not Promote. Investigate while
+     production remains on the previous deployment.** Same reasoning as step 4, and the same
+     answer if A is `⚠️ almost`: the window is the cheaper of the two costs. This step exists
+     precisely so a bad artifact is found *before* it owns the domain — promoting past a
+     failed check spends that for nothing.
 6. **Promote** — deployment ellipsis (…) → **Promote**. **Before confirming, check the domain
    list in the dialog and make sure the production domain is in it**; if it is not, stop, the
    domain does not belong where you assume. This reassigns the domain and does **not**
