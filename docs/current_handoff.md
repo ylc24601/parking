@@ -1182,7 +1182,19 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 1. `npx supabase db push` → `0035`／`0036`／`0037` 三支套用成功。
    - CLI 在**三支都 apply 完之後**噴一則 `failed to cache migrations catalog` warning（pg-delta 在 edge-runtime 容器內找不到 `/workspace/supabase/.temp/pgdelta/pgdelta-target-ca.crt`；本機該檔實際存在）。**屬 CLI 本機快取步驟的路徑問題，未觸及遠端資料庫**；判定依據是三行 `Applying migration ...` 皆無 SQL 錯誤，且下一步的獨立驗證通過。
 2. `npm run db:verify:remote` → **`all 35 assertions passed`**（34→35，最後一條即 `0037` 的 member-export）。
-3. Smoke：**使用者回報通過**（清單：登入 `/admin`／`/admin/accounts` 變更角色／`/admin/members` 匯出 CSV 後在 `/admin/audit` 查證／密碼重設按鈕。本紀錄依使用者回報，未逐項留存證據）。
+3. Smoke（prod domain，證據＝`audit_logs` 當日列，非事後回想）：
+
+   | 台北時間 | action | result | role_snapshot | 驗到什麼 |
+   |---|---|---|---|---|
+   | 09:02:56 | `admin_account.create` | success | superadmin | `0036` `create_admin_account` |
+   | 09:05:43 | `member_roster.export` | success | superadmin | `0037` `log_member_roster_export`（`row_count=1`，與 prod 現有 1 位 live member 一致，見 §6.36） |
+   | 10:07:54 | `admin_account.password_reset` | success | superadmin | `0035` 的 5-arg `reset_admin_password` 走成功路徑（非 `cannot_target_self` 的 denied 分支） |
+
+   - **登入不需要獨立證據**：上列三列的 `actor_type=admin` ＋ `role_snapshot=superadmin` 本身就要求一個有效 admin session、且 `admin_accounts.role` 讀得到才寫得出來。附帶驗到 **`0035` 的 `actor_role_snapshot` 在 prod 實際被填上**（此欄自 `0030` 建立以來一直是 null）。
+   - **明確未驗**：`0036` 的 `set_admin_role`（無 `admin_account.role_change` 列）與 `revoke_admin_sessions`（無 `admin_account.session_revoke` 列）。原 smoke 清單寫的是「變更角色」，實際跑的是「新增管理者」——**稽核查證推翻了口頭回報**，本身即這一節主張的示範。
+   - `admin_sessions` 當日 1 列（最新 10:08:16，晚於最後一個稽核動作 22 秒）。
+
+   **本次 smoke 產生的 prod 副作用**：09:02:56 新增了一個管理者帳號，其一次性密碼於 10:07:54 重設過一次。**該帳號的處置（正式幹事帳號 vs. 停用）見下方待辦**——比照 runbook §6.4 的測試身分清理紀律，prod 上不留來歷不明的活憑證。
 
 **資料影響（事前逐行審查）**：三支之中只有 `0035` 會寫既有資料——`update admin_accounts set role = 'superadmin'`（刻意：回填成 clerk 會讓所有人一次失去帳號管理權且沒有 UI 可要回來）。`0036`／`0037` 只 `create function`，套用當下零列異動。**無任何 drop table／delete／truncate 打到會友、車輛、預約或稽核資料。**
 
@@ -1198,7 +1210,10 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 
 **外部審查修正了兩處**（採納）：① 我原本舉 `0032` 當「兩邊都不安全」的例子是**錯的**——它 drop `p2_eligible` 之後用**同名、同讀取介面**重建成 generated column（`generated always as (review_status = 'approved') stored`），header 自己就寫了 `old app + new DB : compatible`，是 A✅/B❌，而且正好是**刻意保留舊介面的好範例**，文件改成正面示範。② `0035` 的 `NOT VALID` CHECK 屬**歷史資料不得被偽造**（data migration），不是 app↔schema 部署相容性，兩者不要混在一起教——runbook 已加註區隔。
 
-**尚未做**：Vercel 那個 toggle 是 dashboard 操作，需由使用者在 UI 關掉；本刀只交付文件與 PR template。**關掉之前，上述流程仍然只是文件。**
+**尚未做**：
+
+- **Vercel toggle**：dashboard 操作，需由使用者在 UI 關掉；本刀只交付文件與 PR template。**關掉之前，上述流程仍然只是文件。**
+- **09:02 那個 smoke 帳號的處置**：若非要給教會的正式幹事帳號，應到 `/admin/accounts` 停用（soft-disable，`0026`；帳號永不硬刪）。**停用順帶可補上未驗的兩支 RPC**——停用前先切一次角色即補 `admin_account.role_change`，停用本身寫 `admin_account.disable` 並連帶刪該帳號的 session 列。
 
 ---
 
