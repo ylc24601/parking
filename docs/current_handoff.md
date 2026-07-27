@@ -1159,6 +1159,77 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 
 ---
 
+## 6.48 Wave 2C＋Wave 3 上 prod：migration 補推，並發現部署順序被 auto-deploy 破壞（2026-07-27）
+
+**起因**：使用者問「最近的改動要怎麼更新到 prod、會不會動到 Supabase 的資料」。查證發現 prod 的 app 與 DB 已經分岔。
+
+**實測到的狀態**：
+
+| | 事實 | 怎麼確認的 |
+|---|---|---|
+| prod app | 已含 Wave 2C-2 之後的 build | `GET /admin/accounts` 回 **307**（導向登入）而非 404——該路由是 `ca9de80` 才加的 |
+| prod DB | 停在 **`0034`** | `npx supabase db push` 列出的待套用清單正好是 `0035`／`0036`／`0037` |
+| 落差期間 | `0035` 於 **2026-07-24** 進 main（`76e93f8`），migration 直到 **07-27** 才套用 | `git log --diff-filter=A` |
+
+也就是說，那三天 prod 上跑的 app 每個 admin request 都在 `select admin_accounts.role`，而該欄位不存在。**是否真的有人在那個窗口打過後台，本紀錄未查證**——prod **尚未匯入正式教會會友名冊**（go-live §1.3 未做），僅有先前真機驗證留下的**單筆真人資料**（§6.36），也沒有任何 clerk 帳號，唯一可能受影響的是開發者自己的後台操作。
+
+**根因**：runbook §1.5 規定的順序是 `migration → db:verify:remote → app → smoke`，但 Vercel 的 Git Integration 預設 **push 到 production branch 即自動 promote**。所以「merge」等於「部署 app」，而 migration 仍是人工步驟 ⇒ **只要 PR 同時含 app code 與 migration，就必然先產生 `new app + old DB`**。文件寫的順序與實際的部署觸發機制不一致，紀律補不起來。
+
+**這是同型漂移的第三次**：§6.37 是 prod schema 落後六支 migration（被還原演練意外抓到）、§6.41 是本機修正沒 commit／push 而 prod 仍送舊文案、本次是部署順序被 auto-deploy 破壞。前兩次都當成個案處理，這次改成處理機制。
+
+**處置（本次實際執行）**：
+
+1. `npx supabase db push` → `0035`／`0036`／`0037` 三支套用成功。
+   - CLI 在**三支都 apply 完之後**噴一則 `failed to cache migrations catalog` warning（pg-delta 在 edge-runtime 容器內找不到 `/workspace/supabase/.temp/pgdelta/pgdelta-target-ca.crt`；本機該檔實際存在）。**屬 CLI 本機快取步驟的路徑問題，未觸及遠端資料庫**；判定依據是三行 `Applying migration ...` 皆無 SQL 錯誤，且下一步的獨立驗證通過。
+2. `npm run db:verify:remote` → **`all 35 assertions passed`**（34→35，最後一條即 `0037` 的 member-export）。
+3. Smoke（prod domain，證據＝`audit_logs` 當日列，非事後回想）：
+
+   | 台北時間 | action | result | metadata | 驗到什麼 |
+   |---|---|---|---|---|
+   | 09:02:56 | `admin_account.create` | success | | `0036` `create_admin_account`（建為 clerk） |
+   | 09:05:43 | `member_roster.export` | success | `row_count=1` | `0037` `log_member_roster_export`；列數與 prod 現況一致——尚未匯入正式教會會友名冊，僅先前真機驗證留下的單筆真人資料（§6.36） |
+   | 10:07:54 | `admin_account.password_reset` | success | `sessions_revoked=true` | `0035` 的 5-arg `reset_admin_password` 走**成功**路徑（非 `cannot_target_self` denied 分支） |
+   | 10:08:16 | （`admin_sessions` 新列） | | | 以新帳號＋新密碼實際登入成功 ⇒ 重設password 端到端成立，不只是 RPC 有回 ok |
+   | 10:25:30 | `admin_account.password_reset` | success | `sessions_revoked=true` | 第二次重設——第一次的一次性密碼未記下。正是 UI 自己的指引（「帳號已建立但未取得密碼，請用『重設密碼』重新產生」） |
+   | 10:27:09 | `admin_account.session_revoke` | success | **`sessions_revoked=1`** | `0036` `revoke_admin_sessions`。**刻意保留目標帳號的活 session 才按**，所以撤到的是 1 而非 0；另一個瀏覽器隨即被踢回登入頁 ⇒ 驗到的是**撤銷真的生效**，不只是 RPC 跑得起來 |
+   | 10:28:56 | `admin_account.role_change` | success | `to_role=superadmin` | `0036` `set_admin_role` |
+   | 10:29:49 | `admin_account.disable` | success | | `0035` `set_admin_disabled` |
+   | 10:34:39 | `admin_account.role_change` | success | `to_role=clerk` | 降權收尾（見下）。順帶驗到 `set_admin_role` **對已停用帳號一樣可執行**，不要求目標為啟用狀態 |
+
+   **覆蓋率**：`0035`（`reset_admin_password` 5-arg／`set_admin_disabled`／`role` 欄位讀取）、`0036`（三支全數）、`0037`（`log_member_roster_export`）**每一支都有稽核列**。
+
+   - **登入不需要獨立證據**：每一列的 `actor_type=admin` ＋ `role_snapshot=superadmin` 都要求一個有效 admin session、且 `admin_accounts.role` 讀得到才寫得出來。附帶驗到 **`0035` 的 `actor_role_snapshot` 在 prod 實際被填上**（此欄自 `0030` 建立以來一直是 null）。
+   - **順序有意義，不是流水帳**：`set_admin_role` 與 `set_admin_disabled` 都會刪掉目標帳號的 session，所以先撤銷、再改角色、最後停用；顛倒的話 `session_revoke` 只會撤到 0，證據強度掉一半。
+   - **原 smoke 口頭回報說「變更角色」，稽核顯示當時實際跑的是「新增管理者」**（`role_change` 是本輪補做才出現的）。**稽核查證推翻了口頭回報**，本身即這一節主張的示範。
+
+   > **`sessions_revoked` 這個 key 跨 action 型別不同，是刻意的、不是瑕疵**：`password_reset` 寫 boolean `true`（登出所有裝置是副作用，數量不是重點），`session_revoke` 寫整數（數量就是結果，`GET DIAGNOSTICS` 取得）。viewer 兩邊各自做型別檢查（`yesNo()` vs `typeof n !== 'number'`），對不上顯示 `unreadable`。**唯一要注意的是查詢端：跨 action 對這個 key `::int` 會炸在 `'true'` 上。**
+
+   **帳號處置（已完成）**：09:02:56 建的是 smoke 拋棄式帳號，10:29:49 已**停用**（soft-disable，`0026`；帳號永不硬刪，稽核列的 actor 才永遠解析得回來——`0030` 的 actor 解析依賴這點）。兩組一次性密碼隨帳號停用而失效。比照 runbook §6.4 的測試身分清理紀律，prod 上不留來歷不明的活憑證。
+   **最終狀態：`disabled` ＋ `clerk`（幹事）。** 10:28:56 為了驗 `set_admin_role` 把它由 clerk 升到 superadmin，10:29:49 停用時角色仍是 superadmin——這會留下一個隱性風險：帳號雖然登不進來，但 `/admin/accounts` 的「啟用」按鈕就在旁邊，**日後誰誤按一下就得到一個啟用中的系統管理員**。故 10:34:39 降回幹事，讓最壞情況只是幹事。**停用帳號的角色不是無關緊要的欄位，它是「誤啟用」那條路徑的爆炸半徑。**
+
+   > **「能不能直接刪掉這個帳號？」——不能，而且不該。** 系統沒有任何刪除路徑（migrations 無 `delete from admin_accounts`，UI 只有停用／啟用），這是 `0026` 的刻意設計、`0030` 的 actor 解析也依賴它。具體後果：稽核 viewer 靠 `listAdminAccounts()` 建 id→名稱的 Map（[`auditViewService.ts:192-193`](../parking-system/server/services/auditViewService.ts#L192-L193)）來指名「誰」，而這個帳號是上表 6 列的 `entity_id`；硬刪之後那 6 列就再也指不出對象。而 `audit_logs` 對 actor/entity **刻意不設 FK**（`0030`：snapshot ref 必須在被指向的東西消失後仍存活），所以**資料庫不會擋你，它只會安靜地讓稽核失去指稱能力**。**在這個系統裡，停用就是刪除。**
+
+**資料影響（事前逐行審查）**：三支之中只有 `0035` 會寫既有資料——`update admin_accounts set role = 'superadmin'`（刻意：回填成 clerk 會讓所有人一次失去帳號管理權且沒有 UI 可要回來）。`0036`／`0037` 只 `create function`，套用當下零列異動。**無任何 drop table／delete／truncate 打到會友、車輛、預約或稽核資料。**
+
+**操作摩擦（記一筆，會重複發生）**：`db:verify:remote` 第一次跑失敗成 `password authentication failed for user "YLC"`——因為 `SUPABASE_DB_URL` 沒設，`psql` 退回預設值去連本機 socket。這是 runbook §1.4「用完即 `unset`」的必然後果（正確的取捨），但錯誤訊息會誤導成「密碼錯了」。**每次跑都要重新 export；看到 `Password for user ...` 提示就代表變數是空的，直接中止、不要輸入。**
+
+**制度性修正（本刀同時交付）**：
+
+- **runbook §1.5 改寫成 "Production release compatibility gate"** — 從「有 migration 一律先 DB」升級成先答兩題（A＝old app + new DB 安全嗎／B＝new app + old DB 安全嗎），由答案決定順序；四象限含 **A❌B❌ ⇒ 禁止單次 release、必須 expand → migrate app → contract**。教判斷原則而非記指令。另補第三題 **R（上一個 production deployment + 新 DB）**，並接回 §5 的 forward-fix。
+- **runbook §2.5（新增）＋ Vercel 設定** — Production branch 維持 `main`，但關掉 **Auto-assign Custom Production Domains**（Settings → Environments → Production → Branch Tracking）。merge 後 build 停在 **Staged**、production domain 仍是舊版，`db push` + verify 通過後才手動 **Promote**（不 rebuild）。**這是把 §1.5 從「靠紀律」變成「機制上做不到違反」的關鍵**。
+- **`.github/PULL_REQUEST_TEMPLATE.md`（新增）** — 每個含 migration 的 PR 在 merge 前填 A／B／順序／R／smoke 項目。
+- **否決 `release` branch**（本來的第一提案）：技術可行，但把要追蹤的版本指標從兩個（app／DB）變成四個（`main`／`release`／正在服務的 deployment／DB schema），還多一套 branch policy 要交給教會繼承。staged deployment 用一個 toggle 解同一個 race。留作 fallback。
+- **否決「merge 前先 db push」**：同樣能消除 race，但會讓 prod 跑著一支尚未存在於 `main` 的 migration——merge 若因故沒完成，repository 就不再是 production 的 source of truth。staged 流程同時保住順序與 source of truth。
+
+**外部審查修正了兩處**（採納）：① 我原本舉 `0032` 當「兩邊都不安全」的例子是**錯的**——它 drop `p2_eligible` 之後用**同名、同讀取介面**重建成 generated column（`generated always as (review_status = 'approved') stored`），header 自己就寫了 `old app + new DB : compatible`，是 A✅/B❌，而且正好是**刻意保留舊介面的好範例**，文件改成正面示範。② `0035` 的 `NOT VALID` CHECK 屬**歷史資料不得被偽造**（data migration），不是 app↔schema 部署相容性，兩者不要混在一起教——runbook 已加註區隔。
+
+**尚未做**：
+
+- **Vercel toggle**：dashboard 操作，需由使用者在 UI 關掉；本刀只交付文件與 PR template。**關掉之前，上述流程仍然只是文件。**
+- ~~09:02 那個 smoke 帳號的處置~~ ✅ **結案**：10:29:49 停用、10:34:39 降回幹事，最終狀態 `disabled` ＋ `clerk`。補做的四個動作同時補齊了原本未驗的兩支 RPC（見上方 smoke 表）。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。

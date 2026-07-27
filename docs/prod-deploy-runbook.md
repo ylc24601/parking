@@ -116,45 +116,142 @@ comparable and neither supersedes the other.
 Never paste it into Vercel env, `.env.local`, or any committed file. Avoid it appearing
 in a terminal screenshot. `unset` it when done, as above.
 
-### 1.5 Deploy order when a migration is not bidirectionally compatible
+### 1.5 Production release compatibility gate
 
-Most migrations in this repo are additive and either order works. **`0035` (admin roles,
-Wave 2C-1 / #19) is not** — the app reads a new column on every request — and any future
-migration of that shape behaves the same. **`0036` (admin role management, Wave 2C-2) is a
-milder case: it only ADDS RPCs, so migration-first never breaks the old app, but the new
-app calls three RPCs that do not exist until it lands — so app-first makes 新增管理者 /
-變更角色 / 撤銷 session fail.** Either way the order is the same, and it is fixed:
+> Replaces the older "deploy order when a migration is not bidirectionally compatible".
+> The rule is not "always run the migration first" — it is **answer two questions, and let
+> the answers pick the order**. Recorded because the previous phrasing was a rule to
+> memorise, and it was silently violated the first time the deployment trigger changed
+> shape (see [current_handoff.md](current_handoff.md) §6.48).
 
-1. **Apply the migration** (§1.3).
-2. **Verify it landed** — `npm run db:verify:remote` (§1.4). Its last assertion is the
-   admin-role one; if that fails, stop, because step 3 will take the back office down.
-3. **Deploy the app.**
-4. **Smoke `/admin/accounts`** — log in and load the page. That single request exercises
-   the new column on the session read, so it fails loudly if the order was wrong.
+**Every release that contains a migration answers these two questions BEFORE it merges**,
+in the migration header and in the PR description
+([`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)):
 
-> **`0037` (member roster export, Wave 3 3d / #5B-a) is the same additive DB-first shape.** It
-> adds `log_member_roster_export` + `db_now`, removes/changes nothing: old app + new DB is fine;
-> new app + old DB fails **only** the roster export (RPC missing). The verifier's last assertion
-> is now the member-export one (`all 35 assertions` remote / `49` local). Same order: migration
-> → `db:verify:remote` → app → **smoke by exporting once from `/admin/members` as a superadmin
-> and confirming the row in `/admin/audit`**.
+- **A — is `old app + new DB` safe?** i.e. can the currently-serving app keep running once
+  this migration has been applied?
+- **B — is `new app + old DB` safe?** i.e. can the new app run before the migration lands?
 
-**Why it is one-way:**
+| A | B | Deployment order |
+|---|---|---|
+| ✅ | ✅ | Either order. Still go through the standard flow below — a uniform procedure is worth more than the saved minute. |
+| ✅ | ❌ | **DB → app.** The common case in this repo. |
+| ❌ | ✅ | **App → DB.** Rare here; it means the migration removes something only the old app used. |
+| ❌ | ❌ | **A single release is forbidden.** Split into expand → migrate app → contract (below). |
 
-| | outcome |
-|---|---|
-| migration first | ✅ RPC signatures unchanged except `reset_admin_password`; every existing account is backfilled to `superadmin`, so the old app behaves exactly as before. |
-| app first | ❌ the app selects `admin_accounts.role`, which does not exist yet — **every** admin request fails. |
+**Worked examples from this repo — all four of them are A✅/B❌:**
 
-**`reset_admin_password` has a narrow compatibility window.** Its signature changed
-3-arg → 5-arg (it cannot write a conformant audit row without an actor session id and a
-request id), and the old overload was **dropped** rather than left alongside — two
-overloads make the PostgREST named-argument call ambiguous. So between step 1 and step 3
-the *password-reset button* returns 500. Nothing else is affected: no cron job, no member
-or staff flow, no capacity or eligibility write. Do the two steps back to back and this
-window is a minute or two on a button nobody is pressing.
+| migration | A (old app + new DB) | B (new app + old DB) |
+|---|---|---|
+| `0032` P2 review status | ✅ `p2_eligible` is dropped and **re-added under the same name as a generated column**, so the old app's `select p2_eligible` keeps working; `import_member` keeps its signature. A deliberate backward-compatible reshape — see its header. | ❌ the app selects `review_status` / `review_version` / `p2_valid_from` / `p2_child_birthdate`. |
+| `0035` admin roles | ⚠️ **almost** — see the `reset_admin_password` window below. Everything else is unchanged, and every existing account is backfilled to `superadmin`, so the old app behaves exactly as before. | ❌ the app selects `admin_accounts.role`, which does not exist yet — **every** admin request fails. |
+| `0036` admin role management | ✅ adds three RPCs, changes nothing. | ❌ 新增管理者 / 變更角色 / 撤銷 session call RPCs that do not exist. |
+| `0037` member roster export | ✅ adds `log_member_roster_export` + `db_now`, removes/changes nothing. | ❌ the roster export — and **only** the roster export — fails. |
 
-**Rollback is therefore NOT "redeploy the old app"** — see §5.
+**The A❌/B❌ case, and why it cannot be one release.** Rename `foo` to `bar` and ship an app
+that reads only `bar`: DB-first breaks the old app (no `foo`), app-first breaks the new app
+(no `bar`). There is no order that works, so it takes three releases — **expand** (add
+`bar`, keep `foo` in sync), **migrate the app** (read/write `bar`), **contract** (drop `foo`,
+only once the rollback horizon has passed and no deployment you would still roll back to
+reads `foo`). This repo has consistently avoided landing here — `0032` re-added
+`p2_eligible` rather than dropping it, and `0035` added `p2_valid_from` rather than renaming
+an existing column, precisely because a rename is a three-release commitment.
+
+> Do **not** confuse this with `0035`'s `NOT VALID` CHECK on `audit_logs`. That is a
+> *historical-data* decision (pre-0035 audit rows genuinely had no role, and backfilling
+> them to `superadmin` would fabricate evidence), not an app↔schema compatibility one.
+> Related instinct, different problem — keep them apart when reasoning about a release.
+
+#### The release procedure (staged production deployment)
+
+**The gate above is a judgement; this is the mechanism that stops the judgement from being
+bypassed.** Vercel's default is to auto-promote every push to the production branch, which
+means merging is deploying, and no amount of discipline in this document can hold the
+"migration first" order. So the project is configured to build production deployments but
+**not** hand them the production domain until a human promotes them.
+
+**One-time project setting (required, verify it is still off after any Vercel project
+change):** Vercel Dashboard → **Settings → Environments → Production → Branch Tracking** →
+disable **Auto-assign Custom Production Domains**. Production branch stays `main`.
+
+With that off, every release runs:
+
+1. **Answer A and B** (above) and record them in the PR. If A❌/B❌, stop — it is not one release.
+2. **Merge the PR to `main`.** Vercel builds a production deployment with the Production
+   env vars and leaves it in state **Staged**. The production domain still serves the
+   previous deployment, which is state **Current**. `main` is now the source of truth for
+   everything that is about to be deployed — the migration included.
+3. **Apply the migration** — `npx supabase db push` (§1.3).
+4. **Verify it landed** — `npm run db:verify:remote` (§1.4). **Stop-gate: if this fails, do
+   not promote.** Production is then sitting in `old app + new DB`, which is exactly the
+   state step 1 certified as safe (A) — that is what the A answer is *for*.
+5. **Smoke the staged deployment at its own URL**, before it serves anyone. It already has
+   the Production env, so admin flows exercise the real cloud DB. *Exception:* LINE/LIFF
+   flows cannot be smoked here — the webhook and LIFF endpoint are bound to the production
+   domain, so those wait for step 7.
+6. **Promote** — deployment ellipsis (…) → **Promote**. This reassigns the domain and does
+   **not** rebuild, so what goes live is the exact artifact smoked in step 5.
+7. **Smoke on the production domain.**
+8. **Confirm auto-assignment is still OFF.** A plain promote should not re-enable it — but a
+   rollback → undo cycle does (see the constraint note above), and this is the one invariant
+   whose failure is silent. One glance at the setting closes the loop.
+
+For an **A❌/B✅** release the same flow applies with steps 3–4 moved after step 6.
+
+**Why not a `release` branch.** Pointing Vercel at a separate branch would work, but it adds
+a fourth version pointer to reason about (`main`, `release`, the serving deployment, the DB)
+and a branch policy the church has to inherit. Staged deployments solve the same race with
+one toggle and no new branch. Keep the branch idea as a fallback only.
+
+**Why not "db push before merging".** It removes the race too, but it leaves production
+running a migration that does not yet exist on `main` — if the merge then stalls, the
+repository is no longer the source of truth for production. Staged deployment gets the
+ordering *and* keeps `main` ahead of production at all times.
+
+**Why it is one-way (`0035` specifically):**
+
+**`reset_admin_password` has a narrow compatibility window** — this is the ⚠️ on `0035`'s A
+answer. Its signature changed 3-arg → 5-arg (it cannot write a conformant audit row without
+an actor session id and a request id), and the old overload was **dropped** rather than left
+alongside — two overloads make the PostgREST named-argument call ambiguous. So between
+step 3 (migration applied) and step 6 (promote) the *password-reset button* returns 500.
+Nothing else is affected: no cron job, no member or staff flow, no capacity or eligibility
+write. Run the steps back to back and this window is minutes, on a button nobody is
+pressing.
+
+#### The third question: rollback compatibility
+
+A and B cover getting the release out. Before promoting, also answer:
+
+- **R — is `previous production deployment + new DB` safe?**
+
+R is question A asked about the deployment you would actually roll back *to*. It is not
+always the same answer: A is about the app that happens to be serving right now, R is about
+whichever earlier deployment Instant Rollback would restore.
+
+For `0035` the honest answer is **partial** — the old app runs, but its password-reset
+button is broken, so rolling back does not fully restore service. That is why §5 says
+forward-fix: **an app rollback is safe only when the rollback target is compatible with the
+DB as it now stands, and even then it is only a recovery strategy if it restores the whole
+service.** See §5 for the full statement.
+
+> **Vercel constraints worth knowing before you need them:**
+> - A deployment that has already been promoted cannot be promoted again — to return to it
+>   you must use **Instant Rollback**, and Instant Rollback only offers deployments that have
+>   previously served production traffic (so a Staged deployment that was never promoted is
+>   not a rollback target).
+> - **This project is on Hobby, where Instant Rollback reaches exactly one deployment back.**
+>   Vercel's own wording: Pro/Enterprise can roll back to any deployment previously aliased
+>   to a production domain; *"Hobby users can roll back to the immediately previous
+>   deployment."* So **do not plan recovery around picking some older known-good release** —
+>   the only guaranteed target is the one you just replaced. Two bad promotes in a row and
+>   the good one is out of reach.
+> - ⚠️ **A rollback silently re-arms the foot-gun §2.5 disarmed.** Vercel turns auto-assignment
+>   of production domains **off** after a rollback (so pushes stop replacing the rolled-back
+>   deployment) — and **"Undo Rollback" turns it back ON**. That means the §2.5 setting can
+>   revert *without anyone opening project settings*, just by completing a rollback → undo
+>   cycle. **Re-check the toggle after any rollback.** It is the one path by which this
+>   document's guarantees expire on their own.
 
 ---
 
@@ -204,6 +301,21 @@ Pro upgrade. Vercel Hobby's built-in cron only allows once-daily schedules — c
 a `vercel.json` with the sub-daily schedules in that example file will make the Hobby
 deployment **fail outright**. All scheduling in this phase goes through the external
 scheduler (Slice 3), not `vercel.json`.
+
+### 2.5 Turn off auto-assignment of production domains (required)
+
+**Settings → Environments → Production → Branch Tracking → disable "Auto-assign Custom
+Production Domains".** Production branch stays `main`.
+
+This is what makes §1.5's deployment order enforceable rather than aspirational: a merge to
+`main` then produces a **Staged** production build that does not serve traffic until a human
+promotes it. Without it, merging *is* deploying and the migration can never reliably go
+first. Re-verify this toggle after any Vercel project reconfiguration — it is a project
+setting, not something the repo can pin.
+
+⚠️ **It also re-arms itself after a rollback.** Completing an Instant Rollback and then
+"Undo Rollback" turns auto-assignment back **on** (§1.5). Re-check this toggle after any
+rollback — that is the one way it reverts with nobody having touched settings.
 
 ---
 
@@ -311,6 +423,13 @@ so the rollback reintroduces the very failure it was meant to fix, on the same b
 down-migration (restore the 3-arg overload, drop the role column), not a redeploy — and
 note that dropping the role column re-opens account management, ops and the audit log to
 every operator.
+
+**The general rule this is an instance of** (§1.5, question R): an app rollback is safe only
+when the rollback target is compatible with the DB *as it now stands* — and it is a valid
+**recovery strategy** only when it restores the whole service. `0035` fails the second test,
+not the first: the old app does run against the new DB, it just runs with a broken
+password-reset button. "Mostly works" is not a recovery. Answer R before promoting, not
+during an incident.
 
 **This slice's specific note:** by the time §3 is complete, the cloud database is **not**
 an empty environment — it holds an admin account, one weekly_event, a Staff PIN/session
