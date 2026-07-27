@@ -232,6 +232,20 @@ describe('listAuditTimeline — entity resolution stays inside its contract', ()
     expect(res.items[0].entityLabel).toBe(`user（ID 尾碼 ${idSuffix(TARGET_ID)}）`)
     expect(res.items[0].entityLabel).not.toContain('王姐妹')
   })
+
+  // Tier 0-2 (0038). Shipped without these and a real staged smoke showed the raw
+  // 「member（ID 尾碼 …）」/「vehicle（…）」on the page. The label is the whole fix —
+  // resolving either to a NAME stays deliberately out of scope (see the note above
+  // ENTITY_TYPE_LABEL on why there is no generic resolver).
+  it.each([
+    ['member', '會友'],
+    ['vehicle', '車輛'],
+  ])('labels 0038 entity type %s as %s, with the id suffix and nothing more', async (type, label) => {
+    const { r } = timeline([row({ entity_type: type, entity_id: TARGET_ID })])
+    const res = await listAuditTimeline({}, r)
+    expect(res.items[0].entityLabel).toBe(`${label}（ID 尾碼 ${idSuffix(TARGET_ID)}）`)
+    expect(res.items[0].entityLabel).not.toContain('王姐妹')
+  })
 })
 
 describe('listAuditTimeline — the DTO is the privacy boundary', () => {

@@ -19,3 +19,13 @@
 /*.jpg
 
 # parking-system/ has its own .gitignore for its subtree (.next, node_modules, .env*, etc.)
+
+# Import templates: allowlist, not denylist. Working CSVs get dropped in this
+# directory next to the templates as a matter of habit, and they contain real
+# member names and phone numbers. This repo is public — one `git add -A` is all
+# it takes. Only the delivered templates are tracked; anything else here is
+# ignored by default, so a mistake has to be made deliberately.
+docs/import-templates/*
+!docs/import-templates/README.md
+!docs/import-templates/P2資格申請範本.csv
+!docs/import-templates/會友簡易名單範本.csv
