@@ -403,3 +403,95 @@ describe.skipIf(!RUN)('roster import (Wave 0 #21) — local DB integration', () 
     })
   })
 })
+
+// ── Tier 0-2 (0038): the identity guard, end to end through the real RPC ─────────
+// The CSV keys members by PHONE. Before this guard, a member whose phone changed came back
+// from the next import as a SECOND users.id — holding none of their LINE binding, history,
+// penalties or eligibility, and with no merge tool anywhere in the system to undo it.
+describe.skipIf(!RUN)('member import — identity guard (Tier 0-2) — local DB integration', () => {
+  let sb: Sb
+  let repo: import('@/server/repositories/parkingRepository').ParkingRepository
+  let importMembersFromCsvText: typeof import('@/server/services/memberImportService').importMembersFromCsvText
+
+  const OLD_PHONE = '0955002001'
+  const NEW_PHONE = '0955002002'
+  const OTHER = '0955002003'
+  const IDENT_PHONES = [OLD_PHONE, NEW_PHONE, OTHER]
+  const NAME = '身分守衛甲'
+
+  const cleanup = async () => {
+    const { data: us } = await sb.from('users').select('id').in('phone_number', IDENT_PHONES)
+    for (const u of (us ?? []) as Array<{ id: string }>) {
+      await sb.from('vehicles').delete().eq('user_id', u.id)
+    }
+    await sb.from('users').delete().in('phone_number', IDENT_PHONES)
+  }
+
+  beforeAll(async () => {
+    sb = (await import('@/lib/supabase/server')).getServiceClient()
+    repo = (await import('@/server/repositories/parkingRepository')).createParkingRepository(sb)
+    ;({ importMembersFromCsvText } = await import('@/server/services/memberImportService'))
+    await cleanup()
+    await sb.from('users').insert({ display_name: NAME, phone_number: OLD_PHONE }).throwOnError()
+  })
+
+  afterAll(async () => {
+    if (!RUN) return
+    await cleanup()
+  })
+
+  it('a same-name row with a NEW phone is refused, and reported as an identity question', async () => {
+    const report = await importMembersFromCsvText({
+      csvText: `姓名,手機,車牌,優先序,P2事由\n${NAME},${NEW_PHONE},IDNT2001,P3,`,
+      dryRun: false,
+    }, repo)
+
+    expect(report.identityConflicts).toHaveLength(1)
+    expect(report.identityConflicts[0]).toMatchObject({ phone: NEW_PHONE, name: NAME })
+    // The candidate is a member NOT in this file — the operator gets enough to recognise
+    // them, not their full number.
+    expect(report.identityConflicts[0].candidates[0].phoneMasked).not.toBe(OLD_PHONE)
+    expect(JSON.stringify(report)).not.toContain(OLD_PHONE)
+    // Distinct from the OLD conflict kind, whose meaning is the opposite ("this file is
+    // probably wrong" vs "this member probably changed their number").
+    expect(report.phoneNameConflicts).toHaveLength(0)
+
+    // Nothing written: no second identity, and the original is untouched.
+    expect(report.imported).toBe(0)
+    const { data: rows } = await sb.from('users').select('id').in('phone_number', IDENT_PHONES)
+    expect(rows).toHaveLength(1)
+  })
+
+  it('the whitespace/case a spreadsheet adds does not slip past the guard', async () => {
+    // The realistic version of this bug: a pasted cell carrying U+3000 or a trailing space.
+    // A byte-comparison would let it through and create the duplicate.
+    const report = await importMembersFromCsvText({
+      csvText: `姓名,手機,車牌,優先序,P2事由\n${NAME[0]}　${NAME.slice(1)} ,${NEW_PHONE},IDNT2002,P3,`,
+      dryRun: true,
+    }, repo)
+    expect(report.identityConflicts).toHaveLength(1)
+    expect(report.imported).toBe(0)
+  })
+
+  it('a genuinely different name with a new phone still imports', async () => {
+    // The guard must not become a wall: it fires on NAME collision, not on "new phone".
+    const report = await importMembersFromCsvText({
+      csvText: `姓名,手機,車牌,優先序,P2事由\n身分守衛乙,${OTHER},IDNT2003,P3,`,
+      dryRun: false,
+    }, repo)
+    expect(report.identityConflicts).toHaveLength(0)
+    expect(report.imported).toBe(1)
+  })
+
+  it('the same member under their EXISTING phone still updates in place', async () => {
+    // The phone-keyed happy path is untouched: same phone, same name → update, one row.
+    const report = await importMembersFromCsvText({
+      csvText: `姓名,手機,車牌,優先序,P2事由\n${NAME},${OLD_PHONE},IDNT2004,P3,`,
+      dryRun: false,
+    }, repo)
+    expect(report.updated).toBe(1)
+    expect(report.identityConflicts).toHaveLength(0)
+    const { data: rows } = await sb.from('users').select('id').eq('phone_number', OLD_PHONE)
+    expect(rows).toHaveLength(1)
+  })
+})

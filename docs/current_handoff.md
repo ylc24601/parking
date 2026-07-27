@@ -2,7 +2,7 @@
 
 > 最後更新：2026-07-27 ｜ **Phase 9 已收官；production demo walkthrough 完成並清回 baseline；尚未匯入正式教會會員資料**。Post-Phase-9 功能軌（[feature-triage.md](feature-triage.md)）：Wave -1/0/0.1/1 ✅、**Wave 2A #15 稽核全完成（2A-1／2A-2／2A-3 retention）、Wave 2B-1 #14A ✅、Wave 2B-2a＋2B-2b #10 ✅ ⇒ 容量／P2 資格不需 SQL／CSV，稽核有邊界可清理**、**Wave 2C #19 admin 角色分級 ✅（2C-1／2C-2）**、**Wave 3 ✅（3a #8＋#9／3b #17／3c #18／3d #5B-a）**。**「交付前必修」與「強烈建議交付前」兩節皆已清空 ⇒ 開發面無交付阻擋**（剩交付後 ops，走查照 **[go-live-checklist.md](go-live-checklist.md)**＝單一權威清單）；驗證見 §8。**唯一 active 剩片＝#14B 申請開放 override**（規則未定、待產品決策，非技術阻擋）。 ｜ 範圍：Phase 0–2 全部、Phase 3（Staff 現場頁 + v2 全切片）、Phase 4（notification dispatcher A–F）、Phase 5/5B（LINE webhook + binding 擷取/審核/CLI）、Phase 6（會友資料匯入）、Phase 7（會員 LIFF：登入/綁定/申請/取消/遞補確認/正在路上）、Phase 8（Admin UI Slice 1–8）、Phase 9（production deploy + prod demo-complete 收官）全數完成——詳見 §6.13–§6.36；post-Phase-9 各刀見 §6.37–§6.48。
 >
-> **現況：開發面無交付阻擋、prod 已站起並跑完完整 demo（見 §6.36）、staged deployment 部署制度已上線並實跑驗收（見 §6.48／§6.48.1）。剩交付後 ops（非開發軌）**：**[go-live-checklist.md](go-live-checklist.md) §0 三個負責人尚未指派**（OA token owner／copy approver／scheduler on-call；不指派不啟動）、資料備份（**決策 2026-07-18：先不升 Pro、走 Free ＋自管加密備份**——備份 gate 不因不付而消失，只是換做法；**程式已在 main（PR #44）但尚待教會 arm**：age 金鑰／private bucket／GitHub Secrets／lifecycle／`HEARTBEAT_URL`／`BACKUP_ENABLED=true`＋一次還原演練，見 §1.1）、**匯入真會友 CSV（§1.3）**、**pilot 分批放行（§1.7）**。**已完成的 ops**：staged deployment（§1.0）、教會正式 OA/channel token（§1.2／§6.38）、通知文案 sign-off（§1.4／§6.39）、12 個 cron 含 audit purge（§1.5／§6.40）、開啟真實送出 `NOTIFICATION_TRANSPORT=line`（§1.6／§6.41）。**交付日照 [go-live-checklist.md](go-live-checklist.md)**（單一權威走查清單，整合 runbook §8/§13＋go-live-readiness §1/§5）。非阻擋功能 backlog（#26 通知 LIFF deep-link、2B-2c、#5B-b／#5B-c、a11y）見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)；**`server-only` 邊界已於 Tier 0-1（PR #54）完成，見 §6.49**。
+> **現況：開發面無交付阻擋、prod 已站起並跑完完整 demo（見 §6.36）、staged deployment 部署制度已上線並實跑驗收（見 §6.48／§6.48.1）。剩交付後 ops（非開發軌）**：**[go-live-checklist.md](go-live-checklist.md) §0 三個負責人尚未指派**（OA token owner／copy approver／scheduler on-call；不指派不啟動）、資料備份（**決策 2026-07-18：先不升 Pro、走 Free ＋自管加密備份**——備份 gate 不因不付而消失，只是換做法；**程式已在 main（PR #44）但尚待教會 arm**：age 金鑰／private bucket／GitHub Secrets／lifecycle／`HEARTBEAT_URL`／`BACKUP_ENABLED=true`＋一次還原演練，見 §1.1）、**匯入真會友 CSV（§1.3）**、**pilot 分批放行（§1.7）**。**已完成的 ops**：staged deployment（§1.0）、教會正式 OA/channel token（§1.2／§6.38）、通知文案 sign-off（§1.4／§6.39）、12 個 cron 含 audit purge（§1.5／§6.40）、開啟真實送出 `NOTIFICATION_TRANSPORT=line`（§1.6／§6.41）。**交付日照 [go-live-checklist.md](go-live-checklist.md)**（單一權威走查清單，整合 runbook §8/§13＋go-live-readiness §1/§5）。非阻擋功能 backlog（#26 通知 LIFF deep-link、2B-2c、#5B-b／#5B-c、a11y）見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)；**`server-only` 邊界已於 Tier 0-1（PR #54）完成，見 §6.49；會友資料維護（單筆新增／改姓名手機／車輛停用恢復＋匯入身分守衛）已於 Tier 0-2（migration `0038`）完成，見 §6.50——這一刀帶 migration，A✅/B❌，prod 必須先 `db push` 再 promote**。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
 > 程式碼根目錄：`parking-system/`（`@/*` alias 指向該目錄）
 
@@ -1273,6 +1273,77 @@ pre-pilot maintenance closure 的第一刀。**零 migration、無 schema／RPC 
 
 ---
 
+## 6.50 Tier 0-2 — 會友資料維護（migration `0038`，branch `feat/member-maintenance-0038`）
+
+pre-pilot maintenance closure 的第二刀，也是這批唯一帶 migration 的一刀。**交付前必須完成**：真會友名冊一旦匯入、pilot 一旦開始，下面第 1 條的每一次發生都是不可逆的。
+
+### 這一刀在補什麼洞
+
+在此之前，**寫入會友資料的唯一路徑是 CSV 匯入**，於是有三個結構性後果：
+
+1. **`import_member` 以「手機號碼」認人。** 會友換號碼後重新匯入 **不會更新他**，而是建立**第二個 `users.id`**——舊那筆持有 LINE 綁定、預約歷史、違規與資格，新那筆什麼都沒有。而且**系統沒有、也刻意不做合併工具**（理由與殘留風險寫在 [member-import-ops.md](member-import-ops.md) §5）。
+2. **車輛只能新增。** `is_active` 自 `0001` 就存在、每個讀取端都尊重它，但**沒有任何路徑能把它設成 false**：賣掉的車，車牌永遠是「使用中」——而那正是現場點名比對的東西。
+3. **新增一位會友要做一份只有一列的 CSV。**
+
+**貫穿整份 migration 的單一原則：會友的身分是 `users.id`；`phone_number` 是可變屬性，永遠不得跨時間充當身分。**
+
+### 交付內容
+
+- **身分比對地基**：`normalize_member_name_for_match()`（NFKC → 去空白 → 小寫）＋ `users.member_name_match_key` generated stored 欄位。**單一權威**：generated 欄位與每一支 RPC 都經過同一支函式，否則「存起來的鍵」與「當下查的鍵」會安靜地不一致。**刻意不唯一**——同名同姓是合法的，這是**候補偵測器不是身分**，且偏向 recall（多問一次的成本，遠低於一個修不回來的重複身分）。空白字元用 `chr()` **明列 codepoint**（NBSP／U+3000 在原始碼裡是隱形的，`\s`/`[[:space:]]` 對非 ASCII 又依 ctype 而定，generated 欄位要求真正 immutable）。
+- **四支 audited RPC**：`create_member`／`update_member_identity`／`add_member_vehicle`／`set_member_vehicle_active`。沿用 `0035`/`0036` 的 acting-account 樣板（讀 role **與** `disabled_at`、`FOR SHARE`、`acting_admin_not_found` 不稽核／`acting_admin_disabled` 稽核 denied）。**不新增 capability**：幹事本來就能批次匯入全名冊、也看得到完整個資，再加一道只是形式（見 `lib/adminRoles.ts` 對「大家都能做的事不給 entry」的說明）。
+- **車牌唯一性改為「使用中才唯一」**（`vehicles_active_plate_uq` partial on `is_active`；先建 partial 再 drop 全域，順序是刻意的——全域是更強的不變式，partial 保證建得起來）。這是車牌能轉手、而**歷史不被改寫**的原因：`reservations` 參照 `(vehicle_id, user_id)`＝那台車**以及當時的車主**，改舊列的車主等於偽造紀錄。
+- **綁定申請在 capture 就凍結身分**：`pending_binding.matched_user_id_at_capture`，核准只讀快照、**永不重查 `claimed_phone`**。這關的是一條真實路徑（見下）。
+- **UI**：`/admin/members` 新增會友（含同名確認流程）、會友明細頁「修改姓名／手機」與「車輛」區（新增／停用／恢復使用）。
+- **匯入報表新增 `identityConflicts`** 專屬區塊（與「同號不同名」分開，兩者要的處置相反）。
+
+### 三個值得記住的判斷
+
+**① 換手機號碼會產生跨身分綁定，而「改號碼時退掉當下的申請」擋不住它。**
+
+```
+A 的號碼 P1 → P2（P1 空出來）
+A 的 LINE 用舊號碼 P1 重送申請       ← 改號碼之後才發生的新申請
+新會友 B 用 P1 建立
+幹事核准該申請 → 舊邏輯「現在」把 P1 解析成 B ⇒ A 的 LINE 綁到 B 身上
+```
+
+這是**跨時間的順序問題，不是併發問題**——advisory lock 也解不了。解法是在 capture 當下就把答案凍結。連帶把 liff 分支的 `phone_not_found` 改名為 **`unmatched_at_capture`**：它說的是不同的、也更真的事——不是「這支號碼現在沒有會友」，而是「這筆申請**送出當下**沒對到任何人」，因此唯一正解是**請會友重送**（重送＝重新拍快照）。**app 端兩個名稱都保留**：未套用 `0038` 的資料庫仍回舊名，而 approve route 對**未列入 review outcome 的 reason 會回 500**——這一點是既有測試 `adminBindingsRoutes.test.ts`「an unexpected reason maps to 500」抓出來的：若只改 DB 不改 app，**每一筆對不到人的 liff 申請在審核頁都會變成 500**。
+
+**② 同名確認是「集合」決策，不是「單筆」決策。** 「我確認這不是 A」不等於「⋯⋯也不是 B」。因此確認的是**當下那一組 id**，比對用集合相等（順序無意義、重複無意義）；集合在確認期間變了 ⇒ `homonym_confirmation_stale` ＋ 稽核 `conflict`，UI **從新清單重畫**而不是沿用畫面上的舊清單。另外：`homonym_requires_confirmation` **不寫稽核**（那是流程第一步，不是拒絕；每次預覽都記會把稽核灌爆），但**回 409 而不是 200**——沒有建立任何東西，200 會讓「已建立」與「請先確認」對只看狀態碼的呼叫端長得一樣。
+
+**③ 匯入的身分守衛刻意沿用舊 status。** 回 `phone_name_conflict` ＋ 新的 `conflict_kind` 判別子，而不是發明新 status：**舊版前端只看得懂 status ⇒ fail closed，把該筆當衝突略過，而不會誤記成 updated**。這正是 A（舊 app + 新 DB）真的安全、而不只是「勉強能跑」的原因。守衛住在 RPC 而非 TypeScript，則讓 **dry-run 與 apply 的一致性是結構性的**——同一支函式回答兩者。
+
+### 部署（A/B/R）
+
+| | 判斷 | 理由 |
+|---|---|---|
+| **A：舊 app ＋ 新 DB** | ✅ | 五支既有 RPC 全部維持**完全相同的簽名**；身分守衛沿用既有 status（見上 ③）；新欄位為 additive；capture/approve 回傳 shape 不變 |
+| **B：新 app ＋ 舊 DB** | ❌ | 新 app 會呼叫四支尚不存在的 RPC |
+| **R：上一版 production ＋ 新 DB** | ✅ | 同 A |
+
+⇒ **順序：舊 app + 舊 DB → 舊 app + 新 DB → 新 app + 新 DB。migration 必須在 promote 之前套用**（runbook §1.5）。
+
+### 驗證（本刀實跑）
+
+| 項目 | 結果 |
+|---|---|
+| `supabase db reset`（0001–0038 全新套用） | ✅ |
+| `npm run db:verify` | ✅ 全通過，**新增 6 個 block**（§42 結構／42b 名字鍵與 claim shape／42c create_member 同名集合／42d 身分不可被改指（含上面①那條完整路徑）／42e 車輛生命週期／42f 匯入身分守衛） |
+| `verify_schema_prod.sql` | ✅ **36**（新增 0038 catalog-only block；**既有 #23 從 `vehicles_plate_normalized_key` 改寫為 `vehicles_active_plate_uq`**——舊斷言會在 prod 直接失敗） |
+| `npx tsc --noEmit` ／ `npx eslint .` ／ `npm run build` | ✅ |
+| `npm test`（不接 DB） | ✅ **1461 passed**／319 skipped（DB-gated） |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1779 passed / 147 files**（+41；新增 `member-maintenance.db.test.ts` 9 例、`member-import.db.test.ts` 身分守衛 4 例） |
+
+**既有測試抓到的三件事**（皆已修，且都是真的問題而非測試包袱）：① 上面 ①的 500；② `admin-auth.db.test.ts` 手工插入的 liff pending fixture 沒有快照欄位 ⇒ 該 fixture 造出了 **app 已不可能產生的形狀**，已改為一併解析 `matched_user_id_at_capture`；③ 會友明細的車輛清單現在包含**已停用**列（帶 id、使用中優先），搜尋／名冊仍只看使用中——「賣掉了」與「從來沒有」是不同的答案，而恢復使用也需要那一列。
+
+### 尚未做（明寫）
+
+- **真機／prod 走查**：本刀只在本機驗證。
+- **會友自助管理車牌**（triage #28）仍待做；本刀交付的是 admin 側與其 DB 語意。
+- **重複會友的合併工具**：刻意不做，殘留風險與人工處置寫在 [member-import-ops.md](member-import-ops.md) §5。
+
+---
+
 ## 7. 關鍵設計決策（跨切片）
 
 1. **商業邏輯留 TypeScript，SQL 只做原子套用。** supabase-js 無法跨呼叫開 transaction，故多表原子操作一律走 plpgsql RPC；單句 status-guarded 寫入（如 `setOnTheWay`、`markJobFailed`、reminder outbox upsert）則直接用 supabase-js。
@@ -1303,16 +1374,18 @@ pre-pilot maintenance closure 的第一刀。**零 migration、無 schema／RPC 
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：`250d0c8`（2026-07-27 盤點實跑）
+### Current HEAD 最近驗證：`feat/member-maintenance-0038`（2026-07-27，Tier 0-2 實跑）
 
 | 指令 | 結果 |
 |------|------|
-| `npx tsc --noEmit` | ✅ exit 0 |
-| `npm test`（不接 DB） | ✅ **1426 passed**／104 test files；另 306 tests・39 files skipped（DB-gated，需 `db:reset` + `RUN_DB_TESTS=1`） |
-| 工作樹 | ✅ clean |
-| migrations | `0001–0037`｜`db:verify` **49**（local）／`db:verify:remote` **35**（prod，§6.48 實跑） |
+| `npx tsc --noEmit` ／ `npx eslint .` ／ `npm run build` | ✅ |
+| `npm test`（不接 DB） | ✅ **1461 passed**／107 test files；另 319 tests・40 files skipped（DB-gated） |
+| `RUN_DB_TESTS=1 npm test` | ✅ **1779 passed**／147 files（**0 skipped**——本刀整批實跑，非只跑新檔） |
+| `npm run db:reset`（0001–0038 全新套用） | ✅ |
+| migrations | `0001–0038`｜`db:verify` **local 全通過（+6 blocks）**／`verify_schema_prod.sql` **36**（尚未對 prod 實跑） |
 
-> **本次盤點只重跑 `tsc` 與 `npm test`**——程式碼自 `314d838`（Wave 3 3d）之後未再變動，其後兩刀（`b3d1af5`／`250d0c8`）皆 docs-only。
+> **`db:verify:remote` 仍是 §6.48 當時的 35**：`0038` 尚未套用到 prod。**prod 端必須先 `db push` 再 promote**（A✅/B❌，見 §6.50）。
+> **前一次盤點（`250d0c8`，1426 passed／migrations 0001–0037／db:verify 49）**：程式碼自 `314d838`（Wave 3 3d）之後未再變動，其後兩刀（`b3d1af5`／`250d0c8`）皆 docs-only。
 > **Wave 2C 與 Wave 3 六刀（PR #45–#50）不在本節的「前一刀」鏈上**：eslint／`next build`／`RUN_DB_TESTS=1` 整合測試／headless 走查的實跑證據，各自記在 **§6.42–§6.47** 的「驗證」段；prod 端 migration 套用與稽核佐證的 smoke 見 **§6.48**。本節「前一刀」鏈保留 PR #44 以前的歷史紀錄、不回填。
 
 ### 交付 ops 基礎建設：DB 加密備份（PR #44 / squash `cc6b66a`）

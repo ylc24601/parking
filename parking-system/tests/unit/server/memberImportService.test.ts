@@ -280,3 +280,57 @@ describe('importMembersFromCsvText — p2_application group consistency', () => 
     expect(calls[0].dependents).toHaveLength(1) // one child, not two
   })
 })
+
+// ── Tier 0-2 (0038): the identity guard, seen from the import report ─────────────
+// One status ('phone_name_conflict'), two kinds. They are separate report buckets because
+// they demand opposite actions from the operator, and because folding them together would
+// have made the new one invisible in an existing summary.
+describe('importMembersFromCsvText — identity conflicts', () => {
+  const csv = '姓名,手機,車牌,優先序,P2事由\n甲,0912345678,AAA1111,P3,\n'
+
+  it('identity_candidate goes to its own bucket, with candidate phones MASKED', async () => {
+    const { repo } = mockRepo(async () => ({
+      status: 'phone_name_conflict' as const,
+      conflict_kind: 'identity_candidate' as const,
+      candidates: [
+        { id: 'u-1', phone: '0955000111', evidence: 'same_name' as const },
+        { id: 'u-2', phone: null, evidence: 'same_name_and_plate' as const },
+      ],
+    }))
+    const report = await importMembersFromCsvText({ csvText: csv, dryRun: true, now: NOW }, repo)
+
+    expect(report.phoneNameConflicts).toHaveLength(0)
+    expect(report.identityConflicts).toEqual([{
+      phone: '0912345678',   // the CSV's own number — the operator supplied this one
+      name: '甲',
+      candidates: [
+        { phoneMasked: expect.not.stringContaining('0955000111'), evidence: 'same_name' },
+        { phoneMasked: '—', evidence: 'same_name_and_plate' },
+      ],
+    }])
+    expect(report.totals.identityConflicts).toBe(1)
+    // The candidates are members who are NOT in this file. Their numbers were never in the
+    // operator's hands, and the report must not put them there.
+    expect(JSON.stringify(report)).not.toContain('0955000111')
+    // Nothing was counted as written.
+    expect(report.imported).toBe(0)
+    expect(report.updated).toBe(0)
+  })
+
+  it('a MISSING conflict_kind means the original kind — an un-migrated DB still works', async () => {
+    // Deployment case B (new app, old DB) for this one field: pre-0038 the RPC sends no
+    // discriminant, and treating its absence as "unknown" would strand the conflict in
+    // neither bucket.
+    const { repo } = mockRepo(async () => ({
+      status: 'phone_name_conflict' as const,
+      existing_name: '既有姓名',
+    }))
+    const report = await importMembersFromCsvText({ csvText: csv, dryRun: true, now: NOW }, repo)
+
+    expect(report.identityConflicts).toHaveLength(0)
+    expect(report.phoneNameConflicts).toEqual([
+      { phone: '0912345678', names: ['甲'], existingName: '既有姓名' },
+    ])
+    expect(report.totals.phoneNameConflicts).toBe(1)
+  })
+})

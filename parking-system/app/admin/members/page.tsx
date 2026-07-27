@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { can } from '@/lib/adminRoles'
 import { getAdminSession } from '@/server/http/adminAuth'
 import { listMembersPage } from '@/server/services/memberAdminService'
+import AddMemberForm from './AddMemberForm'
 import ExportMembersButton from './ExportMembersButton'
 import MemberSearch from './MemberSearch'
 import MemberTable from './MemberTable'
@@ -44,6 +45,11 @@ export default async function AdminMembersPage({
       </header>
 
       <MemberSearch />
+
+      {/* Tier 0-2 (0038) — add ONE member without writing a one-row CSV. Collapsed by
+          default: the roster is what this page is for, and the CSV import is still the
+          right tool for a batch. */}
+      <AddMemberForm />
 
       <section className="flex flex-col gap-3">
         <header className="flex items-baseline justify-between gap-3">

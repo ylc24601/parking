@@ -11,9 +11,15 @@ const NO_STORE = { 'cache-control': 'no-store' }
 const UUID_FORMAT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // Expected review outcomes render as guidance in the UI → 200 with the typed reason.
+//
+// 'phone_not_found' and 'unmatched_at_capture' are the SAME outcome under two names: 0038
+// renamed it when approval stopped re-resolving claimed_phone and started reading the
+// match frozen at capture. Both stay listed — the old name is what a not-yet-migrated DB
+// returns, and dropping it would turn a normal review outcome into a 500 during the window
+// between deploying this app and running the migration.
 const REVIEW_OUTCOMES = new Set([
   'code_not_found', 'code_expired', 'code_consumed',
-  'phone_not_found', 'member_already_bound', 'line_id_taken',
+  'phone_not_found', 'unmatched_at_capture', 'member_already_bound', 'line_id_taken',
 ])
 
 export async function POST(request: Request): Promise<Response> {

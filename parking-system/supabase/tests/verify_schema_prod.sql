@@ -497,23 +497,33 @@ begin
   raise notice 'PASS: users_line_id_key partial unique index on line_id (where not null) present';
 end $$;
 
--- ── 23. vehicles_plate_normalized_key: unique index on license_plate_normalized ─────────
+-- ── 23. Plate uniqueness: one ACTIVE holder per normalized plate ────────────────────────
+-- 0001–0037 spelled this as a GLOBAL unique index (vehicles_plate_normalized_key); 0038
+-- replaced it with vehicles_active_plate_uq, partial on is_active, because a plate must be
+-- re-issuable to a new owner while the previous owner's row survives as history. The
+-- invariant this assertion protects is unchanged in spirit — no two CURRENT cars share a
+-- plate — and the "no unconditional unique index" half is asserted in the 0038 block below.
 do $$
-declare v_indisunique boolean;
+declare
+  v_indisunique boolean;
+  v_pred text;
 begin
-  select ix.indisunique into v_indisunique
+  select ix.indisunique, pg_get_expr(ix.indpred, ix.indrelid) into v_indisunique, v_pred
     from pg_index ix
     join pg_class i on i.oid = ix.indexrelid
-    where i.relname = 'vehicles_plate_normalized_key';
-  if not found then raise exception 'FAIL: vehicles_plate_normalized_key index missing'; end if;
-  if not v_indisunique then raise exception 'FAIL: vehicles_plate_normalized_key is not unique'; end if;
+    where i.relname = 'vehicles_active_plate_uq';
+  if not found then raise exception 'FAIL: vehicles_active_plate_uq index missing'; end if;
+  if not v_indisunique then raise exception 'FAIL: vehicles_active_plate_uq is not unique'; end if;
+  if v_pred is distinct from 'is_active' then
+    raise exception 'FAIL: vehicles_active_plate_uq must be partial on is_active (got: %)', v_pred;
+  end if;
   perform 1
     from pg_index ix
     join pg_class i on i.oid = ix.indexrelid
     join pg_attribute a on a.attrelid = ix.indrelid and a.attnum = any(ix.indkey)
-    where i.relname = 'vehicles_plate_normalized_key' and a.attname = 'license_plate_normalized';
-  if not found then raise exception 'FAIL: vehicles_plate_normalized_key is not indexing license_plate_normalized'; end if;
-  raise notice 'PASS: vehicles_plate_normalized_key unique index on license_plate_normalized present';
+    where i.relname = 'vehicles_active_plate_uq' and a.attname = 'license_plate_normalized';
+  if not found then raise exception 'FAIL: vehicles_active_plate_uq is not indexing license_plate_normalized'; end if;
+  raise notice 'PASS: vehicles_active_plate_uq unique index on license_plate_normalized (where is_active) present';
 end $$;
 
 -- ── 24. reservations_one_active_per_member: partial unique excluding cancelled_* ────────
@@ -1110,4 +1120,114 @@ begin
   raise notice 'PASS: member roster export 0037 contract (audit RPC + db_now) present, SECURITY DEFINER, owner-matched, service_role-only';
 end $$;
 
-\echo '== verify_schema_prod.sql: all 35 assertions passed =='
+-- ── Member maintenance 0038 runtime contract (Tier 0-2) ──────────────────────────
+-- The catalog-only half of verify_schema.sql §42. What must hold in PRODUCTION before the
+-- new app is promoted (the migration is A✅/B❌ — the app calls RPCs that do not exist on
+-- an un-migrated DB), plus the three structures whose drift is silent:
+--   · the name-match key is generated THROUGH the shared function (one authority);
+--   · plate uniqueness is ACTIVE-scoped and the old global unique index is gone — with it
+--     still present, deactivation is pointless because a plate could never be re-issued;
+--   · the retention index predicate covers the new snapshot column, or the daily PII job
+--     stops matching the rows it is supposed to clear.
+do $$
+declare
+  v_sig text;
+  v_priv text;
+  v_gen char;
+  v_expr text;
+  v_writer_owner oid := (select proowner from pg_proc
+    where oid = to_regprocedure('private.append_audit_log(audit_actor_type,uuid,uuid,text,text,text,uuid,uuid,uuid,audit_result,jsonb)'));
+  v_expected constant jsonb := jsonb_build_object(
+    'create_member(text,text,uuid,uuid,uuid,uuid[])',
+      'p_display_name text, p_phone text, p_acting_admin_id uuid, p_acting_session_id uuid, p_request_id uuid, p_confirmed_candidate_ids uuid[] DEFAULT NULL::uuid[]',
+    'update_member_identity(uuid,text,text,uuid,uuid,uuid,timestamptz)',
+      'p_user_id uuid, p_display_name text, p_phone text, p_acting_admin_id uuid, p_acting_session_id uuid, p_request_id uuid, p_now timestamp with time zone',
+    'add_member_vehicle(uuid,text,uuid,uuid,uuid)',
+      'p_user_id uuid, p_license_plate text, p_acting_admin_id uuid, p_acting_session_id uuid, p_request_id uuid',
+    'set_member_vehicle_active(uuid,boolean,uuid,uuid,uuid)',
+      'p_vehicle_id uuid, p_is_active boolean, p_acting_admin_id uuid, p_acting_session_id uuid, p_request_id uuid'
+  );
+begin
+  -- IMMUTABLE is a correctness requirement, not a hint: the generated column cannot exist
+  -- without it, so a volatility drift means the substrate below is not what it claims.
+  if to_regprocedure('normalize_member_name_for_match(text)') is null then
+    raise exception 'FAIL: normalize_member_name_for_match(text) missing';
+  end if;
+  if (select provolatile from pg_proc where oid = to_regprocedure('normalize_member_name_for_match(text)')) <> 'i' then
+    raise exception 'FAIL: normalize_member_name_for_match must be IMMUTABLE';
+  end if;
+
+  select a.attgenerated, pg_get_expr(d.adbin, d.adrelid)
+    into v_gen, v_expr
+    from pg_attribute a
+    left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+   where a.attrelid = 'users'::regclass and a.attname = 'member_name_match_key';
+  if v_gen is distinct from 's' then
+    raise exception 'FAIL: users.member_name_match_key missing or not STORED-generated';
+  end if;
+  if v_expr is null or v_expr not like '%normalize_member_name_for_match%' then
+    raise exception 'FAIL: member_name_match_key must be generated by the shared function';
+  end if;
+  if exists (select 1 from pg_index
+      where indrelid = 'users'::regclass and indisunique
+        and pg_get_indexdef(indexrelid) like '%member_name_match_key%') then
+    raise exception 'FAIL: member_name_match_key must NOT be unique — homonyms are legal members';
+  end if;
+
+  if not exists (select 1 from pg_attribute
+      where attrelid = 'pending_binding'::regclass and attname = 'matched_user_id_at_capture'
+        and atttypid = 'uuid'::regtype and not attisdropped) then
+    raise exception 'FAIL: pending_binding.matched_user_id_at_capture missing (or not uuid)';
+  end if;
+  select pg_get_expr(indpred, indrelid) into v_expr from pg_index
+   where indexrelid = 'pending_binding_pii_retention_idx'::regclass;
+  if v_expr is null or v_expr not like '%matched_user_id_at_capture%' then
+    raise exception 'FAIL: retention index predicate must include matched_user_id_at_capture';
+  end if;
+
+  if not exists (
+    select 1 from pg_index
+     where indexrelid = 'vehicles_active_plate_uq'::regclass
+       and indisunique and pg_get_expr(indpred, indrelid) = 'is_active'
+  ) then
+    raise exception 'FAIL: vehicles_active_plate_uq must be UNIQUE and partial on is_active';
+  end if;
+  if exists (
+    select 1 from pg_index
+     where indrelid = 'vehicles'::regclass and indisunique and indpred is null
+       and pg_get_indexdef(indexrelid) like '%license_plate_normalized%'
+  ) then
+    raise exception 'FAIL: an UNCONDITIONAL unique index on license_plate_normalized still exists — plates could never be re-issued';
+  end if;
+
+  for v_sig in select jsonb_object_keys(v_expected) loop
+    if to_regprocedure(v_sig) is null then
+      raise exception 'FAIL: % missing (exact signature)', v_sig;
+    end if;
+    if not exists (select 1 from pg_proc where oid = to_regprocedure(v_sig) and prosecdef
+        and array_to_string(proconfig, ',') like '%search_path%') then
+      raise exception 'FAIL: % must be SECURITY DEFINER with pinned search_path', v_sig;
+    end if;
+    foreach v_priv in array array['anon', 'authenticated', 'public'] loop
+      if has_function_privilege(v_priv, v_sig, 'execute') then
+        raise exception 'FAIL: % must not execute %', v_priv, v_sig;
+      end if;
+    end loop;
+    if not has_function_privilege('service_role', v_sig, 'execute') then
+      raise exception 'FAIL: service_role lacks execute on %', v_sig;
+    end if;
+    if pg_get_function_arguments(to_regprocedure(v_sig)) is distinct from (v_expected ->> v_sig) then
+      raise exception 'FAIL: % argument names drifted', v_sig;
+    end if;
+    if (select prorettype from pg_proc where oid = to_regprocedure(v_sig)) <> 'jsonb'::regtype then
+      raise exception 'FAIL: % must return jsonb', v_sig;
+    end if;
+    if (select proowner from pg_proc where oid = to_regprocedure(v_sig)) <> v_writer_owner then
+      raise exception 'FAIL: % owner <> append_audit_log owner — it could not reach the writer', v_sig;
+    end if;
+  end loop;
+
+  raise notice 'PASS: member maintenance 0038 contract — name-match authority, active-plate uniqueness, snapshot retention, 4 RPCs pinned';
+end $$;
+
+\echo '== verify_schema_prod.sql: all 36 assertions passed =='

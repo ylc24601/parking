@@ -197,7 +197,13 @@ describe('POST /api/admin/bindings/approve', () => {
     ['code_not_found', 200],
     ['code_expired', 200],
     ['code_consumed', 200],
+    // Two names for one outcome. `phone_not_found` is what a pre-0038 DB returns and
+    // `unmatched_at_capture` is what a migrated one returns — BOTH must be review
+    // outcomes, because an unlisted reason 500s (see the test below). Dropping the old
+    // name would break the deploy window before the migration runs; missing the new one
+    // would 500 every unmatched LIFF claim the moment it does.
     ['phone_not_found', 200],
+    ['unmatched_at_capture', 200],
     ['member_already_bound', 200],
     ['line_id_taken', 200],
   ] as const)('typed reason %s → %i with ok:false', async (reason, status) => {

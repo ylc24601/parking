@@ -36,12 +36,21 @@ describe.skipIf(!RUN)('admin auth + binding decider audit (Phase 8 Slice 1) — 
     createdUsers.push(id)
     return { id, phone }
   }
+  // Since 0038 a liff claim carries the member it matched AT CAPTURE, and approval reads
+  // that snapshot instead of re-resolving claimed_phone. A hand-written fixture must
+  // therefore resolve the member too — otherwise it fabricates a shape the app can no
+  // longer produce (a liff claim that never matched anybody) and every approval below
+  // would fail with `unmatched_at_capture` for reasons that have nothing to do with the
+  // decider-audit behaviour under test.
   const mkLiffPending = async (lineUserId: string, phone: string): Promise<string> => {
     const id = randomUUID()
+    const { data: matched } = await sb
+      .from('users').select('id').eq('phone_number', phone).maybeSingle()
     await sb.from('pending_binding')
       .insert({
         id, line_user_id: lineUserId, submitted_code: null, claim_source: 'liff',
         claimed_phone: phone, claimed_name: '測試會友', status: 'pending', last_event_type: 'liff',
+        matched_user_id_at_capture: (matched as { id: string } | null)?.id ?? null,
       })
       .throwOnError()
     return id

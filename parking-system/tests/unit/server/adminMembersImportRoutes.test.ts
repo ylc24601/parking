@@ -31,11 +31,13 @@ const CSV = 'applicant_name,mobile_phone,license_plate,reason_type\n王,09123456
 
 const emptyReport = (dryRun: boolean): ImportReport => ({
   dryRun, rows: 1, members: 1, imported: 1, updated: 0, vehiclesAdded: 1, dependentsAdded: 0,
-  phoneNameConflicts: [], plateConflicts: [], batchPlateConflicts: [], groupConflicts: [],
+  phoneNameConflicts: [], identityConflicts: [], plateConflicts: [], batchPlateConflicts: [],
+  groupConflicts: [],
   reviewRequired: [], p2Retained: [], revokedRetained: [], governedRetained: [], validationErrors: [],
   truncated: false,
   totals: {
-    phoneNameConflicts: 0, plateConflicts: 0, batchPlateConflicts: 0, groupConflicts: 0,
+    phoneNameConflicts: 0, identityConflicts: 0, plateConflicts: 0, batchPlateConflicts: 0,
+    groupConflicts: 0,
     reviewRequired: 0, p2Retained: 0, revokedRetained: 0, governedRetained: 0, validationErrors: 0,
   },
 })

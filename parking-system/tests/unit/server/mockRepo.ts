@@ -182,6 +182,13 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     // Phase 8 Slice 2 — admin member search + detail
     searchMembers: vi.fn(async () => []),
     getMemberAdminDetail: vi.fn(async () => null),
+    // Tier 0-2 (0038) — admin member maintenance. Defaults are the SUCCESS path; a test
+    // that cares about a refusal overrides with the typed { ok: false, reason } the RPC
+    // would actually return.
+    createMember: vi.fn(async () => ({ ok: true, user_id: '00000000-0000-4000-8000-00000000e001' })),
+    updateMemberIdentity: vi.fn(async () => ({ ok: true, changed: true, bindings_invalidated: 0 })),
+    addMemberVehicle: vi.fn(async () => ({ ok: true, vehicle_id: '00000000-0000-4000-8000-00000000f001' })),
+    setMemberVehicleActive: vi.fn(async () => ({ ok: true, vehicle_id: '00000000-0000-4000-8000-00000000f001', is_active: false })),
     // Phase 8 Slice 4 — P2 eligibility review
     listEligibilityReview: vi.fn(async () => []),
     listEligibilityTodoCandidates: vi.fn(async () => []),

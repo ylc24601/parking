@@ -116,7 +116,11 @@ export interface MemberDetail {
   phone: string | null       // FULL — session-gated detail page only
   role: string
   bound: boolean             // derived; the raw line_id never reaches the client
-  vehicles: Array<{ plate: string; nickname: string | null }>
+  // Tier 0-2 (0038): ACTIVE and RETIRED rows, in that order, each with the id the
+  // maintenance actions target. Retired rows are shown, not hidden — a plate that stops
+  // appearing entirely leaves an operator unable to tell "never had it" from "sold it",
+  // and the reactivate path needs the row anyway.
+  vehicles: Array<{ id: string; plate: string; nickname: string | null; isActive: boolean }>
   eligibility: {
     p2Eligible: boolean       // DERIVED from review_status; carries no date — see 0032
     reviewStatus: string      // the authority
@@ -148,7 +152,12 @@ export async function getMemberDetail(
     phone: row.phone_number,
     role: row.role,
     bound: row.line_id !== null,   // drop the raw line_id; the client only needs the flag
-    vehicles: row.vehicles.map(v => ({ plate: v.license_plate, nickname: v.nickname })),
+    vehicles: row.vehicles.map(v => ({
+      id: v.id,
+      plate: v.license_plate,
+      nickname: v.nickname,
+      isActive: v.is_active,
+    })),
     eligibility: row.eligibility
       ? {
           p2Eligible: row.eligibility.p2_eligible,

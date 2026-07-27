@@ -54,7 +54,7 @@
 | 25 | 通知死指令修正 | templates.ts | S | ✅ **必修（-1）** | 「回覆正在路上/請回覆確認」被 webhook ignored。全 template copy audit（≥2 則同類）。短期改寫指向 LIFF；正解=#26。 |
 | 26 | 通知 LIFF deep-link 按鈕 | 通知模板＋LIFF | M | ✅（4） | 確認保留/放棄、正在路上、回會員頁點擊即開 LIFF。 |
 | 27 | 通知內容 enrich | 通知模板＋payload | S–M | ✅（1） | 日期＋車牌＋粗體期限＋換行；producer 補 plate/date 到 payload。 |
-| 28 | 管理我的車牌（全自助） | app/member＋新 routes | M | ✅（5） | 新增/刪除/設預設＋暱稱。**刪除擋所有未結束關聯**（upcoming open/waiting/approved/temp-approved·offer/未 finalized 已釋出/未來多週）；**soft delete（`active=false`）保留歷史 FK**。normalize＋unique on normalized plate；collision 訊息不洩他人姓名；set default transactional；至少留一台或明確允許零台。**增刪寫 audit**。濫用治理＝輕護欄（plate 唯一性＋audit＋一人一週一位天花板）＋社群處理（勸導→停用）。 |
+| 28 | 管理我的車牌（全自助） | app/member＋新 routes | M | ✅（5）｜**地基已由 Tier 0-2（`0038`）交付** | **Tier 0-2 做的是 ADMIN 側**（幹事在會友明細頁新增／停用／恢復車輛），會友自助仍待做——但本項要的 DB 語意已經成立且已驗證：**soft delete ＝ `is_active=false`（保留歷史 FK）**、**唯一性改為「使用中才唯一」**（`vehicles_active_plate_uq` partial on `is_active`，車牌因此可轉手而不改寫歷史）、**未結束預約擋停用**（在交易內、車列鎖下判定，狀態集合對齊 `lib/allocation/transitions.ts` 的非終局狀態）、**衝突訊息不洩他人姓名**（只回 `active_plate_owned_by_other`）、**增刪寫 audit**。剩下的是會友端 UI／路由、設預設＋暱稱、以及「至少留一台或允許零台」的產品決定。<br>原始規格：新增/刪除/設預設＋暱稱。**刪除擋所有未結束關聯**（upcoming open/waiting/approved/temp-approved·offer/未 finalized 已釋出/未來多週）；**soft delete（`active=false`）保留歷史 FK**。normalize＋unique on normalized plate；collision 訊息不洩他人姓名；set default transactional；至少留一台或明確允許零台。**增刪寫 audit**。濫用治理＝輕護欄（plate 唯一性＋audit＋一人一週一位天花板）＋社群處理（勸導→停用）。 |
 | 29 | member 顯示候補序號 | app/member | S | ✅（1） | 「目前候補第 N 位」＋「順序可能因取消、資格與分配狀態而變動」（動態非固定號碼）。 |
 | 30 | 取消加「不計違規」reassurance | app/member CancelButton | S | ✅（1） | 「10:30 前取消不計違規」，讓會友安心取消。可順帶補申請表「週五18:00截止」。 |
 
