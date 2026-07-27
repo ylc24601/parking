@@ -1193,7 +1193,8 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
    | 10:25:30 | `admin_account.password_reset` | success | `sessions_revoked=true` | 第二次重設——第一次的一次性密碼未記下。正是 UI 自己的指引（「帳號已建立但未取得密碼，請用『重設密碼』重新產生」） |
    | 10:27:09 | `admin_account.session_revoke` | success | **`sessions_revoked=1`** | `0036` `revoke_admin_sessions`。**刻意保留目標帳號的活 session 才按**，所以撤到的是 1 而非 0；另一個瀏覽器隨即被踢回登入頁 ⇒ 驗到的是**撤銷真的生效**，不只是 RPC 跑得起來 |
    | 10:28:56 | `admin_account.role_change` | success | `to_role=superadmin` | `0036` `set_admin_role` |
-   | 10:29:49 | `admin_account.disable` | success | | `0035` `set_admin_disabled`；帳號處置完成 |
+   | 10:29:49 | `admin_account.disable` | success | | `0035` `set_admin_disabled` |
+   | 10:34:39 | `admin_account.role_change` | success | `to_role=clerk` | 降權收尾（見下）。順帶驗到 `set_admin_role` **對已停用帳號一樣可執行**，不要求目標為啟用狀態 |
 
    **覆蓋率**：`0035`（`reset_admin_password` 5-arg／`set_admin_disabled`／`role` 欄位讀取）、`0036`（三支全數）、`0037`（`log_member_roster_export`）**每一支都有稽核列**。
 
@@ -1204,7 +1205,7 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
    > **`sessions_revoked` 這個 key 跨 action 型別不同，是刻意的、不是瑕疵**：`password_reset` 寫 boolean `true`（登出所有裝置是副作用，數量不是重點），`session_revoke` 寫整數（數量就是結果，`GET DIAGNOSTICS` 取得）。viewer 兩邊各自做型別檢查（`yesNo()` vs `typeof n !== 'number'`），對不上顯示 `unreadable`。**唯一要注意的是查詢端：跨 action 對這個 key `::int` 會炸在 `'true'` 上。**
 
    **帳號處置（已完成）**：09:02:56 建的是 smoke 拋棄式帳號，10:29:49 已**停用**（soft-disable，`0026`；帳號永不硬刪，稽核列的 actor 才永遠解析得回來——`0030` 的 actor 解析依賴這點）。兩組一次性密碼隨帳號停用而失效。比照 runbook §6.4 的測試身分清理紀律，prod 上不留來歷不明的活憑證。
-   **⚠️ 殘留一項**：該帳號**停用時的角色是 superadmin**（10:28:56 由 clerk 改上去、未改回）。它現在登不進來，但 `/admin/accounts` 的「啟用」按鈕就在旁邊——**日後誤按即得到一個啟用中的系統管理員**。建議把它改回幹事，讓最壞情況只是幹事。
+   **最終狀態：`disabled` ＋ `clerk`（幹事）。** 10:28:56 為了驗 `set_admin_role` 把它由 clerk 升到 superadmin，10:29:49 停用時角色仍是 superadmin——這會留下一個隱性風險：帳號雖然登不進來，但 `/admin/accounts` 的「啟用」按鈕就在旁邊，**日後誰誤按一下就得到一個啟用中的系統管理員**。故 10:34:39 降回幹事，讓最壞情況只是幹事。**停用帳號的角色不是無關緊要的欄位，它是「誤啟用」那條路徑的爆炸半徑。**
 
    > **「能不能直接刪掉這個帳號？」——不能，而且不該。** 系統沒有任何刪除路徑（migrations 無 `delete from admin_accounts`，UI 只有停用／啟用），這是 `0026` 的刻意設計、`0030` 的 actor 解析也依賴它。具體後果：稽核 viewer 靠 `listAdminAccounts()` 建 id→名稱的 Map（[`auditViewService.ts:192-193`](../parking-system/server/services/auditViewService.ts#L192-L193)）來指名「誰」，而這個帳號是上表 6 列的 `entity_id`；硬刪之後那 6 列就再也指不出對象。而 `audit_logs` 對 actor/entity **刻意不設 FK**（`0030`：snapshot ref 必須在被指向的東西消失後仍存活），所以**資料庫不會擋你，它只會安靜地讓稽核失去指稱能力**。**在這個系統裡，停用就是刪除。**
 
@@ -1225,7 +1226,7 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 **尚未做**：
 
 - **Vercel toggle**：dashboard 操作，需由使用者在 UI 關掉；本刀只交付文件與 PR template。**關掉之前，上述流程仍然只是文件。**
-- ~~09:02 那個 smoke 帳號的處置~~ ✅ **已停用（10:29:49）**，且補做的三個動作同時補上了原本未驗的兩支 RPC（見上方 smoke 表）。**剩一件**：該帳號停用時的角色是 superadmin，建議改回幹事（理由見上）。
+- ~~09:02 那個 smoke 帳號的處置~~ ✅ **結案**：10:29:49 停用、10:34:39 降回幹事，最終狀態 `disabled` ＋ `clerk`。補做的四個動作同時補齊了原本未驗的兩支 RPC（見上方 smoke 表）。
 
 ---
 
