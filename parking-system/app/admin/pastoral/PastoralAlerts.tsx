@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { OpenAlertItem, ResolvedAlertItem } from '@/server/services/pastoralAlertService'
+import type { OpenAlertItem, ResolvedAlertItem } from '@/lib/pastoralAdminTypes'
 
 // Pastoral-care alert handling (sensitive: names + absence counts + notes). All content
 // renders as PLAIN TEXT ONLY (no dangerouslySetInnerHTML), never enters a URL, and the

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { StaffPinCardStatus } from '@/server/services/staffPinAdminService'
+import type { StaffPinCardStatus } from '@/lib/staffPinAdminTypes'
 
 // On-site PIN management: one shared 6-digit PIN per Sunday's weekly_event. The PIN is
 // server-generated and shown EXACTLY ONCE — any other action (another issue, an unlock,

@@ -13,14 +13,10 @@ import { createParkingRepository, type ParkingRepository } from '@/server/reposi
 // The plaintext PIN exists only in the issue response (shown once by the UI); it is
 // never stored, logged, or re-readable. pin_hash never crosses this surface.
 
-export interface StaffPinCardStatus {
-  sunday: string               // YYYY-MM-DD (Taipei calendar)
-  eventId: string | null       // null = weekly_event row not created yet
-  hasPin: boolean
-  expiresAt: string | null     // ISO
-  failedAttempts: number
-  locked: boolean
-}
+// The DTO now lives in lib/ so the Client Component that renders it never imports this
+// (server-only) module. Re-exported so server-side callers keep one import site.
+export type { StaffPinCardStatus } from '@/lib/staffPinAdminTypes'
+import type { StaffPinCardStatus } from '@/lib/staffPinAdminTypes'
 
 export async function getStaffPinStatus(
   params: { now?: Date } = {},

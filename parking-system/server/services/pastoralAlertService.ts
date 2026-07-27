@@ -13,27 +13,10 @@ const RESOLVED_LIMIT = 20
 const NOTE_MAX_CODE_POINTS = 200
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export interface OpenAlertItem {
-  id: string
-  displayName: string
-  reason: string
-  triggerCount: number
-  currentConsecutiveNoShow: number | null   // null = no user_penalties row (no counter data)
-  sunday: string
-  createdAt: string
-}
-
-export interface ResolvedAlertItem {
-  id: string
-  displayName: string
-  reason: string
-  triggerCount: number
-  sunday: string
-  resolvedAt: string | null
-  resolvedByUsername: string | null          // null = CLI/unknown/deleted account
-  counterReset: boolean
-  note: string | null
-}
+// The DTOs now live in lib/ so the Client Component that renders them never imports this
+// (server-only) module. Re-exported so server-side callers keep one import site.
+export type { OpenAlertItem, ResolvedAlertItem } from '@/lib/pastoralAdminTypes'
+import type { OpenAlertItem, ResolvedAlertItem } from '@/lib/pastoralAdminTypes'
 
 export async function listPastoralAlerts(
   params: Record<never, never> = {},

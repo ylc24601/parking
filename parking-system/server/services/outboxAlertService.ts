@@ -8,11 +8,10 @@ import { getOutboxHealth } from './outboxHealthService'
 // with zero integration. Output is aggregate-only: counts / status names / threshold names / a
 // timestamp — never per-row / member data.
 
-export interface AlertThresholds {
-  failedMax: number            // alert when failed > this
-  staleMax: number             // alert when stale_processing > this
-  pendingStaleMinutes: number  // alert when the oldest DUE row is older than this (minutes)
-}
+// The DTOs now live in lib/ so OpsDashboard (a Client Component) never imports this
+// server-only module. Re-exported so server-side callers keep one import site.
+export type { AlertThresholds, OutboxAlert } from '@/lib/opsAdminTypes'
+import type { AlertThresholds, OutboxAlert } from '@/lib/opsAdminTypes'
 
 // Sensitive pilot defaults: any terminal failed row or stale lease alerts; a due backlog older than
 // 15 min means the scheduler isn't draining. Raise via env once a steady state is known.
@@ -39,14 +38,6 @@ export function readAlertThresholds(): AlertThresholds {
   }
 }
 
-export interface OutboxAlert {
-  healthy: boolean
-  breaches: string[]           // operation-safe reason codes
-  thresholds: AlertThresholds
-  failed: number
-  stale_processing: number
-  oldest_due_at: string | null
-}
 
 // Pure: decide health from an outbox_health snapshot + thresholds. `now` is used only to age the
 // oldest DUE row; a null oldest_due_at (nothing due) can never trip the backlog breach.

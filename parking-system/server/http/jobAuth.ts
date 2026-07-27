@@ -1,3 +1,7 @@
+// Reads JOB_TRIGGER_SECRET / CRON_SECRET — machine-enforced server boundary (build-time
+// error if a Client Component ever pulls this in). See lib/supabase/server.ts.
+import 'server-only'
+
 import { timingSafeEqual } from 'node:crypto'
 
 // Constant-time compare of `provided` against `expected`. Fails closed: an unset/empty

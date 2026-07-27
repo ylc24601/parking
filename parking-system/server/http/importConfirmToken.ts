@@ -1,3 +1,7 @@
+// Signs with the service-role key — machine-enforced server boundary (build-time error
+// if a Client Component ever pulls this in). See lib/supabase/server.ts.
+import 'server-only'
+
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 
 // ── Member-import confirmation token (Phase 8 Slice 5) ───────────────────────

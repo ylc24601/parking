@@ -341,21 +341,10 @@ export interface SettlementResult {
 // Phase 4 Slice C — operation-safe aggregate health of notification_outbox (from the
 // outbox_health RPC). Counts / notification-type names / sanitized error codes / timestamps
 // only — no per-row or sensitive fields.
-export interface OutboxHealth {
-  due: number
-  due_by_template: Record<string, number>
-  pending: number
-  retrying: number
-  processing: number
-  stale_processing: number
-  failed: number
-  failed_by_error: Record<string, number>
-  sent_last_24h: number
-  oldest_pending_at: string | null
-  oldest_due_at: string | null     // oldest row DUE now (drives the "backlog not draining" alert)
-  oldest_failed_at: string | null
-  next_retry_at: string | null
-}
+// The shape now lives in lib/opsAdminTypes so OpsDashboard (a Client Component) never
+// imports this server-only module. Re-exported so existing server-side imports still work.
+export type { OutboxHealth } from '@/lib/opsAdminTypes'
+import type { OutboxHealth } from '@/lib/opsAdminTypes'
 
 export interface RequeueFailedResult {
   requeued: number
