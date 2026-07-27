@@ -3,8 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { fmtTaipeiDateTime } from '@/lib/taipeiDate'
-import type { OutboxHealth } from '@/server/repositories/parkingRepository'
-import type { OutboxAlert } from '@/server/services/outboxAlertService'
+import type { OutboxAlert, OutboxHealth } from '@/lib/opsAdminTypes'
 
 // Notification-system status (通知系統狀態, #17 B). A plain-language health verdict leads;
 // the technical detail (queue numbers, timestamps) and the dead-letter requeue tool fold

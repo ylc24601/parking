@@ -1,3 +1,10 @@
+// MACHINE-ENFORCED server boundary. Importing this module (directly or transitively)
+// from a Client Component is a BUILD-TIME error — not a comment asking nicely. Every
+// service/repository path reaches this file, so this one line guards the whole graph:
+// a `import type` that someone later turns into a value import now fails to compile
+// instead of silently bundling a SERVICE-ROLE key into browser JavaScript.
+import 'server-only'
+
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 // Server-only Supabase client using the SERVICE ROLE key. It bypasses RLS, so it

@@ -139,15 +139,10 @@ export async function applyApproveBinding(
 // ── Pending review queue (Phase 7 Slice 2) ───────────────────────────────────
 // FIFO by last_submitted_at so the oldest claim gets reviewed first. Raw code/phone
 // are masked HERE — the CLI prints this struct as-is.
-export interface PendingClaimListItem {
-  id: string
-  shortId: string
-  source: string
-  submittedAt: string
-  lastUpdatedAt: string
-  resubmits: number
-  claim: string   // keyword → masked code; liff → `claimed_name / masked phone`
-}
+// The DTO now lives in lib/ so BindingReview (a Client Component) never imports this
+// server-only module. Re-exported so server-side callers keep one import site.
+export type { PendingClaimListItem } from '@/lib/bindingAdminTypes'
+import type { PendingClaimListItem } from '@/lib/bindingAdminTypes'
 
 const PENDING_LIST_DEFAULT = 20
 const PENDING_LIST_MAX = 100

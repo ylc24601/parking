@@ -1,3 +1,7 @@
+// Reads LINE_CHANNEL_ACCESS_TOKEN — machine-enforced server boundary (build-time error
+// if a Client Component ever pulls this in). See lib/supabase/server.ts.
+import 'server-only'
+
 import { createHash } from 'node:crypto'
 
 // Phase 4 Slice A — LINE push transport with EXPLICIT mode selection and TYPED failure

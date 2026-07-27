@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { fmtTaipeiDateTime } from '@/lib/taipeiDate'
-import type { PendingClaimListItem } from '@/server/services/bindingAdminService'
+import type { PendingClaimListItem } from '@/lib/bindingAdminTypes'
 import Badge from '../../ui/Badge'
 
 // Binding review queue (Phase 8 Slice 1). Everything sensitive arrived masked from
