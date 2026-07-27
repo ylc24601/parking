@@ -1,8 +1,8 @@
 # 教會主日停車管理系統 — 開發交接文件（Current Handoff）
 
-> 最後更新：2026-07-18 ｜ **Phase 9 已收官；production demo walkthrough 完成並清回 baseline；尚未匯入正式教會會員資料**。Post-Phase-9 功能軌（[feature-triage.md](feature-triage.md)）：Wave -1/0/0.1/1 ✅、**Wave 2A #15 稽核全完成（2A-1／2A-2／2A-3 retention）、Wave 2B-1 #14A ✅、Wave 2B-2a＋2B-2b #10 ✅ ⇒ 容量／P2 資格不需 SQL／CSV，稽核有邊界可清理**。**「強烈建議交付前」清單已清空 ⇒ 開發面可進正式交付收尾**（剩交付後 ops，走查照 **[go-live-checklist.md](go-live-checklist.md)**＝單一權威清單）；驗證見 §8。 ｜ 範圍：Phase 0–2 全部、Phase 3（Staff 現場頁 + v2 全切片）、Phase 4（notification dispatcher A–F）、Phase 5/5B（LINE webhook + binding 擷取/審核/CLI）、Phase 6（會友資料匯入）、Phase 7（會員 LIFF：登入/綁定/申請/取消/遞補確認/正在路上）、Phase 8（Admin UI Slice 1–8）、Phase 9（production deploy + prod demo-complete 收官）全數完成——詳見 §6.13–§6.36。
+> 最後更新：2026-07-27 ｜ **Phase 9 已收官；production demo walkthrough 完成並清回 baseline；尚未匯入正式教會會員資料**。Post-Phase-9 功能軌（[feature-triage.md](feature-triage.md)）：Wave -1/0/0.1/1 ✅、**Wave 2A #15 稽核全完成（2A-1／2A-2／2A-3 retention）、Wave 2B-1 #14A ✅、Wave 2B-2a＋2B-2b #10 ✅ ⇒ 容量／P2 資格不需 SQL／CSV，稽核有邊界可清理**、**Wave 2C #19 admin 角色分級 ✅（2C-1／2C-2）**、**Wave 3 ✅（3a #8＋#9／3b #17／3c #18／3d #5B-a）**。**「交付前必修」與「強烈建議交付前」兩節皆已清空 ⇒ 開發面無交付阻擋**（剩交付後 ops，走查照 **[go-live-checklist.md](go-live-checklist.md)**＝單一權威清單）；驗證見 §8。**唯一 active 剩片＝#14B 申請開放 override**（規則未定、待產品決策，非技術阻擋）。 ｜ 範圍：Phase 0–2 全部、Phase 3（Staff 現場頁 + v2 全切片）、Phase 4（notification dispatcher A–F）、Phase 5/5B（LINE webhook + binding 擷取/審核/CLI）、Phase 6（會友資料匯入）、Phase 7（會員 LIFF：登入/綁定/申請/取消/遞補確認/正在路上）、Phase 8（Admin UI Slice 1–8）、Phase 9（production deploy + prod demo-complete 收官）全數完成——詳見 §6.13–§6.36；post-Phase-9 各刀見 §6.37–§6.48。
 >
-> **現況：開發全部完成（含全部「強烈建議交付前」項）、prod 已站起並跑完完整 demo（見 §6.36）。剩交付後 ops（非開發軌）**：資料備份（**決策 2026-07-18：先不升 Pro、走 Free ＋自管加密備份**，見 [go-live-checklist.md](go-live-checklist.md) §1.1——備份 gate 不因不付而消失，只是換做法）、換教會正式 OA/channel token、匯入真會友 CSV、通知文案 sign-off、**audit purge cron 上 prod（2A-3 新增，文案翻面的硬前置）**、通知 LIFF deep-link（#26）。**交付日照 [go-live-checklist.md](go-live-checklist.md)**（單一權威走查清單，整合 runbook §8/§13＋go-live-readiness §1/§5）。功能 backlog 見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)。
+> **現況：開發面無交付阻擋、prod 已站起並跑完完整 demo（見 §6.36）、staged deployment 部署制度已上線並實跑驗收（見 §6.48／§6.48.1）。剩交付後 ops（非開發軌）**：**[go-live-checklist.md](go-live-checklist.md) §0 三個負責人尚未指派**（OA token owner／copy approver／scheduler on-call；不指派不啟動）、資料備份（**決策 2026-07-18：先不升 Pro、走 Free ＋自管加密備份**——備份 gate 不因不付而消失，只是換做法；**程式已在 main（PR #44）但尚待教會 arm**：age 金鑰／private bucket／GitHub Secrets／lifecycle／`HEARTBEAT_URL`／`BACKUP_ENABLED=true`＋一次還原演練，見 §1.1）、**匯入真會友 CSV（§1.3）**、**pilot 分批放行（§1.7）**。**已完成的 ops**：staged deployment（§1.0）、教會正式 OA/channel token（§1.2／§6.38）、通知文案 sign-off（§1.4／§6.39）、12 個 cron 含 audit purge（§1.5／§6.40）、開啟真實送出 `NOTIFICATION_TRANSPORT=line`（§1.6／§6.41）。**交付日照 [go-live-checklist.md](go-live-checklist.md)**（單一權威走查清單，整合 runbook §8/§13＋go-live-readiness §1/§5）。非阻擋功能 backlog（#26 通知 LIFF deep-link、2B-2c、#5B-b／#5B-c、a11y、`server-only`）見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
 > 程式碼根目錄：`parking-system/`（`@/*` alias 指向該目錄）
 
@@ -1269,7 +1269,7 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 
 ## 8. 測試與驗證狀態
 
-分兩層記錄，避免混時間語意：**里程碑快照**＝歷史證據（日後每刀不覆寫）；**Current HEAD**＝最近一刀實測。
+分兩層記錄，避免混時間語意：**里程碑快照**＝歷史證據（日後每刀不覆寫）；**Current HEAD**＝當前 HEAD 的最近實測（可能來自一次盤點而非一刀交付，該段會註明實際跑了什麼）。
 
 ### 最新完整里程碑快照：Phase 9 收官（2026-07-15）
 
@@ -1282,7 +1282,19 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 
 > 出處：§6.36（Phase 9 收官）；`db:verify 33` / migration `0028` 由 Phase 8 最後一刀（§6.35）帶入。
 
-### Current HEAD 最近驗證：DB 加密備份（交付 ops 基礎建設，PR #44 / squash `cc6b66a`）
+### Current HEAD 最近驗證：`250d0c8`（2026-07-27 盤點實跑）
+
+| 指令 | 結果 |
+|------|------|
+| `npx tsc --noEmit` | ✅ exit 0 |
+| `npm test`（不接 DB） | ✅ **1426 passed**／104 test files；另 306 tests・39 files skipped（DB-gated，需 `db:reset` + `RUN_DB_TESTS=1`） |
+| 工作樹 | ✅ clean |
+| migrations | `0001–0037`｜`db:verify` **49**（local）／`db:verify:remote` **35**（prod，§6.48 實跑） |
+
+> **本次盤點只重跑 `tsc` 與 `npm test`**——程式碼自 `314d838`（Wave 3 3d）之後未再變動，其後兩刀（`b3d1af5`／`250d0c8`）皆 docs-only。
+> **Wave 2C 與 Wave 3 六刀（PR #45–#50）不在本節的「前一刀」鏈上**：eslint／`next build`／`RUN_DB_TESTS=1` 整合測試／headless 走查的實跑證據，各自記在 **§6.42–§6.47** 的「驗證」段；prod 端 migration 套用與稽核佐證的 smoke 見 **§6.48**。本節「前一刀」鏈保留 PR #44 以前的歷史紀錄、不回填。
+
+### 交付 ops 基礎建設：DB 加密備份（PR #44 / squash `cc6b66a`）
 
 **非功能 Wave，是交付前的 ops 基礎建設**：教會決定**先不升 Supabase Pro**（沒預算，想先跑起來證明有用再爭取），
 而 Free tier **零代管備份** ⇒ 備份這個 gate 不消失、只是從「按一下升 Pro」換成「自己顧」。見
@@ -1558,7 +1570,7 @@ M5(P3，被 sweep 補抓) 0→1；`pastoral_care_alerts` 一筆 open（`trigger_
 
 ## 10. 本機開發備忘（重點，詳見 development_plan §12）
 
-- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0036` + seed）/ `db:verify` / `db:stop`。
+- 啟動/重置/驗證：`npm run db:start` / `db:reset`（套用 `0001–0037` + seed）/ `db:verify` / `db:stop`。
 - 工作 script：`job:friday` / `job:expire-offers` / `job:release` / `job:settle` / `job:auto-finalize` / **`job:dispatch`**（notification dispatcher；皆 `tsx scripts/run-*.ts`）。`job:dispatch` 吃選填 `--limit` / `--now`，需 `NOTIFICATION_TRANSPORT=mock|line`。
 - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` 用 `npx supabase status` 的 **`sb_secret_...`**（非舊版 JWT）；`SUPABASE_URL=http://127.0.0.1:54321`；`JOB_TRIGGER_SECRET`（route 的 `x-job-secret`）；**`NOTIFICATION_TRANSPORT`（`mock`|`line`）** + **`LINE_CHANNEL_ACCESS_TOKEN`（`line` 模式必填，否則 dispatcher fail-fast）**；**`MEMBER_AUTH_MODE`（`mock`|`liff`；本機用 `mock`，`liff` 另需 `LINE_LOGIN_CHANNEL_ID` + `NEXT_PUBLIC_LIFF_ID`，見 [member-liff-setup.md](member-liff-setup.md)）**。這些密鑰**僅後端使用，絕不可暴露到瀏覽器**（`NEXT_PUBLIC_LIFF_ID` 例外，非機密）；`lib/supabase/server.ts` 不得被 client 端 import。
 - 本機 Supabase default privileges 只給 API 角色 `Dxtm`，故 migration 對 `service_role` 明確 `grant select/insert/update/delete`；新增表/視圖記得一併授權。

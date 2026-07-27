@@ -4,7 +4,7 @@
 > rev.1（2026-07-16）：30 條判定＋動工順序。
 > rev.2：一輪審查，修規格＋改 delivery-first 排序。
 > rev.3：二輪審查，修實作語意（PIN 旋轉、commit-then-dispatch、雙真相、actor 模型、拒絕科學記號…）＋拆 Wave 2A/2B/2C。
-> 對應：[current_handoff.md](current_handoff.md)（每刀 merge 後同步，最新到 Wave 3 3a §6.44）、[prod-deploy-runbook.md](prod-deploy-runbook.md)。
+> 對應：[current_handoff.md](current_handoff.md)（每刀 merge 後同步，最新到 Wave 3 3d §6.47；其後 §6.48／§6.48.1 為上 prod 與 staged deployment 制度）、[prod-deploy-runbook.md](prod-deploy-runbook.md)。
 
 ---
 
