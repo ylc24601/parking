@@ -113,11 +113,13 @@
   - 現況：點外面關閉選單時，該次點擊會穿透觸發下層按鈕（如點名列）。目前由既有 5 秒 undo 視窗兜底；settle 在確認 sheet 後、無法被此路徑觸發。
   - Gate：決定是否吞掉關閉當次的點擊（dismiss-only），或維持穿透。
   - Source：Wave 1a code-review finding
-- [ ] **`StaffPinManager.tsx` 從 server service 模組 import 型別**（與 Wave 1c 的處置不一致）
-  - 現況：`app/admin/staff-pin/StaffPinManager.tsx:5` 是 client component，卻 `import type { StaffPinCardStatus } from '@/server/services/staffPinAdminService'`。**既有問題、非本 branch 造成**（Wave -1 只改了該檔文案）。實測 client chunks **無 service-role key 外洩**（`import type` 會被抹除）。
-  - 但這正是 Wave 1c 為 `MemberTable` 建 `lib/memberAdminTypes.ts` 的理由：`lib/supabase/server.ts` **只有註解防護、無 `server-only` 套件**，哪天有人把 `import type` 改成 value import 就會靜默打包進 client。
-  - Gate：比照 1c 把 DTO 移到 client-safe 模組；或（更根本）導入 `server-only` 套件讓這類 import 直接 build 失敗 —— 後者可一次解決全部同類風險，值得優先評估。
-  - Source：Wave 1 PR diff review（#37）
+- [x] **client component 從 server 模組 import 型別** — **Tier 0-1 完成（PR #54）**
+  - 原始現況：`app/admin/staff-pin/StaffPinManager.tsx:5` 是 client component，卻 `import type { StaffPinCardStatus } from '@/server/services/staffPinAdminService'`。**既有問題、非 Wave 1 造成**（Wave -1 只改了該檔文案）。
+  - **實作時發現不只一個**：`PastoralAlerts`／`OpsDashboard`／`BindingReview` 也是同型，共 **4 個**。全部一起處理——只修其中一個是任意的。
+  - **邊界的正確描述**：`lib/supabase/server.ts` 原本只有註解防護。風險**不是**「service-role key 會靜默進 browser bundle」——Next.js 只把 `NEXT_PUBLIC_` 前綴的環境變數放進 client bundle，其餘替換為空字串。真正要防的是**privileged server-only code 被誤帶進 Client Component 的 dependency graph**；`import 'server-only'` 讓錯誤的 value import 在 **build-time** 被擋下，而不是等到執行期才以難解的方式失敗。
+  - Gate（實際交付）：四個讀 env secret 且可被 import 的模組加 `import 'server-only'`（`lib/supabase/server.ts`／`server/http/jobAuth.ts`／`server/http/importConfirmToken.ts`／`server/services/notification/lineTransport.ts`；route handlers 本質為 server entry point，刻意不加）＋四個 DTO 搬到 `lib/`（比照 `lib/memberAdminTypes.ts`）＋`vitest.config.ts` 把 `server-only` alias 到 `empty.js`＋`tests/unit/server/serverOnlyBoundary.test.ts` 釘住整套。
+  - **負向驗證（手動實跑、已還原）**：把 client component 的 `import type` 改成 value import ⇒ `next build` **失敗**並指回 `lib/supabase/server.ts`（`'server-only' cannot be imported from a Client Component module`）。
+  - Source：Wave 1 PR diff review（#37）→ Tier 0-1（PR #54）
 - [ ] **`docs/ui-mockups/screen-state-map.md` 首頁描述過期**
   - 現況：仍寫「首頁導覽（8 卡）／8 個 `Link` 到子頁」，但 `AdminHome.tsx` 自 Slice 3.5 起已改為純歡迎頁（導覽移到 sidebar）。**既有過期、與 Wave 1a 無關**（該刀只更新列印那列）。
   - Gate：更正為 sidebar 導覽現況。

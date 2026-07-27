@@ -2,7 +2,7 @@
 
 > 最後更新：2026-07-27 ｜ **Phase 9 已收官；production demo walkthrough 完成並清回 baseline；尚未匯入正式教會會員資料**。Post-Phase-9 功能軌（[feature-triage.md](feature-triage.md)）：Wave -1/0/0.1/1 ✅、**Wave 2A #15 稽核全完成（2A-1／2A-2／2A-3 retention）、Wave 2B-1 #14A ✅、Wave 2B-2a＋2B-2b #10 ✅ ⇒ 容量／P2 資格不需 SQL／CSV，稽核有邊界可清理**、**Wave 2C #19 admin 角色分級 ✅（2C-1／2C-2）**、**Wave 3 ✅（3a #8＋#9／3b #17／3c #18／3d #5B-a）**。**「交付前必修」與「強烈建議交付前」兩節皆已清空 ⇒ 開發面無交付阻擋**（剩交付後 ops，走查照 **[go-live-checklist.md](go-live-checklist.md)**＝單一權威清單）；驗證見 §8。**唯一 active 剩片＝#14B 申請開放 override**（規則未定、待產品決策，非技術阻擋）。 ｜ 範圍：Phase 0–2 全部、Phase 3（Staff 現場頁 + v2 全切片）、Phase 4（notification dispatcher A–F）、Phase 5/5B（LINE webhook + binding 擷取/審核/CLI）、Phase 6（會友資料匯入）、Phase 7（會員 LIFF：登入/綁定/申請/取消/遞補確認/正在路上）、Phase 8（Admin UI Slice 1–8）、Phase 9（production deploy + prod demo-complete 收官）全數完成——詳見 §6.13–§6.36；post-Phase-9 各刀見 §6.37–§6.48。
 >
-> **現況：開發面無交付阻擋、prod 已站起並跑完完整 demo（見 §6.36）、staged deployment 部署制度已上線並實跑驗收（見 §6.48／§6.48.1）。剩交付後 ops（非開發軌）**：**[go-live-checklist.md](go-live-checklist.md) §0 三個負責人尚未指派**（OA token owner／copy approver／scheduler on-call；不指派不啟動）、資料備份（**決策 2026-07-18：先不升 Pro、走 Free ＋自管加密備份**——備份 gate 不因不付而消失，只是換做法；**程式已在 main（PR #44）但尚待教會 arm**：age 金鑰／private bucket／GitHub Secrets／lifecycle／`HEARTBEAT_URL`／`BACKUP_ENABLED=true`＋一次還原演練，見 §1.1）、**匯入真會友 CSV（§1.3）**、**pilot 分批放行（§1.7）**。**已完成的 ops**：staged deployment（§1.0）、教會正式 OA/channel token（§1.2／§6.38）、通知文案 sign-off（§1.4／§6.39）、12 個 cron 含 audit purge（§1.5／§6.40）、開啟真實送出 `NOTIFICATION_TRANSPORT=line`（§1.6／§6.41）。**交付日照 [go-live-checklist.md](go-live-checklist.md)**（單一權威走查清單，整合 runbook §8/§13＋go-live-readiness §1/§5）。非阻擋功能 backlog（#26 通知 LIFF deep-link、2B-2c、#5B-b／#5B-c、a11y、`server-only`）見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)。
+> **現況：開發面無交付阻擋、prod 已站起並跑完完整 demo（見 §6.36）、staged deployment 部署制度已上線並實跑驗收（見 §6.48／§6.48.1）。剩交付後 ops（非開發軌）**：**[go-live-checklist.md](go-live-checklist.md) §0 三個負責人尚未指派**（OA token owner／copy approver／scheduler on-call；不指派不啟動）、資料備份（**決策 2026-07-18：先不升 Pro、走 Free ＋自管加密備份**——備份 gate 不因不付而消失，只是換做法；**程式已在 main（PR #44）但尚待教會 arm**：age 金鑰／private bucket／GitHub Secrets／lifecycle／`HEARTBEAT_URL`／`BACKUP_ENABLED=true`＋一次還原演練，見 §1.1）、**匯入真會友 CSV（§1.3）**、**pilot 分批放行（§1.7）**。**已完成的 ops**：staged deployment（§1.0）、教會正式 OA/channel token（§1.2／§6.38）、通知文案 sign-off（§1.4／§6.39）、12 個 cron 含 audit purge（§1.5／§6.40）、開啟真實送出 `NOTIFICATION_TRANSPORT=line`（§1.6／§6.41）。**交付日照 [go-live-checklist.md](go-live-checklist.md)**（單一權威走查清單，整合 runbook §8/§13＋go-live-readiness §1/§5）。非阻擋功能 backlog（#26 通知 LIFF deep-link、2B-2c、#5B-b／#5B-c、a11y）見 [feature-triage.md](feature-triage.md) 與 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)；**`server-only` 邊界已於 Tier 0-1（PR #54）完成，見 §6.49**。
 > 對應規劃文件：[development_plan.md](development_plan.md)、[Church_Parking_Management_System_PRD.md](Church_Parking_Management_System_PRD.md)
 > 程式碼根目錄：`parking-system/`（`@/*` alias 指向該目錄）
 
@@ -1249,6 +1249,27 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 - **看不出差異的 release 要靠指紋證明 cutover**。docs-only 的情況下「站台載得起來」什麼都沒證明，而 Vercel 的徽章是對 Vercel 自身狀態的陳述，不是對「使用者實際收到什麼」的陳述。promote 前後各打一次正式 domain 比對 `ETag`／body hash／`age` 才是客觀證據。**注意比雜湊、不要比長度**——本次前後 HTML 都是 11088 bytes，內容卻不同。
 
 > **這一節本身就是這套制度的第一份產出**：規則、驗收、與驗收發現的兩處修正，走的是同一條 staged 流程。
+
+---
+
+## 6.49 Tier 0-1 — `server-only` 模組邊界機器化（PR #54，2026-07-27）
+
+pre-pilot maintenance closure 的第一刀。**零 migration、無 schema／RPC 變更**，與 Tier 0-2（0038）無耦合，故先行。
+
+**要防的是什麼（措辭已修正）**：`lib/supabase/server.ts` 建的是 service-role client，原本只有註解說「不可從 client 元件 import」。**風險不是「service-role key 會靜默進 browser bundle」**——Next.js 只把 `NEXT_PUBLIC_` 前綴的環境變數放進 client bundle，其餘替換為空字串（見 `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`「Preventing environment poisoning」）。真正要防的是**privileged server-only code 被誤帶進 Client Component 的 dependency graph**；`import 'server-only'` 讓錯誤的 value import 在 **build-time** 被擋下。
+
+**四個加 guard 的模組**（讀 env secret 且可被其他模組 import；route handlers 本質為 server entry point，刻意不加）：`lib/supabase/server.ts`（`SUPABASE_SERVICE_ROLE_KEY`）／`server/http/jobAuth.ts`（`JOB_TRIGGER_SECRET`・`CRON_SECRET`）／`server/http/importConfirmToken.ts`（以 service-role key 簽章）／`server/services/notification/lineTransport.ts`（`LINE_CHANNEL_ACCESS_TOKEN`）。`lib/supabase/server.ts` 槓桿最大——所有 service／repository 路徑都會走到它，**一行守住整張圖**。
+
+**實作時發現 backlog 低估了範圍**：[pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md) 只點名 `StaffPinManager`，實際有 **4 個** client component 從 server 模組 `import type`（另有 `PastoralAlerts`／`OpsDashboard`／`BindingReview`）。四個 DTO 一併搬到 `lib/`，比照既有 `lib/memberAdminTypes.ts`／`lib/capacityAdminTypes.ts`：`lib/staffPinAdminTypes.ts`／`lib/pastoralAdminTypes.ts`／`lib/opsAdminTypes.ts`（含 `OutboxHealth`・`AlertThresholds`・`OutboxAlert`）／`lib/bindingAdminTypes.ts`。server 模組 re-export 型別，server 端呼叫者的 import site 不變。
+
+**兩個實作判斷**：
+
+- **Vitest 會全滅**（實際發生：68 個 test file 失敗）。`server-only` 套件的 default entry 就是 `throw`，只有 `react-server` export condition 解析到 no-op 的 `empty.js`；Next 建 Server Component 時設該 condition，Vitest 跑純 Node。處置＝`vitest.config.ts` **只把這一個套件** alias 到 `empty.js`，而非加 `resolve.conditions: ['react-server']`——後者是全域的，會連 react／next 一起翻到它們的 react-server build，blast radius 大得多。
+- **加 pin test**（`tests/unit/server/serverOnlyBoundary.test.ts`，6 條）。理由：這道 guard 在 diff 裡**隱形**——刪掉一行 `import 'server-only'` 讀起來就像清掉多餘 import，而且在真的出事之前不會有任何東西壞掉。測試釘住：四個模組都有該 import／**pin list 涵蓋目前所有已知的 server secret env reader**（新增 secret env 時需同步更新此清單——**刻意不做泛用 secret classifier**）／沒有任何 client component 從 `@/server/` import（連 type 都不行）。
+
+**驗證（本刀實跑）**：`npx tsc --noEmit` ✅／`npx eslint .` ✅／`npm run build` ✅／`npm test` **1432 passed・306 skipped**（+6）。**負向測試**（手動、已還原）：把 client component 的 `import type` 改成 value import ⇒ build 失敗，訊息 `'server-only' cannot be imported from a Client Component module`，import trace 指回 `lib/supabase/server.ts` ⇒ 保護確實生效，不只是加了一行 import。
+
+**部署**：無 migration、無 schema／RPC 變更 ⇒ **A ✅／B ✅／R ✅**，可直接 merge → Promote。
 
 ---
 

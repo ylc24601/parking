@@ -101,4 +101,5 @@
 - **通知 LIFF deep-link（#26）** — 讓通知一觸就開會員頁動作；#25 已把「回覆」死指令改成導向會員頁，deep-link 是其正解。見 [feature-triage.md](feature-triage.md) #26。
 - **監控** `/outbox-alert`（503＝不健康，外部 monitor 收信）、audit purge 每月 run 的 `hasMore` warning。
 - **確認自管備份最近一次成功**（§1.1 選 Free 後的持續責任——備份靜默失敗＝回到零備份，比沒設更危險，因為你以為有）。若日後升 Pro，此條移除。
-- **非阻擋 dev backlog**（要不要做由你決定，皆可留）：2B-2c P2 佇列列內操作、Wave 2C #19 admin 角色分級、retire `admin_reserved`、`server-only` 套件、a11y menu 語意。見 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)「可交付後迭代」。
+- **非阻擋 dev backlog**（要不要做由你決定，皆可留）：2B-2c P2 佇列列內操作、retire `admin_reserved`、a11y menu 語意。見 [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md)「可交付後迭代」。
+  - 已完成、不再是 backlog：**Wave 2C #19 admin 角色分級**（PR #45／#46）、**`server-only` 邊界**（Tier 0-1，PR #54）。
