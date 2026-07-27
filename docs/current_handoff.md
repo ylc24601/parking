@@ -1184,17 +1184,27 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 2. `npm run db:verify:remote` → **`all 35 assertions passed`**（34→35，最後一條即 `0037` 的 member-export）。
 3. Smoke（prod domain，證據＝`audit_logs` 當日列，非事後回想）：
 
-   | 台北時間 | action | result | role_snapshot | 驗到什麼 |
+   | 台北時間 | action | result | metadata | 驗到什麼 |
    |---|---|---|---|---|
-   | 09:02:56 | `admin_account.create` | success | superadmin | `0036` `create_admin_account` |
-   | 09:05:43 | `member_roster.export` | success | superadmin | `0037` `log_member_roster_export`（`row_count=1`，與 prod 現有 1 位 live member 一致，見 §6.36） |
-   | 10:07:54 | `admin_account.password_reset` | success | superadmin | `0035` 的 5-arg `reset_admin_password` 走成功路徑（非 `cannot_target_self` 的 denied 分支） |
+   | 09:02:56 | `admin_account.create` | success | | `0036` `create_admin_account`（建為 clerk） |
+   | 09:05:43 | `member_roster.export` | success | `row_count=1` | `0037` `log_member_roster_export`；列數與 prod 現有 1 位 live member 一致（§6.36） |
+   | 10:07:54 | `admin_account.password_reset` | success | `sessions_revoked=true` | `0035` 的 5-arg `reset_admin_password` 走**成功**路徑（非 `cannot_target_self` denied 分支） |
+   | 10:08:16 | （`admin_sessions` 新列） | | | 以新帳號＋新密碼實際登入成功 ⇒ 重設password 端到端成立，不只是 RPC 有回 ok |
+   | 10:25:30 | `admin_account.password_reset` | success | `sessions_revoked=true` | 第二次重設——第一次的一次性密碼未記下。正是 UI 自己的指引（「帳號已建立但未取得密碼，請用『重設密碼』重新產生」） |
+   | 10:27:09 | `admin_account.session_revoke` | success | **`sessions_revoked=1`** | `0036` `revoke_admin_sessions`。**刻意保留目標帳號的活 session 才按**，所以撤到的是 1 而非 0；另一個瀏覽器隨即被踢回登入頁 ⇒ 驗到的是**撤銷真的生效**，不只是 RPC 跑得起來 |
+   | 10:28:56 | `admin_account.role_change` | success | `to_role=superadmin` | `0036` `set_admin_role` |
+   | 10:29:49 | `admin_account.disable` | success | | `0035` `set_admin_disabled`；帳號處置完成 |
 
-   - **登入不需要獨立證據**：上列三列的 `actor_type=admin` ＋ `role_snapshot=superadmin` 本身就要求一個有效 admin session、且 `admin_accounts.role` 讀得到才寫得出來。附帶驗到 **`0035` 的 `actor_role_snapshot` 在 prod 實際被填上**（此欄自 `0030` 建立以來一直是 null）。
-   - **明確未驗**：`0036` 的 `set_admin_role`（無 `admin_account.role_change` 列）與 `revoke_admin_sessions`（無 `admin_account.session_revoke` 列）。原 smoke 清單寫的是「變更角色」，實際跑的是「新增管理者」——**稽核查證推翻了口頭回報**，本身即這一節主張的示範。
-   - `admin_sessions` 當日 1 列（最新 10:08:16，晚於最後一個稽核動作 22 秒）。
+   **覆蓋率**：`0035`（`reset_admin_password` 5-arg／`set_admin_disabled`／`role` 欄位讀取）、`0036`（三支全數）、`0037`（`log_member_roster_export`）**每一支都有稽核列**。
 
-   **本次 smoke 產生的 prod 副作用**：09:02:56 新增了一個管理者帳號，其一次性密碼於 10:07:54 重設過一次。**該帳號的處置（正式幹事帳號 vs. 停用）見下方待辦**——比照 runbook §6.4 的測試身分清理紀律，prod 上不留來歷不明的活憑證。
+   - **登入不需要獨立證據**：每一列的 `actor_type=admin` ＋ `role_snapshot=superadmin` 都要求一個有效 admin session、且 `admin_accounts.role` 讀得到才寫得出來。附帶驗到 **`0035` 的 `actor_role_snapshot` 在 prod 實際被填上**（此欄自 `0030` 建立以來一直是 null）。
+   - **順序有意義，不是流水帳**：`set_admin_role` 與 `set_admin_disabled` 都會刪掉目標帳號的 session，所以先撤銷、再改角色、最後停用；顛倒的話 `session_revoke` 只會撤到 0，證據強度掉一半。
+   - **原 smoke 口頭回報說「變更角色」，稽核顯示當時實際跑的是「新增管理者」**（`role_change` 是本輪補做才出現的）。**稽核查證推翻了口頭回報**，本身即這一節主張的示範。
+
+   > **`sessions_revoked` 這個 key 跨 action 型別不同，是刻意的、不是瑕疵**：`password_reset` 寫 boolean `true`（登出所有裝置是副作用，數量不是重點），`session_revoke` 寫整數（數量就是結果，`GET DIAGNOSTICS` 取得）。viewer 兩邊各自做型別檢查（`yesNo()` vs `typeof n !== 'number'`），對不上顯示 `unreadable`。**唯一要注意的是查詢端：跨 action 對這個 key `::int` 會炸在 `'true'` 上。**
+
+   **帳號處置（已完成）**：09:02:56 建的是 smoke 拋棄式帳號，10:29:49 已**停用**（soft-disable，`0026`；帳號永不硬刪，稽核列的 actor 才永遠解析得回來——`0030` 的 actor 解析依賴這點）。兩組一次性密碼隨帳號停用而失效。比照 runbook §6.4 的測試身分清理紀律，prod 上不留來歷不明的活憑證。
+   **⚠️ 殘留一項**：該帳號**停用時的角色是 superadmin**（10:28:56 由 clerk 改上去、未改回）。它現在登不進來，但 `/admin/accounts` 的「啟用」按鈕就在旁邊——**日後誤按即得到一個啟用中的系統管理員**。建議把它改回幹事，讓最壞情況只是幹事。
 
 **資料影響（事前逐行審查）**：三支之中只有 `0035` 會寫既有資料——`update admin_accounts set role = 'superadmin'`（刻意：回填成 clerk 會讓所有人一次失去帳號管理權且沒有 UI 可要回來）。`0036`／`0037` 只 `create function`，套用當下零列異動。**無任何 drop table／delete／truncate 打到會友、車輛、預約或稽核資料。**
 
@@ -1213,7 +1223,7 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 **尚未做**：
 
 - **Vercel toggle**：dashboard 操作，需由使用者在 UI 關掉；本刀只交付文件與 PR template。**關掉之前，上述流程仍然只是文件。**
-- **09:02 那個 smoke 帳號的處置**：若非要給教會的正式幹事帳號，應到 `/admin/accounts` 停用（soft-disable，`0026`；帳號永不硬刪）。**停用順帶可補上未驗的兩支 RPC**——停用前先切一次角色即補 `admin_account.role_change`，停用本身寫 `admin_account.disable` 並連帶刪該帳號的 session 列。
+- ~~09:02 那個 smoke 帳號的處置~~ ✅ **已停用（10:29:49）**，且補做的三個動作同時補上了原本未驗的兩支 RPC（見上方 smoke 表）。**剩一件**：該帳號停用時的角色是 superadmin，建議改回幹事（理由見上）。
 
 ---
 
