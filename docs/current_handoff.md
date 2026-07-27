@@ -1223,10 +1223,32 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
 
 **外部審查修正了兩處**（採納）：① 我原本舉 `0032` 當「兩邊都不安全」的例子是**錯的**——它 drop `p2_eligible` 之後用**同名、同讀取介面**重建成 generated column（`generated always as (review_status = 'approved') stored`），header 自己就寫了 `old app + new DB : compatible`，是 A✅/B❌，而且正好是**刻意保留舊介面的好範例**，文件改成正面示範。② `0035` 的 `NOT VALID` CHECK 屬**歷史資料不得被偽造**（data migration），不是 app↔schema 部署相容性，兩者不要混在一起教——runbook 已加註區隔。
 
-**尚未做**：
+**收尾**：
 
-- **Vercel toggle**：dashboard 操作，需由使用者在 UI 關掉；本刀只交付文件與 PR template。**關掉之前，上述流程仍然只是文件。**
+- ~~Vercel toggle~~ ✅ **已關閉並實跑驗收**（見下）。
 - ~~09:02 那個 smoke 帳號的處置~~ ✅ **結案**：10:29:49 停用、10:34:39 降回幹事，最終狀態 `disabled` ＋ `clerk`。補做的四個動作同時補齊了原本未驗的兩支 RPC（見上方 smoke 表）。
+
+### 6.48.1 staged deployment 制度驗收（2026-07-27，PR #51 實跑）
+
+**刻意用建立這條規則的 docs-only PR 當第一次驗收**，而非另造測試 commit：無 migration、A✅B✅R✅，即使 toggle 沒設成功而意外直上 production，爆炸半徑也只是一份文件。
+
+| 步驟 | 結果 |
+|---|---|
+| 關閉 Auto-assign Custom Production Domains | ✅ |
+| merge PR #51（squash → `b3d1af5`） | ✅ Vercel 該筆 Environment ＝ **Production Staged** |
+| 正式 domain 是否被搶走 | ✅ **沒有**——該筆 Domains 清單不含 `parking-omega-one.vercel.app`，正式網址仍由前一筆 **Current** 服務 |
+| staged artifact 檢查 | ✅ 瀏覽器開得起來（見下方 SSO 註記） |
+| Promote | ✅ 不 rebuild（Duration 仍 38s），狀態轉 **Current** |
+| 正式 domain 確實換了 artifact | ✅ 指紋比對：body sha256 `957e19d0…`→`14f830e5…`、`age` 9149→0 |
+| Promote 後 toggle 仍為 OFF | ✅ |
+
+**兩個實跑才知道的事實，已回寫 runbook §1.5：**
+
+- **本專案目前的 Deployment Protection 設定下**，staged deployment 的自動產生 domain 均受 Vercel Authentication 保護。**實測（2026-07-27）**：三個 staged domain（專案別名／`*-git-main-*` 分支別名／唯一 `*-<hash>-*` 部署 URL）全部 302 到 `vercel.com/sso-api`，只有正式 domain 回 200。所以第 5 步的「在 staged URL smoke」**必須用瀏覽器、且已登入 Vercel 帳號**，`curl` 只會拿到轉址。
+  **⚠️ 這是專案設定，不是 staged deployment 的固有性質**——Protection 的 scope 由專案設定決定，Vercel 的預設也隨版本改過。上面那行是**有日期的實測**，不是平台保證：**要重新確認，不要沿用假設**。這道保護是必要的（staged build 帶著 Production env ＝ 真的 Supabase 憑證，promote 前不該公開可達），所以**哪天 staged domain 對未驗證請求回 200，那是要處理的發現，不是方便**。
+- **看不出差異的 release 要靠指紋證明 cutover**。docs-only 的情況下「站台載得起來」什麼都沒證明，而 Vercel 的徽章是對 Vercel 自身狀態的陳述，不是對「使用者實際收到什麼」的陳述。promote 前後各打一次正式 domain 比對 `ETag`／body hash／`age` 才是客觀證據。**注意比雜湊、不要比長度**——本次前後 HTML 都是 11088 bytes，內容卻不同。
+
+> **這一節本身就是這套制度的第一份產出**：規則、驗收、與驗收發現的兩處修正，走的是同一條 staged 流程。
 
 ---
 
