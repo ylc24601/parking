@@ -232,10 +232,23 @@ forward-fix: **an app rollback is safe only when the rollback target is compatib
 DB as it now stands, and even then it is only a recovery strategy if it restores the whole
 service.** See §5 for the full statement.
 
-> **Vercel constraint worth knowing before you need it:** a deployment that has already been
-> promoted cannot be promoted again — to return to it you must use **Instant Rollback**, and
-> Instant Rollback only offers deployments that have previously served production traffic
-> (so a Staged deployment that was never promoted is not a rollback target).
+> **Vercel constraints worth knowing before you need them:**
+> - A deployment that has already been promoted cannot be promoted again — to return to it
+>   you must use **Instant Rollback**, and Instant Rollback only offers deployments that have
+>   previously served production traffic (so a Staged deployment that was never promoted is
+>   not a rollback target).
+> - **This project is on Hobby, where Instant Rollback reaches exactly one deployment back.**
+>   Vercel's own wording: Pro/Enterprise can roll back to any deployment previously aliased
+>   to a production domain; *"Hobby users can roll back to the immediately previous
+>   deployment."* So **do not plan recovery around picking some older known-good release** —
+>   the only guaranteed target is the one you just replaced. Two bad promotes in a row and
+>   the good one is out of reach.
+> - ⚠️ **A rollback silently re-arms the foot-gun §2.5 disarmed.** Vercel turns auto-assignment
+>   of production domains **off** after a rollback (so pushes stop replacing the rolled-back
+>   deployment) — and **"Undo Rollback" turns it back ON**. That means the §2.5 setting can
+>   revert *without anyone opening project settings*, just by completing a rollback → undo
+>   cycle. **Re-check the toggle after any rollback.** It is the one path by which this
+>   document's guarantees expire on their own.
 
 ---
 
@@ -296,6 +309,10 @@ This is what makes §1.5's deployment order enforceable rather than aspirational
 promotes it. Without it, merging *is* deploying and the migration can never reliably go
 first. Re-verify this toggle after any Vercel project reconfiguration — it is a project
 setting, not something the repo can pin.
+
+⚠️ **It also re-arms itself after a rollback.** Completing an Instant Rollback and then
+"Undo Rollback" turns auto-assignment back **on** (§1.5). Re-check this toggle after any
+rollback — that is the one way it reverts with nobody having touched settings.
 
 ---
 

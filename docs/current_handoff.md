@@ -1206,6 +1206,8 @@ Wave 3 第三刀。admin 側欄從扁平 11 項改為**兩區＋分界線**：�
    **帳號處置（已完成）**：09:02:56 建的是 smoke 拋棄式帳號，10:29:49 已**停用**（soft-disable，`0026`；帳號永不硬刪，稽核列的 actor 才永遠解析得回來——`0030` 的 actor 解析依賴這點）。兩組一次性密碼隨帳號停用而失效。比照 runbook §6.4 的測試身分清理紀律，prod 上不留來歷不明的活憑證。
    **⚠️ 殘留一項**：該帳號**停用時的角色是 superadmin**（10:28:56 由 clerk 改上去、未改回）。它現在登不進來，但 `/admin/accounts` 的「啟用」按鈕就在旁邊——**日後誤按即得到一個啟用中的系統管理員**。建議把它改回幹事，讓最壞情況只是幹事。
 
+   > **「能不能直接刪掉這個帳號？」——不能，而且不該。** 系統沒有任何刪除路徑（migrations 無 `delete from admin_accounts`，UI 只有停用／啟用），這是 `0026` 的刻意設計、`0030` 的 actor 解析也依賴它。具體後果：稽核 viewer 靠 `listAdminAccounts()` 建 id→名稱的 Map（[`auditViewService.ts:192-193`](../parking-system/server/services/auditViewService.ts#L192-L193)）來指名「誰」，而這個帳號是上表 6 列的 `entity_id`；硬刪之後那 6 列就再也指不出對象。而 `audit_logs` 對 actor/entity **刻意不設 FK**（`0030`：snapshot ref 必須在被指向的東西消失後仍存活），所以**資料庫不會擋你，它只會安靜地讓稽核失去指稱能力**。**在這個系統裡，停用就是刪除。**
+
 **資料影響（事前逐行審查）**：三支之中只有 `0035` 會寫既有資料——`update admin_accounts set role = 'superadmin'`（刻意：回填成 clerk 會讓所有人一次失去帳號管理權且沒有 UI 可要回來）。`0036`／`0037` 只 `create function`，套用當下零列異動。**無任何 drop table／delete／truncate 打到會友、車輛、預約或稽核資料。**
 
 **操作摩擦（記一筆，會重複發生）**：`db:verify:remote` 第一次跑失敗成 `password authentication failed for user "YLC"`——因為 `SUPABASE_DB_URL` 沒設，`psql` 退回預設值去連本機 socket。這是 runbook §1.4「用完即 `unset`」的必然後果（正確的取捨），但錯誤訊息會誤導成「密碼錯了」。**每次跑都要重新 export；看到 `Password for user ...` 提示就代表變數是空的，直接中止、不要輸入。**
