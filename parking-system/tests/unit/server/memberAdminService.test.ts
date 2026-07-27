@@ -138,7 +138,9 @@ describe('getMemberDetail', () => {
     phone_number: '0912345678',
     role: 'user',
     line_id: null,
-    vehicles: [{ license_plate: 'ABC-1234', nickname: '家庭車' }],
+    vehicles: [
+      { id: 'v-1', license_plate: 'ABC-1234', nickname: '家庭車', is_active: true },
+    ],
     eligibility: {
       p2_eligible: true, review_status: 'approved', p2_reason: 'mobility_long', p2_valid_from: null,
       p2_valid_until: '2027-01-01', p2_review_date: '2026-12-01', p2_child_birthdate: null,

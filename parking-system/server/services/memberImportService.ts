@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { maskPhone } from '@/lib/binding'
 import { normalizePlate } from '@/lib/plate'
 import { createParkingRepository, type ParkingRepository } from '@/server/repositories/parkingRepository'
 import {
@@ -48,6 +49,20 @@ export interface ImportReport {
   vehiclesAdded: number
   dependentsAdded: number
   phoneNameConflicts: Array<{ phone: string; names: string[]; existingName?: string }>
+  // Tier 0-2 (0038) — the CSV's phone is NOT in the DB, but that NAME already belongs to
+  // somebody. Kept in its OWN bucket rather than folded into phoneNameConflicts: the two
+  // say opposite things and need opposite actions. "同號不同名" means the file is probably
+  // wrong; this one usually means the member is right there under a phone they changed —
+  // and importing anyway would create a second users.id holding none of their binding,
+  // history or eligibility, which this system has no tool to merge back.
+  //
+  // Candidate phones are MASKED: they belong to members who are not in this file, and the
+  // operator needs to recognise a person, not to read a number they were not given.
+  identityConflicts: Array<{
+    phone: string
+    name: string
+    candidates: Array<{ phoneMasked: string; evidence: 'same_name' | 'same_name_and_plate' }>
+  }>
   plateConflicts: Array<{ phone: string; plates: string[] }>
   // CSV self-contradiction: one plate claimed by >1 phone in THIS file. Distinct from plateConflicts
   // (a plate already owned by another member in the DB) — the whole member is skipped, fail closed.
@@ -73,6 +88,7 @@ export interface ImportReport {
   truncated: boolean
   totals: {
     phoneNameConflicts: number
+    identityConflicts: number
     plateConflicts: number
     batchPlateConflicts: number
     groupConflicts: number
@@ -205,11 +221,13 @@ export async function importMembersFromCsvText(
 
   const report: ImportReport = {
     dryRun, rows: records.length, members: 0, imported: 0, updated: 0, vehiclesAdded: 0, dependentsAdded: 0,
-    phoneNameConflicts: [], plateConflicts: [], batchPlateConflicts: [], groupConflicts: [],
+    phoneNameConflicts: [], identityConflicts: [], plateConflicts: [], batchPlateConflicts: [],
+    groupConflicts: [],
     reviewRequired: [], p2Retained: [], revokedRetained: [], governedRetained: [], validationErrors: [],
     truncated: false,
     totals: {
-      phoneNameConflicts: 0, plateConflicts: 0, batchPlateConflicts: 0, groupConflicts: 0,
+      phoneNameConflicts: 0, identityConflicts: 0, plateConflicts: 0, batchPlateConflicts: 0,
+      groupConflicts: 0,
       reviewRequired: 0, p2Retained: 0, revokedRetained: 0, governedRetained: 0, validationErrors: 0,
     },
   }
@@ -336,6 +354,22 @@ export async function importMembersFromCsvText(
     }
 
     if (res.status === 'phone_name_conflict') {
+      // ONE status, two kinds (0038). The discriminant is optional on the wire because a
+      // pre-0038 database does not send it — and its absence must mean the ORIGINAL kind,
+      // not "unknown": that is what lets an old app keep working against a new DB, and a
+      // new app keep working against a DB that has not migrated yet.
+      if (res.conflict_kind === 'identity_candidate') {
+        pushCapped(report.identityConflicts, {
+          phone,
+          name,
+          candidates: (res.candidates ?? []).map(c => ({
+            phoneMasked: c.phone === null ? '—' : maskPhone(c.phone),
+            evidence: c.evidence,
+          })),
+        })
+        report.totals.identityConflicts++
+        continue
+      }
       pushCapped(report.phoneNameConflicts, { phone, names: [name], existingName: res.existing_name })
       report.totals.phoneNameConflicts++
       continue
@@ -385,6 +419,7 @@ function finalizeTruncation(report: ImportReport): void {
   report.truncated =
     report.totals.validationErrors > report.validationErrors.length ||
     report.totals.phoneNameConflicts > report.phoneNameConflicts.length ||
+    report.totals.identityConflicts > report.identityConflicts.length ||
     report.totals.plateConflicts > report.plateConflicts.length ||
     report.totals.batchPlateConflicts > report.batchPlateConflicts.length ||
     report.totals.groupConflicts > report.groupConflicts.length ||

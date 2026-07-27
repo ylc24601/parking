@@ -149,7 +149,12 @@ export interface MemberAdminDetailRow {
   phone_number: string | null
   role: string
   line_id: string | null
-  vehicles: Array<{ license_plate: string; nickname: string | null }>
+  // Tier 0-2 (0038): ALL rows, active and inactive, each with its id. The id is what the
+  // maintenance actions target, and the inactive rows are not noise — they are the reason
+  // `inactive_plate_exists` exists (reactivate the row rather than stack a second one) and
+  // the record of who drove which car when. Consumers that only want the current cars
+  // filter on is_active; nothing here decides that for them.
+  vehicles: Array<{ id: string; license_plate: string; nickname: string | null; is_active: boolean }>
   eligibility: {
     p2_eligible: boolean
     p2_reason: string | null
@@ -663,7 +668,18 @@ export interface ParkingRepository {
     dryRun: boolean
   }): Promise<{
     status: 'imported' | 'updated' | 'phone_name_conflict'
-    existing_name?: string
+    // Tier 0-2 (0038) — which KIND of conflict, under the status an old client already
+    // knows. 'phone_name_mismatch' is the original one (this phone belongs to someone with
+    // another name); 'identity_candidate' is the new identity guard: the phone is unknown
+    // but the name already belongs to somebody, so creating a second users.id would split
+    // one person in two. Optional because a pre-0038 database does not send it.
+    conflict_kind?: 'phone_name_mismatch' | 'identity_candidate'
+    existing_name?: string          // phone_name_mismatch only
+    candidates?: Array<{            // identity_candidate only
+      id: string
+      phone: string | null
+      evidence: 'same_name' | 'same_name_and_plate'
+    }>
     vehicles_added?: number
     dependents_added?: number
     plate_conflicts?: string[]
@@ -895,6 +911,64 @@ export interface ParkingRepository {
     actingSessionId: string
     requestId: string
   }): Promise<{ ok: boolean; reason?: string; sessions_revoked?: number }>
+  // ── Tier 0-2 (0038): admin member maintenance ────────────────────────────────
+  // Four audited SECURITY DEFINER RPCs, same actor/requestId contract as the account
+  // ones above: each writes its own audit row inside its transaction, so a throw here
+  // means nothing was written at all — never report success on a caught error.
+  //
+  // Every refusal is a TYPED return, never an exception: a raise would roll back the very
+  // audit row recording the refusal. A 23505 must never surface — each RPC catches it,
+  // re-reads, and answers with a reason.
+  //
+  // The member is always addressed by users.id. Nothing in this group looks a member up
+  // by phone: phone_number is a mutable attribute, and treating it as identity across
+  // time is exactly what 0038 exists to stop.
+  createMember(args: {
+    displayName: string
+    phone: string
+    actingAdminId: string
+    actingSessionId: string
+    requestId: string
+    // null = "I have not been shown the homonyms yet" → the RPC answers with the candidate
+    // set instead of writing. An ARRAY (including an empty one) = "I saw exactly these and
+    // they are different people". The comparison is a SET comparison, so it fails closed if
+    // the roster changed between the prompt and the confirmation.
+    confirmedCandidateIds: string[] | null
+  }): Promise<{
+    ok: boolean
+    reason?: string
+    user_id?: string
+    candidates?: Array<{ id: string; phone: string | null; evidence: 'same_name' }>
+  }>
+  updateMemberIdentity(args: {
+    userId: string
+    displayName: string
+    phone: string
+    actingAdminId: string
+    actingSessionId: string
+    requestId: string
+    // The decision timestamp for any binding claims this change invalidates — passed in
+    // rather than defaulted in SQL so the rejection time is the app's single clock.
+    nowIso: string
+  }): Promise<{ ok: boolean; reason?: string; changed?: boolean; bindings_invalidated?: number }>
+  addMemberVehicle(args: {
+    userId: string
+    licensePlate: string
+    actingAdminId: string
+    actingSessionId: string
+    requestId: string
+    // vehicle_id accompanies 'inactive_plate_exists': this member already owns the plate in
+    // history, so the answer is to reactivate THAT row, not to create a second one.
+  }): Promise<{ ok: boolean; reason?: string; vehicle_id?: string }>
+  setMemberVehicleActive(args: {
+    vehicleId: string
+    isActive: boolean
+    actingAdminId: string
+    actingSessionId: string
+    requestId: string
+    // `unfinished` accompanies 'unfinished_reservations' — how many live reservations still
+    // reference the car. Checked under the vehicle's row lock, not in the UI.
+  }): Promise<{ ok: boolean; reason?: string; vehicle_id?: string; is_active?: boolean; unfinished?: number }>
   // The member-facing "this week": smallest sunday_date >= todayTaipei (any status),
   // NOT getActiveEvent's "latest non-finalized" (that is Staff-PIN semantics and
   // points wrong once future weeks are pre-created).
@@ -1587,16 +1661,7 @@ export function createParkingRepository(
         p_dry_run: dryRun,
       })
       if (error) throw new Error(`import_member failed: ${error.message}`)
-      return data as {
-        status: 'imported' | 'updated' | 'phone_name_conflict'
-        existing_name?: string
-        vehicles_added?: number
-        dependents_added?: number
-        plate_conflicts?: string[]
-        retained_p2?: boolean
-        retained_revoked?: boolean
-        retained_governed?: boolean
-      }
+      return data as Awaited<ReturnType<ParkingRepository['importMember']>>
     },
 
     async setP2Eligibility(args) {
@@ -2233,6 +2298,59 @@ export function createParkingRepository(
       return data as { ok: boolean; reason?: string; sessions_revoked?: number }
     },
 
+    async createMember({ displayName, phone, actingAdminId, actingSessionId, requestId, confirmedCandidateIds }) {
+      const { data, error } = await client.rpc('create_member', {
+        p_display_name: displayName,
+        p_phone: phone,
+        p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
+        p_request_id: requestId,
+        // null and [] mean DIFFERENT things to the RPC (unconfirmed vs. confirmed-empty),
+        // so this is passed through as-is — never coalesced to an empty array.
+        p_confirmed_candidate_ids: confirmedCandidateIds,
+      })
+      if (error) throw new Error(`create_member failed: ${error.message}`)
+      return data as Awaited<ReturnType<ParkingRepository['createMember']>>
+    },
+
+    async updateMemberIdentity({ userId, displayName, phone, actingAdminId, actingSessionId, requestId, nowIso }) {
+      const { data, error } = await client.rpc('update_member_identity', {
+        p_user_id: userId,
+        p_display_name: displayName,
+        p_phone: phone,
+        p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
+        p_request_id: requestId,
+        p_now: nowIso,
+      })
+      if (error) throw new Error(`update_member_identity failed: ${error.message}`)
+      return data as Awaited<ReturnType<ParkingRepository['updateMemberIdentity']>>
+    },
+
+    async addMemberVehicle({ userId, licensePlate, actingAdminId, actingSessionId, requestId }) {
+      const { data, error } = await client.rpc('add_member_vehicle', {
+        p_user_id: userId,
+        p_license_plate: licensePlate,
+        p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
+        p_request_id: requestId,
+      })
+      if (error) throw new Error(`add_member_vehicle failed: ${error.message}`)
+      return data as Awaited<ReturnType<ParkingRepository['addMemberVehicle']>>
+    },
+
+    async setMemberVehicleActive({ vehicleId, isActive, actingAdminId, actingSessionId, requestId }) {
+      const { data, error } = await client.rpc('set_member_vehicle_active', {
+        p_vehicle_id: vehicleId,
+        p_is_active: isActive,
+        p_acting_admin_id: actingAdminId,
+        p_acting_session_id: actingSessionId,
+        p_request_id: requestId,
+      })
+      if (error) throw new Error(`set_member_vehicle_active failed: ${error.message}`)
+      return data as Awaited<ReturnType<ParkingRepository['setMemberVehicleActive']>>
+    },
+
     async getMemberEvent(todayTaipei) {
       return upcomingScheduledEvent(todayTaipei)
     },
@@ -2502,11 +2620,14 @@ export function createParkingRepository(
       if (!user) return null
       const u = user as { display_name: string; phone_number: string | null; role: string; line_id: string | null }
 
+      // Active first, then oldest-first within each group: the current cars are what an admin
+      // is normally looking for, and the retired ones read as history in the order they were
+      // acquired. (Sorting by created_at alone would bury an active car under old ones.)
       const { data: vehicles, error: ve } = await client
         .from('vehicles')
-        .select('license_plate, nickname')
+        .select('id, license_plate, nickname, is_active')
         .eq('user_id', userId)
-        .eq('is_active', true)
+        .order('is_active', { ascending: false })
         .order('created_at', { ascending: true })
       if (ve) throw new Error(`getMemberAdminDetail vehicles failed: ${ve.message}`)
 
@@ -2529,9 +2650,13 @@ export function createParkingRepository(
         phone_number: u.phone_number,
         role: u.role,
         line_id: u.line_id,
-        vehicles: ((vehicles ?? []) as Array<{ license_plate: string; nickname: string | null }>).map(v => ({
+        vehicles: (
+          (vehicles ?? []) as Array<{ id: string; license_plate: string; nickname: string | null; is_active: boolean }>
+        ).map(v => ({
+          id: v.id,
           license_plate: v.license_plate,
           nickname: v.nickname,
+          is_active: v.is_active,
         })),
         eligibility: elig
           ? (elig as {

@@ -34,7 +34,15 @@ const REASON_COPY: Record<string, string> = {
   code_not_found: '綁定碼查無發碼紀錄：會友可能打錯，或尚未發碼',
   code_expired: '綁定碼已過期，請重新發碼',
   code_consumed: '綁定碼已被使用過，請重新發碼',
+  // Two names for one outcome (0038 renamed it). The pre-0038 wording asked "does this
+  // phone match a member NOW?"; the new one is truer and has a different remedy — the
+  // claim matched nobody WHEN IT WAS SUBMITTED, and re-resolving it today is exactly what
+  // must not happen (the number may since have been re-issued to someone else). Both are
+  // kept so the copy is right whichever side of the migration the DB is on.
   phone_not_found: '申請手機對不到任何會友：請確認會友資料已匯入、手機正確；必要時退回並聯繫本人',
+  unmatched_at_capture:
+    '送出當下這支手機對不到任何會友（可能尚未匯入，或會友之後換了號碼）。請確認名冊後，' +
+    '請會友重新在 LINE 送出一次綁定——系統不會拿現在的名冊重新比對這筆舊申請。',
   member_already_bound: '對到的會友已綁定其他 LINE 帳號（不支援換綁）',
   line_id_taken: '此 LINE 帳號已綁定到別的會友，請查是否重複或錯綁',
 }

@@ -71,14 +71,14 @@ npx supabase db push
 npx supabase migration list          # AFTER push — compare against the line below
 ```
 
-**Acceptance: every one of the 37 local migration files (`0001`–`0037`) appears as an
+**Acceptance: every one of the 38 local migration files (`0001`–`0038`) appears as an
 applied remote entry, in the same order, with matching version ids.** No remote-only
 entries, no local-only entries, no pending entries. If there is any discrepancy, **stop
 and investigate the cause — do not run `supabase migration repair` to force the list
 green.**
 
 ```bash
-ls supabase/migrations/*.sql | wc -l   # sanity: should print 37
+ls supabase/migrations/*.sql | wc -l   # sanity: should print 38
 ```
 
 > ⚠️ **`0035` (admin roles) must be applied BEFORE the app that goes with it.** It is not
@@ -105,7 +105,7 @@ npm run db:verify:remote
 unset SUPABASE_DB_URL
 ```
 
-Expect **`verify_schema_prod.sql: all 35 assertions passed`**. This is a **different,
+Expect **`verify_schema_prod.sql: all 36 assertions passed`**. This is a **different,
 independent check** from the local `npm run db:verify` (49) — the local one exercises
 behavior via DML inside a rolled-back transaction and depends on seed data (so it cannot
 run against a fresh cloud database); this one is catalog-only (tables/indexes/
@@ -139,7 +139,8 @@ in the migration header and in the PR description
 | ❌ | ✅ | **App → DB.** Rare here; it means the migration removes something only the old app used. |
 | ❌ | ❌ | **A single release is forbidden.** Split into expand → migrate app → contract (below). |
 
-**Worked examples from this repo — all four of them are A✅/B❌:**
+**Worked examples from this repo — every one of them is B❌, and two of the five are only
+*almost* A✅:**
 
 | migration | A (old app + new DB) | B (new app + old DB) |
 |---|---|---|
@@ -147,6 +148,7 @@ in the migration header and in the PR description
 | `0035` admin roles | ⚠️ **almost** — see the `reset_admin_password` window below. Everything else is unchanged, and every existing account is backfilled to `superadmin`, so the old app behaves exactly as before. | ❌ the app selects `admin_accounts.role`, which does not exist yet — **every** admin request fails. |
 | `0036` admin role management | ✅ adds three RPCs, changes nothing. | ❌ 新增管理者 / 變更角色 / 撤銷 session call RPCs that do not exist. |
 | `0037` member roster export | ✅ adds `log_member_roster_export` + `db_now`, removes/changes nothing. | ❌ the roster export — and **only** the roster export — fails. |
+| `0038` member maintenance | ⚠️ **almost** — signatures all preserved, the import identity guard reuses the existing `phone_name_conflict` discriminant so the old importer fails closed, and the `matched_user_id_at_capture` column is additive. **The window:** the LIFF approval refusal is renamed `phone_not_found` → `unmatched_at_capture`, and the old approve route 500s on a reason it does not list. Nothing is written — the RPC refusal is a typed return — so this is availability on one admin action, not correctness. Same shape as `0035`'s window below. | ❌ 新增會友 / 改姓名手機 / 車輛啟用停用 call four RPCs that do not exist. |
 
 **The A❌/B❌ case, and why it cannot be one release.** Rename `foo` to `bar` and ship an app
 that reads only `bar`: DB-first breaks the old app (no `foo`), app-first breaks the new app
@@ -183,8 +185,15 @@ With that off, every release runs:
    everything that is about to be deployed — the migration included.
 3. **Apply the migration** — `npx supabase db push` (§1.3).
 4. **Verify it landed** — `npm run db:verify:remote` (§1.4). **Stop-gate: if this fails, do
-   not promote.** Production is then sitting in `old app + new DB`, which is exactly the
-   state step 1 certified as safe (A) — that is what the A answer is *for*.
+   not promote.** Production is then sitting in `old app + new DB`, which is the state step 1
+   answered for — that is what the A answer is *for*.
+
+   **If A is `⚠️ almost` rather than `✅`, halting here has a known, bounded cost** — read
+   your own A cell for what it is (`0038`'s, for instance, is that one admin action 500s).
+   That cost does not license promoting an app whose migration did not verify: an
+   availability window is recoverable, a promoted-but-unverified release is not necessarily.
+   **Stay in the window and find out why the verify failed.** What `⚠️ almost` does change is
+   urgency — do not wander off, and do not leave it overnight.
 5. **Smoke the staged deployment at its own URL**, before it serves anyone. It already has
    the Production env, so admin flows exercise the real cloud DB.
    - **Open it in a browser, signed in to the Vercel account.** **Under this project's current
@@ -202,6 +211,11 @@ With that off, every release runs:
      convenience.**
    - *Exception:* LINE/LIFF flows cannot be smoked here — the webhook and LIFF endpoint are
      bound to the production domain, so those wait for step 7.
+   - **Stop-gate: if any staged smoke check fails, do not Promote. Investigate while
+     production remains on the previous deployment.** Same reasoning as step 4, and the same
+     answer if A is `⚠️ almost`: the window is the cheaper of the two costs. This step exists
+     precisely so a bad artifact is found *before* it owns the domain — promoting past a
+     failed check spends that for nothing.
 6. **Promote** — deployment ellipsis (…) → **Promote**. **Before confirming, check the domain
    list in the dialog and make sure the production domain is in it**; if it is not, stop, the
    domain does not belong where you assume. This reassigns the domain and does **not**

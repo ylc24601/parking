@@ -53,7 +53,10 @@ describe.skipIf(!RUN)('admin member management (Phase 8 Slice 2) — local DB in
 
     await mkUser(B.id, `${TAG}B`, B.phone)
     await mkVehicle(B.id, `${TAG}CAR2`)
-    await mkVehicle(B.id, `${TAG}OLD9`, false)   // inactive — must not be searchable/shown
+    // Inactive: excluded from SEARCH/roster (a retired car is not a current one), but
+    // present on the DETAIL page since 0038 — that is where it can be reactivated, and
+    // where "sold it" has to be distinguishable from "never had it".
+    await mkVehicle(B.id, `${TAG}OLD9`, false)
 
     await mkUser(C.id, `${TAG}C`, C.phone, `U${TAG}BOUND`)
   })
@@ -113,7 +116,9 @@ describe.skipIf(!RUN)('admin member management (Phase 8 Slice 2) — local DB in
     const d = (await svc.getMemberDetail(A.id, repo))!
     expect(d.phone).toBe(A.phone)
     expect(d.bound).toBe(false)
-    expect(d.vehicles).toEqual([{ plate: `${TAG}CAR1`, nickname: null }])
+    expect(d.vehicles).toEqual([
+      { id: expect.any(String), plate: `${TAG}CAR1`, nickname: null, isActive: true },
+    ])
     expect(d.eligibility).toMatchObject({ p2Eligible: true, p2Reason: 'mobility_long', p2ValidUntil: '2099-01-01', p2ReviewDate: '2098-12-01' })
     expect(d.dependents).toEqual([{ kind: 'child', name: `${TAG}童`, birthdate: '2022-03-01' }])
     expect(JSON.stringify(d)).not.toContain('line_id')
@@ -122,7 +127,11 @@ describe.skipIf(!RUN)('admin member management (Phase 8 Slice 2) — local DB in
   it('detail: eligibility null when the member has no eligibility row', async () => {
     const d = (await svc.getMemberDetail(B.id, repo))!
     expect(d.eligibility).toBeNull()
-    expect(d.vehicles).toEqual([{ plate: `${TAG}CAR2`, nickname: null }])   // inactive excluded
+    // Active first, then the retired one — each with the id the maintenance actions target.
+    expect(d.vehicles).toEqual([
+      { id: expect.any(String), plate: `${TAG}CAR2`, nickname: null, isActive: true },
+      { id: expect.any(String), plate: `${TAG}OLD9`, nickname: null, isActive: false },
+    ])
   })
 
   it('detail: unknown id → null', async () => {

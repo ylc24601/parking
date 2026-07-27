@@ -35,7 +35,8 @@ async function main() {
   }
   // Non-zero exit if anything needs operator attention, so a scripted run can catch it.
   const needsAttention =
-    report.phoneNameConflicts.length + report.plateConflicts.length +
+    report.phoneNameConflicts.length + report.identityConflicts.length +
+    report.plateConflicts.length +
     report.batchPlateConflicts.length + report.groupConflicts.length +
     report.validationErrors.length
   if (needsAttention > 0) {

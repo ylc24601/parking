@@ -11,6 +11,8 @@ import Badge, { type BadgeTone } from '../../../ui/Badge'
 import DataMinimizationNotice from '../../DataMinimizationNotice'
 import EligibilityForm from './EligibilityForm'
 import IssueBindingCode from './IssueBindingCode'
+import MemberIdentityForm from './MemberIdentityForm'
+import MemberVehicles from './MemberVehicles'
 
 export const metadata: Metadata = {
   title: '會友明細 · 管理後台',
@@ -70,18 +72,15 @@ function DetailBody({ id, detail }: { id: string; detail: MemberDetail }) {
         </div>
         <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2">
           <Row label="電話">{detail.phone ?? '—'}</Row>
-          <Row label="車輛">
-            {detail.vehicles.length === 0 ? '—' : (
-              <ul className="space-y-0.5">
-                {detail.vehicles.map((v, i) => (
-                  <li key={i} className="font-mono">
-                    {v.plate}{v.nickname ? <span className="ml-2 font-sans text-muted">{v.nickname}</span> : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Row>
         </dl>
+        {/* Tier 0-2 (0038). The member is edited BY ID — the phone is an attribute here,
+            never the key it used to be in the CSV path. */}
+        <MemberIdentityForm userId={id} displayName={detail.displayName} phone={detail.phone} />
+      </section>
+
+      <section className="rounded-xl border border-border bg-surface p-6">
+        <h3 className="text-lg font-semibold">車輛</h3>
+        <MemberVehicles userId={id} vehicles={detail.vehicles} />
       </section>
 
       <section className="rounded-xl border border-border bg-surface p-6">

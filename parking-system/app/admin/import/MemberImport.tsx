@@ -20,6 +20,12 @@ interface ImportReport {
   vehiclesAdded: number
   dependentsAdded: number
   phoneNameConflicts: Array<{ phone: string; names: string[]; existingName?: string }>
+  // Tier 0-2 (0038) — the name already belongs to somebody, under a different phone.
+  identityConflicts: Array<{
+    phone: string
+    name: string
+    candidates: Array<{ phoneMasked: string; evidence: 'same_name' | 'same_name_and_plate' }>
+  }>
   plateConflicts: Array<{ phone: string; plates: string[] }>
   batchPlateConflicts: Array<{ plate: string; phones: string[] }>
   groupConflicts: Array<{ phone: string; field: GroupConflictField; subject?: string; values: string[] }>
@@ -31,6 +37,7 @@ interface ImportReport {
   truncated: boolean
   totals: {
     phoneNameConflicts: number
+    identityConflicts: number
     plateConflicts: number
     batchPlateConflicts: number
     groupConflicts: number
@@ -164,6 +171,7 @@ export default function MemberImport() {
     !!report &&
     (report.totals.validationErrors > 0 ||
       report.totals.phoneNameConflicts > 0 ||
+      report.totals.identityConflicts > 0 ||
       report.totals.plateConflicts > 0 ||
       report.totals.batchPlateConflicts > 0 ||
       report.totals.groupConflicts > 0)
@@ -305,6 +313,22 @@ function ReportView({ report }: { report: ImportReport }) {
       >
         {report.phoneNameConflicts.map((c, i) => (
           <li key={i}>{c.phone}：{c.existingName ? `既有「${c.existingName}」vs 檔案「${c.names.join('／')}」` : c.names.join('／')}</li>
+        ))}
+      </IssueList>
+
+      {/* Tier 0-2 (0038). Deliberately worded as a QUESTION with a next step, not as an
+          error: the usual cause is a member whose phone changed, and importing anyway
+          would split them into two records that cannot be merged back. */}
+      <IssueList
+        title="姓名已存在於名冊、但手機號碼是新的（將略過）" total={report.totals.identityConflicts}
+        empty={report.identityConflicts.length === 0}
+      >
+        {report.identityConflicts.map((c, i) => (
+          <li key={i}>
+            {c.name}（檔案手機 {c.phone}）：名冊中已有
+            {c.candidates.map(k => `${k.phoneMasked}${k.evidence === 'same_name_and_plate' ? '（車牌相同）' : ''}`).join('、')}
+            。若是同一人換號碼，請到「會友管理」開啟該會友直接改手機；若確定是不同人，請到「會友管理→新增會友」建立。
+          </li>
         ))}
       </IssueList>
 

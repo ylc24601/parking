@@ -105,12 +105,25 @@ npm run binding:reject -- --pending-id <pending uuid> --reason duplicate
 | `code_not_found` | keyword | 送出的 code 沒對應已發碼 → 會友打錯，或未發碼 → 重新發碼 |
 | `code_expired` | keyword | code 過期 → 重新發碼 |
 | `code_consumed` | keyword | code 已被用過 → 重新發碼 |
-| `phone_not_found` | liff | 申請手機對不到任何會友 → 確認會友資料已匯入/手機正確；必要時 reject 並聯繫本人 |
+| `unmatched_at_capture` | liff | **送出當下**這支手機對不到任何會友 → 確認名冊後**請會友重新在 LINE 送出一次**（重送＝重新比對），必要時 reject 並聯繫本人 |
+| `phone_not_found` | liff | `unmatched_at_capture` 在 `0038` 之前的名稱，語意見下 |
 | `member_already_bound` | 皆 | **對到的會友**已綁定其他 LINE → 如需換綁另議（不支援 rebind） |
 | `line_id_taken` | 皆 | 此 LINE 帳號已綁到**別的**會友 → 查是否重複/錯綁 |
 
 > 另有 route 端 `line_account_already_bound`（會友端申請時自己的 LINE 已綁定 → UI 直接引導重新登入），
 > 與上表 approval 端的 `member_already_bound` 語意不同：前者是「申請者自己已綁」，後者是「被對到的會友已綁」。
+
+> **`phone_not_found` → `unmatched_at_capture`（`0038`，Tier 0-2）——改名是因為問題本身換了。**
+> 舊版在**核准當下**拿 `claimed_phone` 去查會友；`0038` 之後改成在**送出當下**就把比對結果凍結在
+> `pending_binding.matched_user_id_at_capture`，核准只讀那個快照、**永遠不重查號碼**。
+>
+> 要擋的是這條真實路徑：A 的號碼 P1 改成 P2（P1 因此空出來）→ A 的 LINE 用**舊號碼 P1** 重送一次申請
+> → 新會友 B 用 P1 建立 → 幹事核准那筆申請 → 舊版會「現在」把 P1 解析成 **B**，**把 A 的 LINE 綁到 B 身上**。
+> 只在改號碼時把當下的申請退掉並不夠——上面的順序會在改完之後才產生新的申請。
+>
+> 因此：**這類申請沒有「等名冊補齊再核准」這個選項**，唯一正確的處置是請會友**重送**（重送＝重新拍一次快照）。
+> 改號碼會自動把該會友尚未審核的 liff 申請退掉（`rejected_reason='phone_changed_by_admin'`），這是同一條規則的另一半。
+> 兩個名稱在 app 端**都保留**：未套用 `0038` 的資料庫仍會回舊名稱，而**未列入 review outcome 的 reason 會變成 500**。
 
 ---
 

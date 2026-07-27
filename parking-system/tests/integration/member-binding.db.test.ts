@@ -155,13 +155,19 @@ describe.skipIf(!RUN)('LIFF binding claim (Phase 7 Slice 2) — local DB integra
     expect((await sb.from('binding_codes').select('id')).data!.length).toBe(codesBefore)
   })
 
-  it('typed failures: phone_not_found / member_already_bound / line_id_taken', async () => {
-    // phone_not_found — the capture succeeded (no oracle) but approval can't match.
+  it('typed failures: unmatched_at_capture / member_already_bound / line_id_taken', async () => {
+    // unmatched_at_capture (0038, formerly phone_not_found) — the capture succeeded,
+    // because the LIFF flow deliberately has no membership oracle, and it recorded that it
+    // matched NOBODY. The name change is not cosmetic: approval no longer asks "does this
+    // phone match a member now?" but "who did this claim match when it was submitted?" —
+    // and the answer to the second question cannot be changed by a later phone
+    // reassignment. The remedy is for the member to submit again, which takes a fresh
+    // snapshot; re-resolving this row would be the cross-identity binding 0038 removes.
     const lineA = lineId('NOMATCH')
     await claim({ mockLineUserId: lineA, name: '查無', phone: phoneFor() })
     const pidA = (await pendingFor(lineA))!.id as string
     const prevA = await svc.previewApproveBinding({ pendingId: pidA, now: NOW }, repo)
-    expect(prevA).toMatchObject({ wouldApprove: false, reason: 'phone_not_found', matchedUserId: null })
+    expect(prevA).toMatchObject({ wouldApprove: false, reason: 'unmatched_at_capture', matchedUserId: null })
 
     // member_already_bound — the matched member already has a different line_id.
     const phoneB = phoneFor()
