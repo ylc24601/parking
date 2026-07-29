@@ -54,7 +54,7 @@ appear related; re-collect on the production channel.
 | **Copy approver** | One named **approver** signs off the 3 provisional templates (`move_car_request`, `reservation_released`, `reservation_cancelled`) + the move-car A/B/C/D variants. No production send until signed. |
 | **Scheduler / rollback operator** | One named **on-call operator** who can (a) disable the external scheduler — **the only immediate, verified production kill switch** — and (b) run `requeue-failed`. Runbook: `docs/dispatcher-ops.md`. |
 
-**Gate:** nothing below starts until these four owners are named.
+**Gate:** nothing below starts until these three owners are named.
 
 ---
 
@@ -79,15 +79,13 @@ This is safe on the production OA because the risky, congregation-wide failure m
   else (including unset) raises `invalid_transport_mode`. `mock` is ALSO rejected on a production
   runtime (`mock_in_production`), so this lever belongs to dry-run/preview environments only; for a
   production stand-down see §6.
-- Keep a new **`LINE_SEND_ENABLED=false`** by default. Any real outbound call (the optional single
-  test reply / test notification) is gated behind explicitly flipping `LINE_SEND_ENABLED=true` for
-  that one test, then flipping it back.
-  **⚠️ Implementation note (added 2026-07-20, retroactively): this flag was never wired into any
-  code path** — `.env.example` documents it as "nothing reads this yet." The only real gate is
-  `NOTIFICATION_TRANSPORT`. Do the single-test-send step by manually inserting one
-  `notification_outbox` row targeting the consenting operator's `user_id`, triggering
-  `dispatch-notifications` once, and checking that specific row by exact SQL — see
-  [oa-token-owner-runbook.md](oa-token-owner-runbook.md) §7.
+- ⚠️ **`LINE_SEND_ENABLED` is NOT a safety gate — it is not wired to anything.** No code reads it
+  (grep the source: zero hits outside `.env.example`). Setting it to `false` stops nothing, and
+  treating it as a lock is actively dangerous because it *looks* like one. It is kept only as a
+  historical placeholder.
+  **Where dry-run safety actually comes from**: a non-production runtime with
+  `NOTIFICATION_TRANSPORT=mock`. **Where a production stand-down comes from**: disabling the external
+  dispatcher scheduler (§6). Nothing else.
 - The existing fail-fast contract still holds: `transport=line` without a token aborts before
   claiming rows, and never marks rows `sent` without delivering.
 
@@ -127,8 +125,9 @@ Layer these:
 
 ## 5. Pilot rollout sequence
 
-1. **Mock / log** — full binding + dispatch path with `NOTIFICATION_TRANSPORT=mock` (or `log`) and
-   `LINE_SEND_ENABLED=false`. No real sends. Confirm pending records are created, approval writes
+1. **Mock (non-production runtime only)** — full binding + dispatch path with
+   `NOTIFICATION_TRANSPORT=mock`. There is no `log` mode, and `LINE_SEND_ENABLED` gates nothing —
+   the transport mode is what makes this safe. Confirm pending records are created, approval writes
    `line_id`, dispatcher stops returning `no_line_id` for bound members, alerting/requeue behave.
 2. **Production OA, capture + single test send** — real webhook intake + signature verify + pending
    capture on the church OA; send one test notification to a consenting operator by manually
@@ -147,7 +146,10 @@ no `line_id`/plate/body ever appears in logs or `last_error`.
 ## 6. Rollback (operator runbook — already supported)
 
 1. **Disable the external scheduler** first — the dispatcher is pull-driven, so no scheduler = no
-   sends.
+   *new* sends.
+   ⚠️ **This stops new scheduled invocations; it does NOT cancel a dispatch run already in flight.**
+   A request that has already started keeps going to completion — an operator must not expect
+   "zero sends from this second onward". Rows already claimed also hold their lease until it expires.
 2. **Do NOT reach for `NOTIFICATION_TRANSPORT` on production.** There is no `log` mode, and `mock` is
    refused on a production runtime by design (`mock_in_production`, `lineTransport.ts`). Setting it
    would stop delivery only by making every scheduled invocation throw — a crash-loop dressed up as a

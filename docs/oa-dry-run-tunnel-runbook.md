@@ -45,8 +45,8 @@ SUPABASE_SERVICE_ROLE_KEY=<local service_role key>
 
 # 本次 dry-run 新增／確認
 LINE_CHANNEL_SECRET=<貼上教會 OA 的 channel secret>
-NOTIFICATION_TRANSPORT=mock
-LINE_SEND_ENABLED=false
+NOTIFICATION_TRANSPORT=mock          # ← 真正讓 dry-run 安全的就是這一行
+LINE_SEND_ENABLED=false              # ⚠️ 無作用（沒有程式碼讀它），勿當成鎖
 # LINE_CHANNEL_ACCESS_TOKEN=   ← 本次 dry-run 必須「保持未設定 / 留空」，切勿填入
 ```
 
@@ -125,7 +125,7 @@ psql "postgresql://postgres:postgres@127.0.0.1:54322/postgres" -c \
 ---
 
 ## 全程維持關閉（再確認一次）
-- ❌ 真實送出：`NOTIFICATION_TRANSPORT=mock`、`LINE_SEND_ENABLED=false`、access token 不設。
+- ❌ 真實送出：靠 **`NOTIFICATION_TRANSPORT=mock` ＋ access token 不設**。（`LINE_SEND_ENABLED` **不被任何程式碼讀取**，擋不住任何東西。）
 - ❌ OA auto-reply / greeting。
 - ❌ 任何 `users.line_id` 寫入（Phase 5B 未部署）。
 
