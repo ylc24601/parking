@@ -282,7 +282,11 @@ Wave 4，排在 destination model 之後、#6A 之前。
 
 > **Historical specification — superseded by implementation**（實作為準，見 [0032](../parking-system/supabase/migrations/0032_p2_review_status.sql) 標頭）
 
-**實作與本規格四處刻意分歧**：① `p2_eligible` 衍生自 **`review_status='approved'` 而已、不含任何日期**——含日期會把「寫入者的 as-of」烘進去，兩個 reader 各自繼承（見 §6 2B-2a 的 silent-P3）。② **不新增 `effective_until`**：`p2_valid_until` 已經是截止日、正是 `priority.ts` 讀的權威，再加一個就是本列要消滅的雙重真相；只加 `p2_valid_from`。③ enum **三態** `unreviewed/approved/revoked`——`revoked` 必須代表「人撤銷過」，舊 false 回填成 revoked 是憑空捏造。④ **不加 `updated_at`**：樂觀鎖是 `review_version`（counter 非 timestamp，`0022:118-120`），顯示權威是 `reviewed_at`，該欄無消費者。
+**實作與本規格四處刻意分歧**：
+- ① `p2_eligible` 衍生自 **`review_status='approved'` 而已、不含任何日期**——含日期會把「寫入者的 as-of」烘進去，兩個 reader 各自繼承（見 §6 2B-2a 的 silent-P3）。
+- ② **不新增 `effective_until`**：`p2_valid_until` 已經是截止日、正是 `priority.ts` 讀的權威，再加一個就是本列要消滅的雙重真相；只加 `p2_valid_from`。
+- ③ enum **三態** `unreviewed/approved/revoked`——`revoked` 必須代表「人撤銷過」，舊 false 回填成 revoked 是憑空捏造。
+- ④ **不加 `updated_at`**：樂觀鎖是 `review_version`（counter 非 timestamp，`0022:118-120`），顯示權威是 `reviewed_at`，該欄無消費者。
 
 **2B-2a 已含**（PR #41 / `155c7f7`，migration `0032`）：`reviewed_by` FK 由 `users`→`admin_accounts`（原本根本存不進自己的覆核者）、`review_note`、`review_version`、幼兒到期改學年度制、匯入不得復活已撤銷者、**audit sanitizer 擋生日值**。
 
@@ -449,9 +453,6 @@ Wave 5；地基已由 Tier 0-2（`0038`）交付。
 #### History
 與 #31（一人多事由）相關但獨立：#31 是能不能存多個事由，本項是把已存的那一個看清楚。Wave 3 3e，與 #32 同批。
 
-##### #33b 覆核佇列（Reject / Closed — Commit 3 移入 Archive）
-**33b 覆核佇列 ❌ 不做（2026-07-28 使用者決定「33a 即可」）**：`/admin/eligibility` **維持刻意不帶眷屬任何資料**（[eligibilityReviewService.ts:10](../parking-system/server/services/eligibilityReviewService.ts#L10) 明寫 "No PII beyond name … (no phone/dependents)"）。曾評估「只帶衍生 enum（`preschool`/`school_age`/`unknown`）、不帶生日/年齡/姓名」，但那仍是該頁隱私姿態的一次放寬，而覆核者點進明細頁即可看到（33a 已足）⇒ **不為此破線**。日後若真有「在列表就要分流」的需求再重啟，且屆時仍以「只帶衍生 enum」為底線。
-
 ---
 
 ### #34 Member Data Lifecycle 會友資料生命週期（Epic）
@@ -610,69 +611,169 @@ getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
 
 ---
 
-> ⚠️ **Migration staging：以下為尚未搬移的 legacy content，非 canonical state。**
-> Commit 2 會把未完成項搬進 `Active feature details`、Commit 3 會把已完成項搬進 `Archive`，屆時本標記移除。
-> 在此之前，若下方內容與上方 `Feature inventory` 不一致，**以上方為準**。
+## 交付分級
 
-> 文件版本沿革（待移入 Archive）
-> rev.1（2026-07-16）：30 條判定＋動工順序。
-> rev.2：一輪審查，修規格＋改 delivery-first 排序。
-> rev.3：二輪審查，修實作語意（PIN 旋轉、commit-then-dispatch、雙真相、actor 模型、拒絕科學記號…）＋拆 Wave 2A/2B/2C。
-> 原「目的」：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A（全）✅、2B（全）✅、2C #19 ✅（PR #45/#46）、3a #8/#9 ✅（PR #47）、3b #17 ✅（PR #48）、3c #18 ✅、3d #5B-a ✅**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
-> 對應：[current_handoff.md](current_handoff.md)（每刀 merge 後同步，最新到 Wave 3 3d §6.47；其後 §6.48／§6.48.1 為上 prod 與 staged deployment 制度）、[prod-deploy-runbook.md](prod-deploy-runbook.md)。
+> **compatibility view。** 依 `Delivery` token 分組投影 `Feature inventory`；狀態權威仍在 inventory，本節不建立新語意。
+> 舊版「交付前必修／強烈建議交付前／可交付後迭代」的敘述已完成其任務，移入 Archive 保存。
 
----
-
-## 判定圖例
-
-| 判定 | 意義 |
-|------|------|
-| ✅ 加入 backlog | 可行、值得做 |
-| 🕒 defer | 可做但現在不划算，或有前置依賴 |
-| ❌ 不做 | 與隱私邊界／架構衝突，或成本不成比例 |
-
-規模：S（<半天）／M（1–2 天）／L（需切多刀）。
+- **`Pre-delivery`（交付前）**：#32、#33a
+- **`Pre-pilot`（pilot 前）**：34-0、34-0b-A、34a
+- **`Pilot-early`（pilot 初期）**：34b、#11
+- **`Post-delivery`（交付後）**：#3、#4、#5B（5B-b／5B-c）、#6A、#6B、#7、#10（2B-2c）、#16、#26、#28、#31、34-0b-B、34c
+- **No delivery target（`Blocked`，等產品決策）**：#13、#14B
+- **`Done`**：#1、#5A、#8、#9、#12、#14A、#15、#17、#18、#19、#20、#21、#22、#23、#24、#25、#27、#29、#30
+- **`Closed`**：#2、#33b
 
 ---
 
-## 想法一覽
+## Archive — historical, non-normative
 
-| # | 想法 | surface | 規模 | 判定（Wave） | 備註（含兩輪審查修正） |
-|---|------|---------|------|------|------|
-| 1 | 換人「換碼」＋手動轉發文案 | admin/staff-pin | S | ✅（-1） | 重發＝新碼、舊 hash 立即失效。文案：「換人值班？重發即可，舊 PIN 立即失效。請將新 PIN 手動傳給本週值班同工。」 |
-| 2 | 顯示回同一組 PIN | admin/staff-pin | — | ❌ | scrypt 單向、明碼不落地；換人本就該撤舊碼。 |
-| 5A | 名冊瀏覽（最小欄位、server 分頁） | admin/members | M | ✅（1） | server pagination；欄位僅姓名/遮罩電話/車牌摘要/狀態；**不匯出、不 bulk、不預載敏感事由**，點入才讀完整。可在 role 前上（現有 admin session gate）；明確接受「全名冊可見」姿態先於 role。 |
-| 8 | 本週概覽（上指標下待辦） | admin/page | M | ✅ **完成（Wave 3 3a，PR #47）** | 鎖管理日曆當週主日（非 `getActiveEvent`）；標本週階段。容量顯示用**「可分配總數/保留·停用/已核准」，不用「外賓」字樣**（對齊 #14A 單一 blocked）。**實作**：`getWeekOverview`（`adminOverviewService`）＋`deriveWeekStage`（`lib/weekStage`，五階段）；`/admin` 首頁 `AdminOverview`。 |
-| 9 | Sidebar 待辦徽章 | admin sidebar | S–M | ✅ **完成（Wave 3 3a，PR #47）** | 與 #8 共用 **service contract**（不硬 RPC）：`adminTodoService.getAdminTodoSnapshot`（fail-soft、`React.cache` request clock）＋`badgeForHref`。**snapshot 模型**：layout 一次取 → `AdminTodoProvider` 單一源餵側欄＋概覽（共用 layout 在 soft-nav 不重跑，故不可各自取數）。badge：P2 待審／牧養 open（v1 不分逾期）／ops `attention`（含 due_backlog_stale，只系統管理員）；ops backlog 正常排空不亮。 |
-| 12 | 資料最小化橫幅 | eligibility, members/[id] | S | ✅（1） | 明示「不索取/不顯示診斷證明」。 |
-| 14A | 車位容量設定（交付前） | admin＋weekly_events | M | ✅ **已完成（2B-1，PR #40 / `8de24a0`）** | 解決「幹事不用 SQL 改容量」。`total_capacity`／`blocked_spaces`（顯示「保留·停用」、**不拆外賓/維修**）／effective 預覽。**transactional guard**：已分配後 `effective_capacity >= approved_count` 由 **DB RPC 在 txn 內**檢查（不能只 UI 警告）。寫 audit。**依賴 #15，不依賴 #19**。<br>**實作差異**：promised 集合＝`('approved','temp_approved')` 而非只 approved（`temp_approved` 已佔位，見 §6 2B-1）；`admin_reserved` 已**摺入 `blocked_spaces`** 並 `check (admin_reserved = 0)` 釘住 ⇒「保留·停用」單一數字**可證明**是全部。 |
-| 15 | 稽核記錄（Audit Log） — 地基 | 橫切＋唯讀頁 | L | ✅ **全部完成**：**2A-1 ✅**（PR #38 / `8513912`）＋**2A-2 viewer ✅**（PR #39 / `d2e6890`）＋**2A-3 retention ✅**（PR #43 / `5db33bc`，migration `0034`） | **實作與下列原始規格有四處刻意分歧，以實作為準（見 [0030](../parking-system/supabase/migrations/0030_audit_substrate.sql) 標頭）**：①「app role 只 INSERT/SELECT」**做不到也不夠**——app 跑 service_role、RLS 對它無效，且 0004 已 blanket grant DML；改為 **revoke DML（含 TRUNCATE）＋ trigger 雙層**，且明確**不宣稱 immutability**（owner 仍有 DDL）、**不防 omission**（只提高偽造成本）。②「單一 RPC」升級為 **`private.append_audit_log`，EXECUTE 不授權給任何人**（含 service_role），只有 owner-controlled `SECURITY DEFINER` 業務 RPC 能在**業務 txn 內**呼叫＝audit 與業務同生共死。③ 治理拒絕**必須 typed return 不可 raise**（raise 會把記錄拒絕的那列一起 rollback）。④ metadata **flat depth-1**＋PII key denylist，由 RPC 內部組裝。原始規格其餘照做：actor 模型（actor_type enum＋actor_id＋actor_session_id＋actor_role_snapshot，**無 FK**）、存 ID 不存姓名、request_id（改 **NOT NULL**）、result（`success/denied/conflict`）。exemplar＝`set_admin_disabled`；其餘記錄項（容量/P2/PIN/群組/車牌 CRUD）隨各自 slice 接入。<br>原始規格存參：表已存在（[0003_infra.sql:49](../parking-system/supabase/migrations/0003_infra.sql#L49)）**無 insert path**→補 insert substrate。**actor 模型：`actor_type` enum（admin/staff_session/member/job/system）＋`actor_id` nullable＋`actor_role_snapshot` nullable**（不要四個 nullable FK；`actor_id` 為 snapshot ref、不做通用 FK）。**存 ID 不存姓名**，顯示時 join；刪除者顯示「已刪除會友（ID 尾碼 xxxx）」→ 故 **admin 帳號 soft-disable 不 hard-delete**（現況已 disabled_at）。其餘欄：action/entity_type/entity_id/event_id/request_id/result/metadata_redacted(allowlist)/created_at。**DB append-only**：app role 只 INSERT/SELECT、單一 RPC、**永不寫 PII/token/LINE ID**、retention 用受限 maintenance function。記錄：role change/帳號停用/容量修改/P2 覆核/PIN rotation/群組設定/會員車牌 CRUD。<br>**2A-3 retention（[0034](../parking-system/supabase/migrations/0034_audit_retention_purge.sql)）**：`purge_audit_logs` 每月清 24 個月前的列。**逃生口＝雙鎖**（交易域 GUC `audit.allow_purge` 只有 purge fn 開＋`current_user`＝table owner；SECURITY DEFINER 以 owner 身分執行、直接 service_role delete 不是 owner）⇒ 即使未來重演 blanket grant 也刪不掉；`UPDATE`/`TRUNCATE` 恆擋。**時鐘用 DB 的 `now()`、不收 `p_now`**（呼叫端傳未來時間即可洗掉全表——與 binding-PII 前例的有意分歧，因早刪 audit 不可逆）。`audit.substrate_enabled`／`audit.retention_purge` retention-exempt；只在真的刪了才寫 marker（否則永久灌爆）。verifier 釘 **fn owner ＝ table owner**（否則鎖2 連合法 purge 都擋）。UI 文案翻面「紀錄保留 24 個月，逾期後由定期維運作業清除」，**部署硬前置**＝prod cron 先設好（runbook §13）。 |
-| 17 | 營運狀態頁 B＋C | admin/ops＋sidebar | M | ✅ **完成（Wave 3 3b）** | 頁改名「通知系統狀態」。**B**：白話健康摘要當主角、技術細節與死信重送摺疊 `<details>`（異常時預設展開）、時間 UTC→台北（重用 `fmtTaipeiDateTime`、標時區）、sidebar 移最下。**C 以實作為準**：幹事**不放行進 `/admin/ops`**，改在「本週概覽」看白話健康——`notificationHealth`（healthy/attention/unavailable）與技術 `ops` **拆兩欄**（`ops` 非 null ⇒ 具 view_ops——幹事恆 null、superadmin 在 health 無法取得時亦 null；授權以 role/capability 為準；幹事只收 enum 不落地計數），異常→「通知系統異常，請聯絡系統管理員」linkless 列；**health 查詢失敗隔離**（不連帶清空 P2/牧養、不 fail-open 當正常）；🎉 重定義為「此角色需處理的事項」。無 migration。 |
-| 18 | 側欄 IA 兩區 | admin sidebar | S–M | ✅ **完成（Wave 3 3c）** | 日常/系統維運，分區線＝#19 角色邊界。**只加分界線、無可見區標**（使用者定）；`daily`/`system` 是 IA 非 auth boundary。新 `lib/adminNav.ts`（`buildAdminNav`：capability 過濾先於 zone；`zone` 顯式非從 capability 推斷）；幹事 system 區空⇒不渲染 divider（與今日一致）。a11y：兩區 `role=group`＋`aria-label`（視覺仍無區標）。無 migration。 |
-| 19 | Admin 角色分級（兩級）＋新增管理者 | admin/accounts＋橫切 | M–L（地基） | ✅（**2C**） | 系統管理員/幹事；`role` enum（預留唯讀）。**session：敏感操作每 request 從 DB 讀 active+role**（既有 session 已重查 `disabled_at` [adminAuth.ts:36](../parking-system/server/http/adminAuth.ts#L36)，role 沿同路、不塞 cookie）；role 變更/停用 bump `session_version` 或刪 sessions；sidebar 隱藏只 UX。guardrails：不停用/降級最後一位系統管理員、不自我升權、禁自我降/停、CLI bootstrap=系統管理員、UI 預設幹事、重設密碼撤 sessions。role matrix 明確定義。 |
-| 20 | 匯入中文 header＋reason 對照 | lib/memberImport | S | ✅（0） | ✅ reason 值已驗證＝現有 canonical（[DB enum p2_reason 0001:7](../parking-system/supabase/migrations/0001_enums_core.sql#L7)、TS `P2Reason`）：`mobility_long/mobility_short/pregnancy/elderly_companion/child_companion`（1–4 只是 CSV 輸入碼）。做法：**中文→canonical 集中在單一 `REASON_ALIASES` constant**，實作前對照 `memberImport.ts`/DB enum，別讓 parser/UI/DB 各一套。**未知→preview 錯誤要人工選、不 silently map、不解析模糊備註判敏感資格**。 |
-| 21 | 簡易全體會友匯入 | admin/import＋service | M | ✅（0） | **重用既有 `memberImportService` 的 dry-run preview／`phoneNameConflicts`/`plateConflicts`/`reviewRequired`／apply**（非重建）。測試兩模式共存（P2 完整 vs 一般名冊）。 |
-| 22 | 匯入手機容錯 | lib/memberImport `normalizePhone` | S | ✅（0） | 去非數字後：10 碼合 `^09\d{8}$` 接受／**9 碼合 `^9\d{8}$` 前置補一個 `0`（非字串「09」）再驗**／**科學記號（如 `9.12346E+8`）拒絕並提示「將 Excel 欄設文字後重匯」，不嘗試還原**（Excel 已捨入不可靠）／`+886`·`886` 是否支援另定。測試涵蓋全部。 |
-| 23 | 點名備援清單搬 admin | /staff/print→admin | S–M | ✅（1） | 新增 `/admin/print`（gate `getAdminSession`，event 用管理日曆當週主日）；**`/staff/print` 移除或回 staff 首頁、不 redirect 到 /admin**（跨 auth domain 混亂）；**更新測試確認 staff PIN 不再能取列印資料**。資料源/`lib/staffRow`/`PrintButton` 全重用，保留 Staff-safe 最小內容。 |
-| 24 | staff footer 精簡 | /staff StaffCheckIn | S | ✅（1，於 #23 後） | footer 只留「＋登記現場車輛」；結束鍵移 header 選單、保留二次確認。 |
-| 25 | 通知死指令修正 | templates.ts | S | ✅ **必修（-1）** | 「回覆正在路上/請回覆確認」被 webhook ignored。全 template copy audit（≥2 則同類）。短期改寫指向 LIFF；正解=#26。 |
-| 27 | 通知內容 enrich | 通知模板＋payload | S–M | ✅（1） | 日期＋車牌＋粗體期限＋換行；producer 補 plate/date 到 payload。 |
-| 29 | member 顯示候補序號 | app/member | S | ✅（1） | 「目前候補第 N 位」＋「順序可能因取消、資格與分配狀態而變動」（動態非固定號碼）。 |
-| 30 | 取消加「不計違規」reassurance | app/member CancelButton | S | ✅（1） | 「10:30 前取消不計違規」，讓會友安心取消。可順帶補申請表「週五18:00截止」。 |
+> ⚠️ **本節只保存歷史決策與已失效規格。**
+> **不得用於判斷目前 feature status、scope 或 implementation requirement。**
+> Current truth 以 `Feature inventory`、`#34 Work items`、`Active feature details` 與實際 code / migration 為準。
+
+### Done — 已實作完成
+
+#### #1 換人「換碼」＋手動轉發文案
+**Status:** Done ｜ **Wave:** -1 ｜ **Deployment:** App-only
+
+重發＝新碼、舊 hash 立即失效。文案：「換人值班？重發即可，舊 PIN 立即失效。請將新 PIN 手動傳給本週值班同工。」
+
+#### #5A 名冊瀏覽（最小欄位、server 分頁）
+**Status:** Done ｜ **Wave:** 1 ｜ **Deployment:** App-only
+
+server pagination；欄位僅姓名/遮罩電話/車牌摘要/狀態；**不匯出、不 bulk、不預載敏感事由**，點入才讀完整。可在 role 前上（現有 admin session gate）；明確接受「全名冊可見」姿態先於 role。
+
+#### #8 本週概覽（上指標下待辦）
+**Status:** Done ｜ **Wave:** 3 3a ｜ **PR:** #47 ｜ **Deployment:** App-only
+
+鎖管理日曆當週主日（非 `getActiveEvent`）；標本週階段。容量顯示用**「可分配總數/保留·停用/已核准」，不用「外賓」字樣**（對齊 #14A 單一 blocked）。**實作**：`getWeekOverview`（`adminOverviewService`）＋`deriveWeekStage`（`lib/weekStage`，五階段）；`/admin` 首頁 `AdminOverview`。
+
+#### #9 Sidebar 待辦徽章
+**Status:** Done ｜ **Wave:** 3 3a ｜ **PR:** #47 ｜ **Deployment:** App-only
+
+與 #8 共用 **service contract**（不硬 RPC）：`adminTodoService.getAdminTodoSnapshot`（fail-soft、`React.cache` request clock）＋`badgeForHref`。**snapshot 模型**：layout 一次取 → `AdminTodoProvider` 單一源餵側欄＋概覽（共用 layout 在 soft-nav 不重跑，故不可各自取數）。badge：P2 待審／牧養 open（v1 不分逾期）／ops `attention`（含 due_backlog_stale，只系統管理員）；ops backlog 正常排空不亮。
+
+> 原「關鍵設計決策」的 **待辦計數 service contract（不硬 RPC）→ #8/#9** 一條，因 #8/#9 已完成、不再約束未來實作，於本次 normalization 未升格為 INV，保存於此。
+
+#### #12 資料最小化橫幅
+**Status:** Done ｜ **Wave:** 1 ｜ **Deployment:** App-only
+
+明示「不索取/不顯示診斷證明」。
+
+#### #14A 車位容量設定（交付前）
+**Status:** Done ｜ **Wave:** 2B-1 ｜ **PR:** #40 / `8de24a0` ｜ **Migration:** `0031` ｜ **Deployment:** Migration + App
+
+解決「幹事不用 SQL 改容量」。`total_capacity`／`blocked_spaces`（顯示「保留·停用」、**不拆外賓/維修**）／effective 預覽。**transactional guard**：已分配後 `effective_capacity >= approved_count` 由 **DB RPC 在 txn 內**檢查（不能只 UI 警告）。寫 audit。**依賴 #15，不依賴 #19**。
+
+> **Historical specification — superseded by implementation**
+>
+> **實作差異**：promised 集合＝`('approved','temp_approved')` 而非只 approved（`temp_approved` 已佔位，見 §6 2B-1）；`admin_reserved` 已**摺入 `blocked_spaces`** 並 `check (admin_reserved = 0)` 釘住 ⇒「保留·停用」單一數字**可證明**是全部。
+
+#### #15 稽核記錄（Audit Log）— 地基
+**Status:** Done ｜ **Wave:** 2A ｜ **PR:** 2A-1 #38 / `8513912`；2A-2 viewer #39 / `d2e6890`；2A-3 retention #43 / `5db33bc` ｜ **Migration:** `0030`、`0034` ｜ **Deployment:** Migration + App
+
+> **Historical specification — superseded by implementation**（實作為準，見 [0030](../parking-system/supabase/migrations/0030_audit_substrate.sql) 標頭）
+
+**實作與下列原始規格有四處刻意分歧**：
+- ①「app role 只 INSERT/SELECT」**做不到也不夠**——app 跑 service_role、RLS 對它無效，且 0004 已 blanket grant DML；改為 **revoke DML（含 TRUNCATE）＋ trigger 雙層**，且明確**不宣稱 immutability**（owner 仍有 DDL）、**不防 omission**（只提高偽造成本）。
+- ②「單一 RPC」升級為 **`private.append_audit_log`，EXECUTE 不授權給任何人**（含 service_role），只有 owner-controlled `SECURITY DEFINER` 業務 RPC 能在**業務 txn 內**呼叫＝audit 與業務同生共死。
+- ③ 治理拒絕**必須 typed return 不可 raise**（raise 會把記錄拒絕的那列一起 rollback）。
+- ④ metadata **flat depth-1**＋PII key denylist，由 RPC 內部組裝。原始規格其餘照做：actor 模型（actor_type enum＋actor_id＋actor_session_id＋actor_role_snapshot，**無 FK**）、存 ID 不存姓名、request_id（改 **NOT NULL**）、result（`success/denied/conflict`）。exemplar＝`set_admin_disabled`；其餘記錄項（容量/P2/PIN/群組/車牌 CRUD）隨各自 slice 接入。
+
+**原始規格存參**：表已存在（[0003_infra.sql:49](../parking-system/supabase/migrations/0003_infra.sql#L49)）**無 insert path**→補 insert substrate。**actor 模型：`actor_type` enum（admin/staff_session/member/job/system）＋`actor_id` nullable＋`actor_role_snapshot` nullable**（不要四個 nullable FK；`actor_id` 為 snapshot ref、不做通用 FK）。**存 ID 不存姓名**，顯示時 join；刪除者顯示「已刪除會友（ID 尾碼 xxxx）」→ 故 **admin 帳號 soft-disable 不 hard-delete**（現況已 disabled_at）。其餘欄：action/entity_type/entity_id/event_id/request_id/result/metadata_redacted(allowlist)/created_at。**DB append-only**：app role 只 INSERT/SELECT、單一 RPC、**永不寫 PII/token/LINE ID**、retention 用受限 maintenance function。記錄：role change/帳號停用/容量修改/P2 覆核/PIN rotation/群組設定/會員車牌 CRUD。
+
+**2A-3 retention（[0034](../parking-system/supabase/migrations/0034_audit_retention_purge.sql)）**：`purge_audit_logs` 每月清 24 個月前的列。**逃生口＝雙鎖**（交易域 GUC `audit.allow_purge` 只有 purge fn 開＋`current_user`＝table owner；SECURITY DEFINER 以 owner 身分執行、直接 service_role delete 不是 owner）⇒ 即使未來重演 blanket grant 也刪不掉；`UPDATE`/`TRUNCATE` 恆擋。**時鐘用 DB 的 `now()`、不收 `p_now`**（呼叫端傳未來時間即可洗掉全表——與 binding-PII 前例的有意分歧，因早刪 audit 不可逆）。`audit.substrate_enabled`／`audit.retention_purge` retention-exempt；只在真的刪了才寫 marker（否則永久灌爆）。verifier 釘 **fn owner ＝ table owner**（否則鎖2 連合法 purge 都擋）。UI 文案翻面「紀錄保留 24 個月，逾期後由定期維運作業清除」，**部署硬前置**＝prod cron 先設好（runbook §13）。
+
+##### Audit retention 政策（✅ 已實作於 2A-3 / `0034`）
+**線上保留 24 個月、每月清理一次；不宣稱永久保存。** 理由：涵蓋兩個完整年度週期足以處理資格/容量/帳號/操作爭議；本系統非金融、醫療或法定會計帳冊，無支持永久保存的內控需求；audit 雖已最小化仍含 actor/entity stable ID，無限保存違反資料最小化；「量不大所以永不刪」不是治理政策。
+規則：cutoff `created_at < now() - interval '24 months'`／受限 `SECURITY DEFINER` maintenance function／bounded batches／purge 只記 cutoff＋deleted_count，**不記被刪 ID 或其 metadata**。
+**`audit.substrate_enabled` 與 `audit.retention_purge` 為 retention-exempt**——保留「trail 從何時開始、歷史依哪個政策被清」。
+✅ 實作（`0034`）：0030 的 append-only trigger 擋掉**所有** DELETE，purge 的逃生口＝**雙鎖**——交易域 GUC `audit.allow_purge`（只有 `purge_audit_logs` 用 `set_config(...,true)` 開）＋ `current_user` ＝ table owner（SECURITY DEFINER 以 owner 執行、直接 service_role delete 不是 owner）。**時鐘用 DB `now()`、RPC 不收 `p_now`**（呼叫端傳未來時間即可洗全表；審查必改 1，與 binding-PII 前例的有意分歧）。verifier 釘 fn owner ＝ table owner（否則鎖2 連合法 purge 都擋）。UI 文案翻面的**部署硬前置**＝prod cron 先設好（runbook §13）。
+
+#### #17 營運狀態頁 B＋C
+**Status:** Done ｜ **Wave:** 3 3b ｜ **PR:** #48 ｜ **Deployment:** App-only（無 migration）
+
+> **Historical specification — superseded by implementation**（C 部分以實作為準）
+
+頁改名「通知系統狀態」。**B**：白話健康摘要當主角、技術細節與死信重送摺疊 `<details>`（異常時預設展開）、時間 UTC→台北（重用 `fmtTaipeiDateTime`、標時區）、sidebar 移最下。**C 以實作為準**：幹事**不放行進 `/admin/ops`**，改在「本週概覽」看白話健康——`notificationHealth`（healthy/attention/unavailable）與技術 `ops` **拆兩欄**（`ops` 非 null ⇒ 具 view_ops——幹事恆 null、superadmin 在 health 無法取得時亦 null；授權以 role/capability 為準；幹事只收 enum 不落地計數），異常→「通知系統異常，請聯絡系統管理員」linkless 列；**health 查詢失敗隔離**（不連帶清空 P2/牧養、不 fail-open 當正常）；🎉 重定義為「此角色需處理的事項」。無 migration。
+
+#### #18 側欄 IA 兩區
+**Status:** Done ｜ **Wave:** 3 3c ｜ **PR:** #49 ｜ **Deployment:** App-only（無 migration）
+
+日常/系統維運，分區線＝#19 角色邊界。**只加分界線、無可見區標**（使用者定）；`daily`/`system` 是 IA 非 auth boundary。新 `lib/adminNav.ts`（`buildAdminNav`：capability 過濾先於 zone；`zone` 顯式非從 capability 推斷）；幹事 system 區空⇒不渲染 divider（與今日一致）。a11y：兩區 `role=group`＋`aria-label`（視覺仍無區標）。無 migration。
+
+#### #19 Admin 角色分級（兩級）＋新增管理者
+**Status:** Done ｜ **Wave:** 2C ｜ **PR:** 2C-1 #45 `76e93f8`；2C-2 #46 `ca9de80` ｜ **Migration:** `0035`、`0036` ｜ **Deployment:** Migration + App
+
+系統管理員/幹事；`role` enum（預留唯讀）。**session：敏感操作每 request 從 DB 讀 active+role**（既有 session 已重查 `disabled_at` [adminAuth.ts:36](../parking-system/server/http/adminAuth.ts#L36)，role 沿同路、不塞 cookie）；role 變更/停用 bump `session_version` 或刪 sessions；sidebar 隱藏只 UX。guardrails：不停用/降級最後一位系統管理員、不自我升權、禁自我降/停、CLI bootstrap=系統管理員、UI 預設幹事、重設密碼撤 sessions。role matrix 明確定義。
+
+#### #20 匯入中文 header＋reason 對照
+**Status:** Done ｜ **Wave:** 0 ｜ **Deployment:** App-only
+
+✅ reason 值已驗證＝現有 canonical（[DB enum p2_reason 0001:7](../parking-system/supabase/migrations/0001_enums_core.sql#L7)、TS `P2Reason`）：`mobility_long/mobility_short/pregnancy/elderly_companion/child_companion`（1–4 只是 CSV 輸入碼）。做法：**中文→canonical 集中在單一 `REASON_ALIASES` constant**，實作前對照 `memberImport.ts`/DB enum，別讓 parser/UI/DB 各一套。**未知→preview 錯誤要人工選、不 silently map、不解析模糊備註判敏感資格**。
+
+#### #21 簡易全體會友匯入
+**Status:** Done ｜ **Wave:** 0 ｜ **Deployment:** App-only
+
+**重用既有 `memberImportService` 的 dry-run preview／`phoneNameConflicts`/`plateConflicts`/`reviewRequired`／apply**（非重建）。測試兩模式共存（P2 完整 vs 一般名冊）。
+
+#### #22 匯入手機容錯
+**Status:** Done ｜ **Wave:** 0 ｜ **Deployment:** App-only
+
+去非數字後：10 碼合 `^09\d{8}$` 接受／**9 碼合 `^9\d{8}$` 前置補一個 `0`（非字串「09」）再驗**／**科學記號（如 `9.12346E+8`）拒絕並提示「將 Excel 欄設文字後重匯」，不嘗試還原**（Excel 已捨入不可靠）／`+886`·`886` 是否支援另定。測試涵蓋全部。
+
+#### #23 點名備援清單搬 admin
+**Status:** Done ｜ **Wave:** 1 ｜ **Deployment:** App-only
+
+新增 `/admin/print`（gate `getAdminSession`，event 用管理日曆當週主日）；**`/staff/print` 移除或回 staff 首頁、不 redirect 到 /admin**（跨 auth domain 混亂）；**更新測試確認 staff PIN 不再能取列印資料**。資料源/`lib/staffRow`/`PrintButton` 全重用，保留 Staff-safe 最小內容。
+
+#### #24 staff footer 精簡
+**Status:** Done ｜ **Wave:** 1（於 #23 後）｜ **Deployment:** App-only
+
+footer 只留「＋登記現場車輛」；結束鍵移 header 選單、保留二次確認。
+
+#### #25 通知死指令修正
+**Status:** Done ｜ **Wave:** -1（必修）｜ **Deployment:** App-only
+
+「回覆正在路上/請回覆確認」被 webhook ignored。全 template copy audit（≥2 則同類）。短期改寫指向 LIFF；正解=#26。
+
+#### #27 通知內容 enrich
+**Status:** Done ｜ **Wave:** 1 ｜ **Deployment:** App-only
+
+日期＋車牌＋粗體期限＋換行；producer 補 plate/date 到 payload。
+
+#### #29 member 顯示候補序號
+**Status:** Done ｜ **Wave:** 1 ｜ **Deployment:** App-only
+
+「目前候補第 N 位」＋「順序可能因取消、資格與分配狀態而變動」（動態非固定號碼）。
+
+#### #30 取消加「不計違規」reassurance
+**Status:** Done ｜ **Wave:** 1 ｜ **Deployment:** App-only
+
+「10:30 前取消不計違規」，讓會友安心取消。可順帶補申請表「週五18:00截止」。
 
 ---
 
-## 審查後的關鍵設計決策（跨切地基）
+### Closed — 決定不做
 
-> 仍約束未來實作的五條已升格為上方 `Cross-feature invariants`（INV-01／INV-04／INV-05／INV-06 與「會友提案→幹事覆核」骨架）。
-> 以下兩條只解釋**已完成**的施工順序，不再約束未來 ⇒ Commit 3 移入 Archive。
+#### #2 顯示回同一組 PIN
+**Decision:** Reject ｜ **Status:** Closed
 
-- **待辦計數 service contract**（不硬 RPC）→ #8/#9。
-- **依賴關係（rev.3 釐清）**：`#10 需 #15、不需 #19`；`#14A 需 #15、不需 #19`；`#5B/#17/#18 需 #19`。→ Audit 與角色兩地基**可分離**，讓 #10/#14A 先於角色交付。
+scrypt 單向、明碼不落地；換人本就該撤舊碼。
+
+#### #33b 覆核佇列帶眷屬衍生 enum
+**Decision:** Reject ｜ **Status:** Closed ｜ 使用者 2026-07-28 定「33a 即可」
+
+`/admin/eligibility` **維持刻意不帶眷屬任何資料**（[eligibilityReviewService.ts:10](../parking-system/server/services/eligibilityReviewService.ts#L10) 明寫 "No PII beyond name … (no phone/dependents)"）。曾評估「只帶衍生 enum（`preschool`/`school_age`/`unknown`）、不帶生日/年齡/姓名」，但那仍是該頁隱私姿態的一次放寬，而覆核者點進明細頁即可看到（33a 已足）⇒ **不為此破線**。日後若真有「在列表就要分流」的需求再重啟，且屆時仍以「只帶衍生 enum」為底線。
+
+共用的需求脈絡（眷屬資料位置、`childCompanionValidUntil` 權威、as-of 鐵律、長者無年齡規則）見 `Active feature details` 的 #33a。
 
 ---
 
-## 建議動工順序（rev.3 — delivery-first）
+### Wave chronology — 建議動工順序（rev.3 — delivery-first，歷史）
+
+> 本節記錄各刀的施工順序與完成標記。**Wave 已不是狀態模型**——目前狀態看 `Feature inventory`，Wave 只作為歷史標籤與跨文件對照（`pre-delivery-polish-backlog.md` 仍以 Wave 分節）。
 
 > prod 已 walkthrough 並清回 baseline；正式資料/OA/文案未完成。排序以交付價值優先。
 > **每刀 prompt 固定加**：改 Next.js route/server action/cookie/layout/middleware/caching/navigation 前，先讀 `node_modules/next/dist/docs/` 對應文件，不靠記憶（`parking-system/AGENTS.md`）。
@@ -688,21 +789,50 @@ getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
 **Wave 5：會員自助與分析** — ⚠️ **#34 已改版為 Member Data Lifecycle：34-0／34-0b-A／34a 拉到 pilot 前，不屬本 wave**（見專節）。本 wave 剩：**34b 會友自助維護**（車輛可本人直接改；**手機不可 direct edit**；P2 走 #10）＋**#11 P2 自助申請**（pilot 初期、合併規劃）→#28→**34c 新會友 self-onboarding**（系統穩定後）→#16／#13
 **Deferred/不做**：#2 ❌
 
+#### 依賴關係（rev.3 釐清，歷史）
+`#10 需 #15、不需 #19`；`#14A 需 #15、不需 #19`；`#5B/#17/#18 需 #19`。→ Audit 與角色兩地基**可分離**，讓 #10/#14A 先於角色交付。
+
+（此條原列於「關鍵設計決策」，屬已完成的 dependency resolution，不再約束未來實作 ⇒ 未升格為 INV。）
+
 ---
 
-## 交付分級
+### 交付分級 — 歷史敘述
+
+> 這段是舊版的交付門檻分級。**其判斷已完成任務**（清單已清空），保存脈絡用；目前的交付時點看上方 `交付分級` 與 `Feature inventory`。
 
 **交付前必修**：文件同步、#25、#20、#21、#22、#23、#24、#27、#30
 **強烈建議交付前 — 全部完成 ✅**：#5A ✅、**#15 ✅（2A-1／2A-2／2A-3 全完成）→ 稽核有邊界、可清理**、**#14A ✅（2B-1）→ 容量已不需 SQL**、**#10 ✅（2B-2a＋2B-2b）→ 資格已不需 CSV**（幹事可自行核准/撤銷，且 CSV 不再能推翻人工決定；2B-2c 佇列列內操作為便利化、不阻擋交付）、#12 ✅。**⇒ 此清單已清空，開發面可進正式交付收尾**（剩交付後 ops，見 runbook §8/§13；及非阻擋 backlog：2B-2c、retire `admin_reserved`）。**Wave 2C #19 角色地基已完成**（見動工順序）。
-
-### Audit retention 政策（✅ 已實作於 2A-3 / `0034`）
-**線上保留 24 個月、每月清理一次；不宣稱永久保存。** 理由：涵蓋兩個完整年度週期足以處理資格/容量/帳號/操作爭議；本系統非金融、醫療或法定會計帳冊，無支持永久保存的內控需求；audit 雖已最小化仍含 actor/entity stable ID，無限保存違反資料最小化；「量不大所以永不刪」不是治理政策。
-規則：cutoff `created_at < now() - interval '24 months'`／受限 `SECURITY DEFINER` maintenance function／bounded batches／purge 只記 cutoff＋deleted_count，**不記被刪 ID 或其 metadata**。
-**`audit.substrate_enabled` 與 `audit.retention_purge` 為 retention-exempt**——保留「trail 從何時開始、歷史依哪個政策被清」。
-✅ 實作（`0034`）：0030 的 append-only trigger 擋掉**所有** DELETE，purge 的逃生口＝**雙鎖**——交易域 GUC `audit.allow_purge`（只有 `purge_audit_logs` 用 `set_config(...,true)` 開）＋ `current_user` ＝ table owner（SECURITY DEFINER 以 owner 執行、直接 service_role delete 不是 owner）。**時鐘用 DB `now()`、RPC 不收 `p_now`**（呼叫端傳未來時間即可洗全表；審查必改 1，與 binding-PII 前例的有意分歧）。verifier 釘 fn owner ＝ table owner（否則鎖2 連合法 purge 都擋）。UI 文案翻面的**部署硬前置**＝prod cron 先設好（runbook §13）。
 **可交付後迭代**：#3、#4、#6、#11、#14B、#16、#28、#5B-b／#5B-c（#8／#9／#17／#18／#19／#5B-a ✅ 已完成）
+
 > **#34 不在此列**（兩輪外部審查改判）：**34-0 Import integrity（strict by default）／34-0b-A Import auditability／34a Profile completeness & confirmation ＝ pilot 前**，屬正式資料建立流程的 correctness，不是交付後便利化。
 > **#32（概覽補申請狀況）例外**：技術上非阻擋（不做也能運作），但它補的是 #8 在 `application_open` 階段**首頁等於空白**的缺口——正是同工交付後每週最常看的那幾天。S 規模、app-only、無 migration ⇒ **建議併進交付前收尾，不要放到交付後**。
 > #3 雖方便但人工重發 PIN 已能運作；反而 #10/#14A 仍碰 SQL 的交付風險更高。角色分級（#19）可留交付後。
 > **更新（2026-07-25）**：#19（Wave 2C-1／2C-2）已完成 merged，此處「可留交付後」已成歷史脈絡。
 > **更新（2026-07-17）**：#14A（2B-1）與 #10（2B-2a＋2B-2b）皆已完成 ⇒ **上句所指的交付風險已消除**，容量與 P2 資格都有 audited 的 Admin UI 路徑。僅存的「仍需手打 SQL」缺口是 **runbook §12.1 Step 0 的遠期 demo event 容量**（`/admin/capacity` 刻意只給當週/次週，見 §8 Wave 2B-1），屬 demo 走查而非同工日常營運。
+
+---
+
+### 判定圖例（舊詞彙，歷史）
+
+> 已由上方「詞彙表」取代。舊符號 `✅／🕒／❌` 曾同時承載 decision、timing 與完成度，正是本次 normalization 要拆開的東西。
+
+| 判定 | 意義 |
+|------|------|
+| ✅ 加入 backlog | 可行、值得做 |
+| 🕒 defer | 可做但現在不划算，或有前置依賴 |
+| ❌ 不做 | 與隱私邊界／架構衝突，或成本不成比例 |
+
+規模：S（<半天）／M（1–2 天）／L（需切多刀）。
+
+---
+
+### 文件版本沿革
+
+- **rev.1（2026-07-16）**：30 條判定＋動工順序。
+- **rev.2**：一輪審查，修規格＋改 delivery-first 排序。
+- **rev.3**：二輪審查，修實作語意（PIN 旋轉、commit-then-dispatch、雙真相、actor 模型、拒絕科學記號…）＋拆 Wave 2A/2B/2C。
+- **rev.4（2026-07-29）**：IA normalization——Decision/Status/Delivery/Size/Deployment 五欄正交、canonical layer、#34 升格 Epic、歷史內容隔離進本節。
+
+**rev.1–3 的文件「目的」原文**：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A（全）✅、2B（全）✅、2C #19 ✅（PR #45/#46）、3a #8/#9 ✅（PR #47）、3b #17 ✅（PR #48）、3c #18 ✅、3d #5B-a ✅**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
+
+**對應**：[current_handoff.md](current_handoff.md)（每刀 merge 後同步，最新到 Wave 3 3d §6.47；其後 §6.48／§6.48.1 為上 prod 與 staged deployment 制度）、[prod-deploy-runbook.md](prod-deploy-runbook.md)。
