@@ -29,3 +29,7 @@ docs/import-templates/*
 !docs/import-templates/README.md
 !docs/import-templates/P2資格申請範本.csv
 !docs/import-templates/會友簡易名單範本.csv
+
+# generated deliverable HTML dropped at docs root (not part of the tracked docs set;
+# the tracked HTML lives under docs/staff-demo/ and docs/ui-mockups/)
+docs/*.html
