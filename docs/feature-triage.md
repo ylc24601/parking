@@ -57,6 +57,118 @@
 | 28 | 管理我的車牌（全自助） | app/member＋新 routes | M | ✅（5）｜**地基已由 Tier 0-2（`0038`）交付** | **Tier 0-2 做的是 ADMIN 側**（幹事在會友明細頁新增／停用／恢復車輛），會友自助仍待做——但本項要的 DB 語意已經成立且已驗證：**soft delete ＝ `is_active=false`（保留歷史 FK）**、**唯一性改為「使用中才唯一」**（`vehicles_active_plate_uq` partial on `is_active`，車牌因此可轉手而不改寫歷史）、**未結束預約擋停用**（在交易內、車列鎖下判定，狀態集合對齊 `lib/allocation/transitions.ts` 的非終局狀態）、**衝突訊息不洩他人姓名**（只回 `active_plate_owned_by_other`）、**增刪寫 audit**。剩下的是會友端 UI／路由、設預設＋暱稱、以及「至少留一台或允許零台」的產品決定。<br>原始規格：新增/刪除/設預設＋暱稱。**刪除擋所有未結束關聯**（upcoming open/waiting/approved/temp-approved·offer/未 finalized 已釋出/未來多週）；**soft delete（`active=false`）保留歷史 FK**。normalize＋unique on normalized plate；collision 訊息不洩他人姓名；set default transactional；至少留一台或明確允許零台。**增刪寫 audit**。濫用治理＝輕護欄（plate 唯一性＋audit＋一人一週一位天花板）＋社群處理（勸導→停用）。 |
 | 29 | member 顯示候補序號 | app/member | S | ✅（1） | 「目前候補第 N 位」＋「順序可能因取消、資格與分配狀態而變動」（動態非固定號碼）。 |
 | 30 | 取消加「不計違規」reassurance | app/member CancelButton | S | ✅（1） | 「10:30 前取消不計違規」，讓會友安心取消。可順帶補申請表「週五18:00截止」。 |
+| 31 | 一位會友同時符合多種 P2 事由 | DB `users`＋`memberImportService`＋#10 覆核 UI | M–L | 🕒 defer（post-delivery，規則未定） | **現況＝一人一事由**：`users.p2_reason` 單欄（[0001:47](../parking-system/supabase/migrations/0001_enums_core.sql#L47)）＋`p2_valid_until` 單一截止日；匯入以手機為會友主鍵，同一人多列 `申請原因` 不一致時 `resolveP2Group` **fail closed 整位跳過**（`GroupConflictField='reason_type'`）。<br>**真實案例（2026-07-28 首次真會友名冊，已去識別化）**：一位會友一支手機兩台車——一台對應配偶行動不便（原因 1、**永久**），另一台對應幼兒同行（原因 3，`childCompanionValidUntil` 算出的效期為數年後的 8/31）。**兩者同時成立，但系統只能擇一**。<br>**風險不是優先序、是效期**：P2 有一個成立事由即為 P2，擇一不影響本週分配；但 `p2_valid_until` 會跟著被選中的事由走 ⇒ **選到短效期的那個，資格會提早失效**（本例選了永久的原因 1 是對的，但這靠人判斷、無護欄）。<br>**擇一時的暫行規則（今日靠幹事人工）**：選**效期最長**的事由；被捨棄的事由寫入備註。<br>**若要做**：`users` 單欄 → `member_p2_grounds` 一對多（每筆 reason＋眷屬＋valid_until＋各自 review_status），`p2_valid_until` 衍生為 `max(grounds.valid_until)`；匯入改為「同人多事由＝合併不衝突」而非 fail closed；#10 覆核 UI 要能逐事由核准/撤銷。**先決條件**：#10 的 `review_status` 權威模型已成立（可直接沿用），但**眷屬 model 與撤銷語意未定**，且無實際需求量（首份名冊 59 位僅 1 例）⇒ 不卡交付。 |
+| 32 | 首頁「本週概覽」沒有目前申請狀況 | admin/page（`AdminOverview`＋`adminOverviewService`） | S | ✅（3e，非阻擋但建議交付前） | **問題（2026-07-28 使用者回報）**：[/admin 首頁](../parking-system/app/admin/AdminOverview.tsx#L88-L96) 上指標只有**車位供給**三個數字——「可分配總數／保留·停用／已核准」（`promised` ＝ `approved`＋`temp_approved`，見 [parkingRepository.ts:2153](../parking-system/server/repositories/parkingRepository.ts#L2153)）。**申請端的需求量完全看不到**：週三～週五 `application_open` 階段，申請都還是 `pending`、分配尚未跑，於是「已核准」恆為 0 ⇒ 幹事**在最需要判斷供需的那幾天，首頁是空的**，只能改去別頁翻。<br>**要補的兩個數字**：`pending`（申請中）與 `waiting`（候補）。已核准已有、不重複；`attended`/`no_show`/`cancelled_*`/`walk_in` 等**終局狀態屬事後分析（#16），v1 不放**——概覽是「現在要不要處理」不是報表。<br>**實作語意**：① 與容量同一支 `getWeekOverview`、同一個 `weekly_event_id`，**不得另開資料源**（否則首頁自己跟自己不一致）；② PostgREST 無 group-by，別為此開 RPC／也別打三次 head-count——**一次 `select('status')` 取本週 reservations 在 app 端計數**即可（本週量級數十筆），或併進既有 `countPromisedReservations` 改成回三態 counts；③ **標籤隨階段變**：分配前 `pending` ＝「申請中」，分配後理應為 0（分配會轉成 approved/waiting），若非 0 代表有漏勾——因此**分配後仍顯示且非 0 時上 warning tone**，不要無條件隱藏；④ 供需一眼可讀＝把「申請中」排在「可分配總數」旁；⑤ 純計數、無個資，幹事/系統管理員同視野，**不需 #19 capability 判斷**。<br>**規模 S**：app-only、**無 migration**、無新頁面。`WeekOverview` type 加欄＋既有測試補 case。 |
+| 33 | 眷屬顯示年齡＋幼兒「學齡前／已入學」 | admin/members/[id]（33b 原擬 admin/eligibility） | S | **拆二：33a ✅（3e，隨 #32 同批）／33b ❌ 不做（使用者 2026-07-28 定「33a 即可」）** | **需求（2026-07-28 使用者提出）**：會友資料與覆核畫面要能看到幼兒與長者的年齡，並標示學齡前／非學齡前。<br>**資料已存在、不需 migration**：`eligibility_dependents(dependent_kind, dependent_name, dependent_birthdate)`（[0020:15](../parking-system/supabase/migrations/0020_member_import.sql#L15)，`dependent_kind` enum＝`impaired/child/elder`）；匯入已收 `孩童生日1–3`／`長者生日`（[memberImportSchema.ts:46-52](../parking-system/lib/memberImportSchema.ts#L46-L52)）。明細頁**已經在顯示眷屬與原始生日**（[members/[id]/page.tsx:116-128](../parking-system/app/admin/members/[id]/page.tsx#L116-L128)）。<br>**⚠️「學齡前」不是新規則、不得新寫一條**：權威已存在＝`childCompanionValidUntil(bd)`（[eligibilityStatus.ts](../parking-system/lib/eligibilityStatus.ts)，國民教育法 9/1 inclusive cutoff，回傳入學前一年的 08-31）。標籤定義**只能是** `asOf <= childCompanionValidUntil(bd)` ⇒ 學齡前。任何自行用「年齡 < 6」判斷都會與 P2 效期在 9/1 前後差整整一年（該檔案標頭已明寫兩個相差一天的孩子差一個學年）——**那就是本專案最典型的雙重真相**。<br>**⚠️ as-of 必須是參數、不得用 clock**（同檔標頭鐵律）：本項兩個 surface 問的都是「今天要不要處理」⇒ `asOf = taipeiToday(now)`；**絕不可**被 `priority.ts` 的分配判定重用（那支的 as-of 是 `sunday_date`）。<br>**⚠️ 長者無年齡規則**：全 codebase 找不到 65 歲之類門檻，`elderly_companion` 只是事由、效期通常永久 ⇒ 顯示長者年齡**純屬輔助判讀，不得推導任何資格**；且 `長者生日` 為選填、常為 NULL ⇒ null 要顯示「生日未填」而非算成 0 歲。年齡＝週歲（滿歲），台北曆日計算。<br>**33a 明細頁（建議做）**：眷屬列在既有生日後補「N 歲」，`child` 另加 `學齡前`／`已入學` badge。**零新增揭露**——該頁本來就顯示完整生日（頁首已有 #12 資料最小化橫幅），年齡是更粗的衍生值。純 presentation、無 service 改動。<br>**33b 覆核佇列 ❌ 不做（2026-07-28 使用者決定「33a 即可」）**：`/admin/eligibility` **維持刻意不帶眷屬任何資料**（[eligibilityReviewService.ts:10](../parking-system/server/services/eligibilityReviewService.ts#L10) 明寫 "No PII beyond name … (no phone/dependents)"）。曾評估「只帶衍生 enum（`preschool`/`school_age`/`unknown`）、不帶生日/年齡/姓名」，但那仍是該頁隱私姿態的一次放寬，而覆核者點進明細頁即可看到（33a 已足）⇒ **不為此破線**。日後若真有「在列表就要分流」的需求再重啟，且屆時仍以「只帶衍生 enum」為底線。<br>**其他**：display-only、不寫 audit；若日後真要記，`0030`/`0035` 的 sanitizer 會擋 birthdate-shaped key 帶日期值（**boolean 才放行**）⇒ 只能記布林/enum。與 #31（一人多事由）相關但獨立：#31 是能不能存多個事由，本項是把已存的那一個看清楚。 |
+| 34 | **Member Data Lifecycle：同工代填 → 本人提交＋系統檢核＋治理覆核** | 匯入 UI／member LIFF／#10 覆核／綁定 | L（拆五刀） | ✅ **34-0／34-0b-A／34a ＝ pilot 前（非 Wave 5）／34b·#11 pilot 初期／34c 系統穩定後／34-0b-B 可延後** | **來源＝交付日實況（2026-07-28，已匯入 prod 57 位）**：轉入 CSV 有**大量同工代填錯誤**與**該填卻空白的欄位**。**經兩輪外部審查重新定義**：不是 CSV 改善、也不是自助功能，而是**把會友資料的 source of truth 從同工代填改成本人提交＋系統檢核＋治理覆核**。長期決策＝**CSV 是 bootstrap/bulk 工具、`/member` 才是正常 source-of-truth surface**。詳見下方專節。 |
+
+---
+
+## #34 Member Data Lifecycle 會友資料生命週期（外部審查兩輪後改版，2026-07-28）
+
+> **問題重新定義（採納外部審查）**：不是「CSV 改善」也不是「增加會員自助修改功能」，而是**把會友資料的 source of truth，從同工代填改成本人提交＋系統檢核＋必要治理覆核**。交付日的大量代填錯誤證明這不是 nice-to-have，是**下一輪正式資料導入前該收斂的營運風險** ⇒ 前三刀 **pilot 前**做，不整包丟 Wave 5。
+>
+> **長期 architecture decision**：**CSV ＝ bootstrap / bulk compatibility tool；`/member` 逐漸成為資料的正常 source-of-truth surface。** 五刀依此命名：
+>
+> | 刀 | 主題 |
+> |---|---|
+> | 34-0 | Import integrity（匯入完整性） |
+> | 34-0b | Import auditability（匯入可稽核性） |
+> | 34a | Profile completeness & confirmation |
+> | 34b | Member self-maintenance |
+> | 34c | New-member intake |
+
+### 為什麼「再加強 CSV 驗證」不是根治
+匯入驗證已經很嚴：姓名/車牌/手機 row-level 必填（[memberImport.ts:189-193](../parking-system/lib/memberImport.ts#L189-L193)）、手機格式＋科學記號防護、同手機任一列壞掉整位跳過（Wave 0 row-completeness）、同手機不同姓名/同車牌多 owner/P2 資料矛盾一律 fail closed（Wave 0.1）。但 `0912xxxxxx + ABC-1234` **格式全對，不代表那是張三的手機與車牌**。驗證器能查格式，查不了歸屬，也叫不動知道答案的人。⇒ **換資料來源，不是再疊一層 parser 規則**。
+
+### 34-0 Import integrity — **strict by default**（pilot 前）
+**現況（已驗證）**：preview 出現錯誤/衝突時，操作者勾一個「上方標記為錯誤/衝突的列會被略過，其餘合法會友仍會寫入。我已了解並仍要匯入。」就能送出——`disabled={busy || (hasSkips && !acknowledged)}`（[MemberImport.tsx:238-245](../parking-system/app/admin/import/MemberImport.tsx#L238-L245)）。**這個 acknowledge 逃生口本身就是要改掉的核心。**
+
+**做法（二輪審查改判，採納）：不引入任何 mode，預設所有 CSV import 都 strict。** 只要存在系統明確知道會跳過資料的 hard issue——`validationErrors`／`phoneNameConflicts`／`identityConflicts`／`plateConflicts`／`batchPlateConflicts`／`groupConflicts`——就**不能 Apply**，一般管理員只看到「**有錯誤 → 請修正後重新預覽**」。
+
+**⛔ 明確否決「以名冊是否為空自動判定 bootstrap」**（我上一版提的待決項，已由審查駁回、理由成立）：500 人第一次只匯進 300 人，`users` 就已不為 0，第二次進來會被誤判成 incremental——**但正式名冊 bootstrap 根本還沒完成**。且未來可能已有少數手工建立的會員或 pilot 人員，正式 roster 才第一次進來。**「DB 是否為空」不是 business state。** 操作者自選同樣否決（會被誤選）。
+
+**partial import ＝ exceptional path，不是 normal path**：若未來真有「先匯 490 位、10 位之後處理」的實際需求，另做一個**系統管理員限定**的例外操作「略過錯誤資料並匯入其餘」，需二次確認＋寫 audit。**strict 是常態、partial 是例外**——比建立 bootstrap state 簡單，也更符合現在準備交付的系統。
+
+**⚠️ `reviewRequired` 不可混成 hard error**（兩輪審查一致）：「幼兒同行但生日缺失」與「手機格式錯誤／同車牌兩個人／同手機不同姓名」不是同一種問題。
+| 類別 | 行為 |
+|---|---|
+| **Hard blocker** | 不能 Apply |
+| **Incomplete / review required** | 可建立 member，但**該會員不是 Ready** |
+
+後者的收斂路徑正是 34a：本人補資料 → completeness PASS → 本人確認 → P2 若需要仍由 Admin review。
+
+**這一刀解不了「ABC-1234 是不是王小明的」**，但能擋掉「明明系統知道有問題，仍產生半套正式名冊」。
+
+### 34-0b Import auditability（pilot 前，本輪讀碼新發現）
+**現況（已驗證）**：`/api/admin/members/import/apply` **完全不寫 audit**，報表只回瀏覽器且刻意不落地（[apply/route.ts:12](../parking-system/app/api/admin/members/import/apply/route.ts#L12) 明寫 "The CSV, report, and token are never logged"）。這在 #15 之後是明顯缺口：容量、P2 覆核、角色、車輛、名冊匯出全都寫 audit，**唯獨影響最大的批次寫入沒有**。
+
+**⚠️ 二輪審查的關鍵修正（採納）：audit ≠ import report，兩層要分開，不可為了保存 report 而破壞 audit substrate 的設計。** audit 的既有姿態就是「ordinary input validation 不 audit，避免把 user-supplied values 拉進 metadata」，且 writer 已硬性禁止 phone/line_id/plate/name/remarks/birthdate/address/email 出現在 metadata（`0030`／`0035` denylist）。**不要為 CSV report 打破它。**
+
+**A 層（pilot 前必做）＝ 真正發生的 mutation 必須可稽核。** 兩種列：
+- **per-member**：`member.import`，`entity_id` ＝ user UUID，metadata 僅 `created`／`vehicles_added`／`eligibility_written` 等布林與計數。這能回答「**這位會員是什麼時候因 CSV import 建立的？誰操作的？**」而完全不需把電話車牌複製進 audit。
+- **batch summary**：`member_import.apply`，僅 profile 與計數（rows／members／created／updated／vehicles_added／review_required／result）。
+
+**⚠️ 交易邊界（本輪讀碼補充，審查規格未涵蓋）**：審查要求「audit 與 business write 同 transaction」——**per-member 列可以且必須如此**（`import_member` RPC 內部 append，天然同 txn，符合 #15「audit 與業務同生共死」）。但 **batch summary 不可能同 txn**：[memberImportService.ts:343-353](../parking-system/server/services/memberImportService.ts#L343-L353) 明寫 "Per-member RPC is atomic, but the whole CSV is not one transaction"，每位會友各自 commit，**整批沒有一個包住的 transaction**。⇒ batch 列是 best-effort 的收尾列；**per-member 列才是權威 trail**。實作推論：中途失敗（`CsvImportExecutionError`）時 batch 列不會寫出，但已 commit 的 per-member 列仍在——這是可接受的，也正是為什麼權威必須放在 per-member。
+**實作要求**：`import_member` RPC 需取得 actor admin id／actor session id／request id（**route 後補 audit ❌**），沿用 #15 的 SECURITY DEFINER 業務 RPC 模式。
+
+**B 層（Import Run / Import Diagnostics，可延後）**：`member_import_runs`（performed_by／performed_at／profile／各項計數／result）＋短期 `member_import_issues`（`import_run_id`／`line_number`／`issue_code`，例 `line 37 → phone_name_conflict`），**不保存 raw row**。
+**是否 pilot 前做？審查判斷「不一定」，我同意**：34-0 改 strict 後，「寫完才發現有人被跳過」這個主要問題已大幅消除 ⇒ 不為一個已被 gate 消除的問題再引入一整套 PII report storage。等實際操作證明需要再做。
+
+**❌ 更正我上一版的錯誤主張**：我寫過「34-0b 讓**今天這批**可被追查」——**這句不成立**，審查修得對。report 未保存、瀏覽器已關、當時無 audit 也無 import run ⇒ **新增的 audit 無法回溯創造歷史**，精確重建「某次匯入第 53 列被跳過、理由是 X」是做不到的。
+**今天這批能做的是 reconciliation（不是 historical audit reconstruction），兩者文件上必須分清。**
+
+**✅ reconciliation 已完成（2026-07-29）**：跑**匯入器自身的 pipeline**（`importMembersFromCsvText` ＋ stub repository，非人工讀檔）核對 `01.主日停車場申請名冊2026.07.匯入用.csv`：
+- 61 資料列 → **54 位會友、60 台車**
+- **擋下 1 位**：檔案第 12 行缺手機號碼（孩童生日已填，補上手機即可正常匯入）
+- **群組衝突 0、同檔車牌衝突 0** —— 匯入前待補清單的「同手機兩種申請原因」已解決
+- **`reviewRequired` 4 位**：3 位原因 2（短期不便）無申請日期 ⇒ 算不出 6 個月效期；1 位孕婦（另計）
+- **prod 57 位 ＝ CSV 54 ＋ 使用者手動自建 3 位**（已確認，差額結清）
+
+⚠️ **範圍限制**：stub repo 的跑法**不涵蓋 DB 側衝突**（同手機不同名／identity candidate／車牌已屬他人）——那三類由 `import_member` RPC 判定，需連真 DB 才驗得出。
+⇒ 這是**一次性營運核對，不是新功能**。`reviewRequired` 那 4 位必須在 `/admin/eligibility` 覆核佇列清——**綁定宣導抓不到他們**（他們會正常綁定，資格靜靜躺著）。
+
+### 34a 我的資料＋完整度＋本人確認（pilot 前）
+**採納審查的修正：completeness 先於 confirm。** 我原本提「唯讀看資料→按正確」是錯的順序——王小明的孩童生日空白時，他按下「資料正確」會把**一份不完整的資料認證成正確**。正確流程是：**完整度檢查 → 本人補齊 → 本人確認 → 必要時行政覆核**。
+畫面顯示「資料完整」或「還有 2 項需補填」（例：⚠ 尚未填寫孩童生日／⚠ 尚未確認車牌），**全部 completeness rule 通過才出現「確認我的資料」**。
+**`profile_confirmed_at` 的語意必須先定義**（審查正確指出：這是 DB write，**不是我先前說的「零寫入風險」**）：任何相關欄位後續被修改 ⇒ `profile_confirmed_at` 歸 null、要求重新確認；並決定是否寫 audit（傾向寫，`actor_type='member'`）。
+
+### 34b 本人補正 — 但三種欄位是三種權限模型（pilot 初期）
+審查在此比我原本的切法更細，採納：
+| 欄位 | 模型 |
+|---|---|
+| **車輛新增／停用／恢復** | **可本人直接改**。`0038` 已備妥 soft delete／使用中才唯一／未結束預約不可停用／衝突不洩他人身分 ⇒ 把 #28 接到 member surface 是自然下一步 |
+| **手機號碼** | **不可 direct edit**。`users.id` 才是 identity、phone 是 mutable attribute（`0038` 整刀正是為修正「把 phone 當 identity」），且 phone 同時參與 binding identity ⇒ 走「提出變更 → 驗證／admin confirmation → update identity」 |
+| **P2 資料**（行動不便／孕婦／長者同行／幼兒同行＋孩童生日） | 本人可填，但 **submission ≠ eligibility approval**，走 #10 既有治理 |
+
+**⚠️ 審查的重要修正（採納）**：**不要把一般 profile update 也塞進 `review_status='unreviewed'`**。`review_status` 是 **P2 eligibility 的治理權威**，不是整份 profile 的 approval flag。三者語意分開：**基本資料 completeness／車輛 maintenance／P2 application-review**。（我先前「會友送出的一律落 `unreviewed`」講得太寬——那條鐵律只適用於 P2 治理欄。）
+
+### 34c 新會友 self-onboarding（系統穩定後才建，但**現在就該定架構**）
+審查與我的差異其實比看起來小：**排序一致**（都放最後），差別在**現在就要把目標架構定下來**，否則會一直複製今天的問題——「同工先輸 CSV → 會友才能綁 OA → 會友再修同工輸錯的資料」。
+**目標流程**：`LINE identity（伺服器已驗證）→ pending member intake → 幹事核可 → 同一 transaction 內 create member + vehicles + binding + audit`；P2 若有申請仍進 #10 review。
+**共識：不讓未知使用者直接 INSERT canonical `users`**，但也**不必先由同工替他輸一列 CSV**。
+**⚠️ 不要塞進 `pending_binding`**：該表用途已很明確（capture-time identity snapshot／approved-rejected／retention／PII redaction／concurrency）——`0038` 之所以 freeze `matched_user_id_at_capture`，正是為了避免 phone reassignment 造成跨人錯綁，代價是**送出當下無會員 ⇒ 事後才建會員也不能直接核准、必須重送**。另建 `member_intake_submissions`，讓 binding 與 profile onboarding 的 lifecycle 不互相污染。
+
+### 貫穿四刀的第一個 technical task
+**抽出 member profile completeness domain rule**（審查建議，採納為第一個工作項）：
+
+```text
+getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
+```
+
+**server authoritative、UI 只拿結果顯示**。現有 condition-aware 規則（reason 1/2 → 行動不便者姓名；reason 4 → 長者姓名＋生日；reason 3 → 孩童或孕婦資料；孩童**有姓名沒生日**不算 malformed、只降成 `reviewRequired`）必須收進這一份，**不可演變成 CSV validator 一套、LIFF form 一套、Admin review 又一套**。
+
+### 排序
+| 時機 | 刀 |
+|---|---|
+| **現在／pilot 前** | **34-0** Import integrity（**strict by default**：有 hard issue 就不能 Apply，移除 acknowledge 逃生口）→ **34-0b-A** Import auditability（per-member `member.import` 在 `import_member` txn 內＋batch summary）→ **34a** Profile completeness & confirmation（completeness 先於 confirm） |
+| **pilot 初期** | **34b** 車輛自助維護（接 `0038` lifecycle）／**#11** P2 自助申請（孩童生日等本人最清楚的資料移回本人輸入，治理仍在 admin） |
+| **系統穩定後** | **34c** 新會友 self-onboarding（LINE identity → member intake → admin approve → atomic create + bind）。屆時 CSV 退回它真正的角色＝**bootstrap / bulk compatibility tool**，而非日常會友資料建立與維護入口。**34-0b-B**（`member_import_runs`／`member_import_issues`）亦在此層級，除非實際操作證明需要否則不做 |
+
+### 連帶：文件同步 ✅ 已完成（2026-07-29）
+`docs/current_handoff.md` header／剩餘 ops 行與 `go-live-checklist.md §1.3` 原寫「尚未匯入正式教會會員資料」，**已同步為「2026-07-28 已匯入 prod、57 位」**。（§6.x 內的歷史敘述**刻意不動**——那些是當時狀態的正確紀錄。）
+**名冊面殘留待辦記於 go-live §1.3**（4 位 `reviewRequired` 待設效期／1 位缺手機未匯入／其餘跳過者於宣導綁定時人工處理）——**權威在 go-live-checklist，本檔不重述**。
+**已知機制細節**：不在名冊者送出綁定申請會以 `unmatched_at_capture` 浮出；但補建會友後**原申請不能直接核准**（`0038` 核准讀送出當下凍結的 `matched_user_id_at_capture`，[0038:708](../parking-system/supabase/migrations/0038_member_maintenance.sql#L708)），需請本人**重新送出**。
 
 ---
 
@@ -65,7 +177,8 @@
 - **通用通知目的地模型** → #3/#6/#7。`recipient_kind`(member/line_group)＋`context_kind`(reservation/weekly_event/vehicle/system)＋nullable `recipient_user_id`/`weekly_event_id`/`reservation_id`/`vehicle_id`＋受控 `recipient_line_target`，加 **DB CHECK constraint** 保證每組合必要欄位。`groupId` 不顯示於一般 UI、不進 log/錯誤、不被 webhook 覆寫，走 allowlist/啟用確認。
 - **稽核 substrate**（既有 `audit_logs` 補 insert）→ #10/#14A/#19/#28/所有寫入。`actor_type`＋`actor_id`＋`actor_role_snapshot`（非多個 nullable FK）；存 ID、DB 層 append-only。詳見 #15。
 - **待辦計數 service contract**（不硬 RPC）→ #8/#9。
-- **P2 寫入 service（review_status 權威、p2_eligible 衍生、樂觀鎖）** → #10。✅ **已建成**：`server/services/p2EligibilityService.ts`＋`POST /api/admin/eligibility`（2B-2b）；2B-2c 佇列與 #11 自助申請都接同一支，不得另開寫入路徑。
+- **P2 寫入 service（review_status 權威、p2_eligible 衍生、樂觀鎖）** → #10。✅ **已建成**：`server/services/p2EligibilityService.ts`＋`POST /api/admin/eligibility`（2B-2b）；2B-2c 佇列與 #11 自助申請、**#34 會友自助補正**都接同一支，不得另開寫入路徑。
+- **「會友提案 → 幹事覆核」骨架** → #11／#34。**三種語意必須分開，不可共用一個 approval flag**（外部審查修正）：**① 基本資料 completeness**（`getMemberCompleteness` server-authoritative、表單與匯入共用同一份 condition-aware 規則）／**② 車輛 maintenance**（`0038` 語意已備妥，本人可直接改）／**③ P2 application-review**（走 #10）。**`review_status` 只是 P2 eligibility 的治理權威，不是整份 profile 的 approval flag** —— 只有 P2 提案落 `unreviewed`，且**永不**由會友端直接寫 `review_status`／`p2_valid_*`（與匯入的 `retained_governed` 同一條線）。audit `actor_type='member'`（#15 已預留）。
 - **Admin 角色 enum＋session 撤銷** → #17-C/#18/#19/#5B/#6 matrix。
 - **依賴關係（rev.3 釐清）**：`#10 需 #15、不需 #19`；`#14A 需 #15、不需 #19`；`#5B/#17/#18 需 #19`。→ Audit 與角色兩地基**可分離**，讓 #10/#14A 先於角色交付。
 
@@ -82,9 +195,9 @@
 **Wave 2A：寫入治理地基** — #15 Audit substrate ✅ **全部完成**。**拆三刀：2A-1 substrate ✅（PR #38 / `8513912`）／2A-2 read-only viewer ✅（PR #39 / `d2e6890`，app-only 無 migration）／2A-3 retention ✅（PR #43 / `5db33bc`，migration `0034`）**
 **Wave 2B：關鍵 Admin 寫入**（需 #15、不需 #19）— **2B-1 #14A 車位容量 ✅（PR #40 / `8de24a0`，migration `0031`）／#10 P2 覆核：2B-2a 模型 ✅（PR #41 / `155c7f7`，migration `0032`）、2B-2b 寫入 RPC＋UI ✅（PR #42 / `c536b01`，migration `0033`）⇒ Wave 2B 交付阻擋全部解除／2B-2c 佇列列內操作（非阻擋，可留交付後）**
 **Wave 2C：角色地基 ✅ 全部完成** — #19 Admin roles＋session 撤銷＋role matrix。**2C-1 兩層角色（系統管理員／幹事）✅（PR #45 `76e93f8`，migration `0035`）／2C-2 帳號管理 UI＋create/role/revoke RPC ✅（PR #46 `ca9de80`，migration `0036`）**
-**Wave 3：其餘管理功能** — **3a #8 概覽＋#9 徽章 ✅ 完成**；**3b #17 通知系統狀態 B＋C ✅ 完成**；**3c #18 側欄兩區 ✅ 完成**；**3d #5B-a 名冊匯出 ✅ 完成**；剩 **#14B override**（規則未定、需先產品決策）。#5B-b 顯示分級／#5B-c 批次 → post-delivery deferred
+**Wave 3：其餘管理功能** — **3a #8 概覽＋#9 徽章 ✅ 完成**；**3b #17 通知系統狀態 B＋C ✅ 完成**；**3c #18 側欄兩區 ✅ 完成**；**3d #5B-a 名冊匯出 ✅ 完成**；**3e #32 概覽補申請狀況＋#33a 眷屬年齡/學齡前（皆 S、app-only、無 migration；使用者已定「等交付收尾一起排」；#33b 覆核佇列 ❌ 不做）**；剩 **#14B override**（規則未定、需先產品決策）。#5B-b 顯示分級／#5B-c 批次 → post-delivery deferred
 **Wave 4：通知便利性** — 通用 destination model→#7→#6A（#6B 後續）→#3（最後，語意最敏感）→#4／#26
-**Wave 5：會員自助與分析** — #28／#11／#16／#13
+**Wave 5：會員自助與分析** — ⚠️ **#34 已改版為 Member Data Lifecycle：34-0／34-0b-A／34a 拉到 pilot 前，不屬本 wave**（見專節）。本 wave 剩：**34b 會友自助維護**（車輛可本人直接改；**手機不可 direct edit**；P2 走 #10）＋**#11 P2 自助申請**（pilot 初期、合併規劃）→#28→**34c 新會友 self-onboarding**（系統穩定後）→#16／#13
 **Deferred/不做**：#2 ❌
 
 ---
@@ -100,6 +213,8 @@
 **`audit.substrate_enabled` 與 `audit.retention_purge` 為 retention-exempt**——保留「trail 從何時開始、歷史依哪個政策被清」。
 ✅ 實作（`0034`）：0030 的 append-only trigger 擋掉**所有** DELETE，purge 的逃生口＝**雙鎖**——交易域 GUC `audit.allow_purge`（只有 `purge_audit_logs` 用 `set_config(...,true)` 開）＋ `current_user` ＝ table owner（SECURITY DEFINER 以 owner 執行、直接 service_role delete 不是 owner）。**時鐘用 DB `now()`、RPC 不收 `p_now`**（呼叫端傳未來時間即可洗全表；審查必改 1，與 binding-PII 前例的有意分歧）。verifier 釘 fn owner ＝ table owner（否則鎖2 連合法 purge 都擋）。UI 文案翻面的**部署硬前置**＝prod cron 先設好（runbook §13）。
 **可交付後迭代**：#3、#4、#6、#11、#14B、#16、#28、#5B-b／#5B-c（#8／#9／#17／#18／#19／#5B-a ✅ 已完成）
+> **#34 不在此列**（兩輪外部審查改判）：**34-0 Import integrity（strict by default）／34-0b-A Import auditability／34a Profile completeness & confirmation ＝ pilot 前**，屬正式資料建立流程的 correctness，不是交付後便利化。
+> **#32（概覽補申請狀況）例外**：技術上非阻擋（不做也能運作），但它補的是 #8 在 `application_open` 階段**首頁等於空白**的缺口——正是同工交付後每週最常看的那幾天。S 規模、app-only、無 migration ⇒ **建議併進交付前收尾，不要放到交付後**。
 > #3 雖方便但人工重發 PIN 已能運作；反而 #10/#14A 仍碰 SQL 的交付風險更高。角色分級（#19）可留交付後。
 > **更新（2026-07-25）**：#19（Wave 2C-1／2C-2）已完成 merged，此處「可留交付後」已成歷史脈絡。
 > **更新（2026-07-17）**：#14A（2B-1）與 #10（2B-2a＋2B-2b）皆已完成 ⇒ **上句所指的交付風險已消除**，容量與 P2 資格都有 audited 的 Admin UI 路徑。僅存的「仍需手打 SQL」缺口是 **runbook §12.1 Step 0 的遠期 demo event 容量**（`/admin/capacity` 刻意只給當週/次週，見 §8 Wave 2B-1），屬 demo 走查而非同工日常營運。

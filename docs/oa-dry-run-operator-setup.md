@@ -16,7 +16,7 @@
 ```
 LINE_CHANNEL_SECRET=<church OA channel secret>   # 必填 — 缺少則每筆請求驗簽失敗（401），什麼都不寫
 NOTIFICATION_TRANSPORT=mock                        # 正式預約通知維持關閉
-LINE_SEND_ENABLED=false                            # 送出鎖
+LINE_SEND_ENABLED=false                            # ⚠️ 無作用（沒有程式碼讀它）；真正的鎖是上一行
 # LINE_CHANNEL_ACCESS_TOKEN=  ← 本階段留空（5A 不發送）
 ```
 
@@ -75,7 +75,7 @@ limit 20;
 
 ## 7. 全程必須維持關閉
 
-- ❌ 任何真實送出 — `NOTIFICATION_TRANSPORT=mock`、`LINE_SEND_ENABLED=false`、token 留空。
+- ❌ 任何真實送出 — 靠 **`NOTIFICATION_TRANSPORT=mock` ＋ token 留空**。（`LINE_SEND_ENABLED` **不被任何程式碼讀取、擋不住任何東西**，保留只為與既有 env 一致，勿當成鎖。）
 - ❌ OA auto-reply／greeting。
 - ❌ 任何 `users.line_id` 寫入 / Phase 5B（尚未部署）。
 - ❌ 單次測試推播（deferred）。
