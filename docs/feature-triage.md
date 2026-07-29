@@ -165,6 +165,451 @@ Done           ⇒ Acceptance 已由實作／驗證滿足
 
 ---
 
+## Active feature details
+
+> **canonical specification。** 狀態以 `Feature inventory` 為準（`#34` 子項以下方 Work items 表為準）。
+> 每項固定四層：`Problem`（為什麼）／`Decision`＋`Constraints`（要做什麼、不做什麼）／`Acceptance`（怎麼算完成）／`History`（決策沿革，**非需求**）。
+
+---
+
+### #3 PIN 自動發同工 LINE 群
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** M（＋安全 design review）｜ **Deployment:** Migration + App ｜ **Invariants:** INV-04, INV-05
+
+#### Problem
+⚠️ **cron retry 反覆旋轉 PIN＝最大風險**。明碼不落地→push 失敗**無法重送同碼**，只能撤舊碼產新碼。
+
+#### Decision
+**service 邊界**：`issueAndSendToGroup(eventId)`（cron 唯一入口、一次性；內部 issue 回明碼→in-process 交 push，明碼不持久化）／`rotateAndSend(eventId)`（**admin 專用**，撤上一組再產新碼送）。
+
+#### Constraints
+**push 失敗＝不自動 retry、標記「派送失敗」**，管理者手動「重新發碼並再送」（＝旋轉）。每次旋轉寫 audit。groupId 走 **allowlist/啟用流程**，不 auto-trust webhook。需獨立 design review。
+
+#### History
+Wave 4（排最後，語意最敏感）。人工重發 PIN 已能運作，故不阻擋交付。
+
+---
+
+### #4 PIN 個別私訊值班人
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** L ｜ **Deployment:** TBD ｜ **Depends on:** 同工 OA 綁定、輪值表 model ｜ **Invariants:** INV-05
+
+#### Constraints
+需同工完成 OA 綁定；全自動需輪值表 model。
+
+#### History
+Wave 4。
+
+---
+
+### #5B 名冊匯出／批次／敏感欄位權限
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** M ｜ **Deployment:** Migration + App ｜ **Depends on:** #19 ｜ **Invariants:** INV-04, INV-06
+**Remaining slices:** 5B-b、5B-c
+
+#### Current scope — 5B-b／5B-c
+**5B-b 敏感欄位顯示分級**（明細頁依角色遮罩眷屬/生日）＋**5B-c 批次** → **post-delivery deferred**（無具體需求；今日幹事仍看完整電話/P2 事由，本刀不碰）。
+
+#### Completed history — 5B-a（Wave 3 3d，PR #50 `314d838`，migration `0037`）
+**5B-a 名冊匯出**（僅系統管理員、含 audit）✅：新 capability `export_members`＋POST `/api/admin/members/export`（body-less、`guardAdminOrigin`、`no-store`）＋keyset 讀（cutoff）＋spreadsheet-injection 防護＋migration `0037` `log_member_roster_export`（FOR SHARE 重新授權＋audit `member_roster.export`，denied 不稽核）。**非 round-trip**（人類可讀行政匯出）。
+
+---
+
+### #6A Admin 憑車牌移車（第一版）
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** M ｜ **Deployment:** Migration + App ｜ **Depends on:** INV-05 destination model ｜ **Invariants:** INV-04, INV-05, INV-06
+
+#### Decision
+走通用通知目的地模型。含：憑車牌搜尋、車主解析、**未綁 LINE gating（明示無法通知不假送）**、二次確認、遮罩姓名+完整車牌核對、可選原因（擋出入口/車燈/施工/其他）、同車牌 5–10min 冷卻、reservation-independent dedupe、enqueue、**當次操作結果**、audit。
+
+#### Constraints
+送出後只顯示「通知已排入傳送，暫時無法送達會自動重試」。role：幹事可用、不看 ops 內部（#19 matrix）。
+
+#### History
+Wave 4。
+
+---
+
+### #6B 移車通知歷史／狀態（polish）
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** M ｜ **Deployment:** App-only ｜ **Depends on:** #6A
+
+#### Decision
+最近通知時間+狀態、重送入口/歷史。
+
+#### Constraints
+**避免第一版耦合完整 outbox 狀態 UI**（pending/processing/sent/retrying/failed）。
+
+---
+
+### #7 移車／急件即時通知
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** S–M ｜ **Deployment:** Migration + App ｜ **Invariants:** INV-05
+
+#### Decision
+**commit 後才 dispatch**：txn（業務寫入＋enqueue）→**commit**→回業務成功→**commit 後** best-effort「只 claim 這筆/dedupe key」bounded dispatch→LINE 失敗不回滾、cron 續 retry。
+
+#### Constraints
+（不可在 txn 未 commit 時觸發 dispatcher——另一連線看不到 row/讀到未完成狀態。）UI 三態文案：已排入／已送達／暫時失敗稍後重試。
+
+#### History
+Wave 4，排在 destination model 之後、#6A 之前。
+
+---
+
+### #10 P2 寫入型覆核
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** M ｜ **Deployment:** Migration + App ｜ **Depends on:** #15（不依賴 #19）｜ **Invariants:** INV-01, INV-04
+**Remaining slice:** 2B-2c（佇列列內操作）
+
+#### Current scope — 2B-2c
+**2B-2c 剩**：佇列列內操作（共用同一 service，非阻擋）。
+
+#### Decision
+**避免雙重真相**：`review_status` 為權威、`p2_eligible` 改為衍生。
+
+#### Constraints
+`pending/needs_information/rejected` 仍綁 #11——`mark_p2_reviewed` 用 **allowlist `<> 'approved'`** 拒絕，故 #11 新增狀態會 fail closed 而非默默可覆核。
+
+#### Completed history — 2B-2a／2B-2b
+
+> **Historical specification — superseded by implementation**（實作為準，見 [0032](../parking-system/supabase/migrations/0032_p2_review_status.sql) 標頭）
+
+**實作與本規格四處刻意分歧**：① `p2_eligible` 衍生自 **`review_status='approved'` 而已、不含任何日期**——含日期會把「寫入者的 as-of」烘進去，兩個 reader 各自繼承（見 §6 2B-2a 的 silent-P3）。② **不新增 `effective_until`**：`p2_valid_until` 已經是截止日、正是 `priority.ts` 讀的權威，再加一個就是本列要消滅的雙重真相；只加 `p2_valid_from`。③ enum **三態** `unreviewed/approved/revoked`——`revoked` 必須代表「人撤銷過」，舊 false 回填成 revoked 是憑空捏造。④ **不加 `updated_at`**：樂觀鎖是 `review_version`（counter 非 timestamp，`0022:118-120`），顯示權威是 `reviewed_at`，該欄無消費者。
+
+**2B-2a 已含**（PR #41 / `155c7f7`，migration `0032`）：`reviewed_by` FK 由 `users`→`admin_accounts`（原本根本存不進自己的覆核者）、`review_note`、`review_version`、幼兒到期改學年度制、匯入不得復活已撤銷者、**audit sanitizer 擋生日值**。
+
+**2B-2b 已含**（PR #42 / `c536b01`，[0033](../parking-system/supabase/migrations/0033_p2_review_rpcs.sql)）：`set_p2_eligibility`／`mark_p2_reviewed`（「標記已覆核」≠「核准」，且**永不 inert**、不可照抄 0031 的 no-op 規則）、明細頁 inline `EligibilityForm`、匯入 precedence（**CSV 可建立無人決定過的資格，但不得覆寫任何人工治理欄**⇒`retained_governed`）、治理邊界收斂成**單一欄 `reviewed_at is not null`**（非 `review_version > 0`——那代表「RPC 寫過」不是「人決定過」）、**幼兒到期公式進 SQL 成 `IMMUTABLE` 函式＋CHECK** ⇒ 2B-2a 明寫的殘留（「不可覛改」只靠 UI）已關閉。
+
+---
+
+### #11 P2 會友自助申請＋待審 inbox
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Pilot-early
+**Size:** L ｜ **Deployment:** TBD ｜ **Depends on:** #10、#34a ｜ **Invariants:** INV-01, INV-02
+
+#### Decision
+#10 的完整五態 enum 在此補齊。
+
+#### History
+原列 Wave 5；改判為 **pilot 初期**，與 #34b 合併規劃——孩童生日等本人最清楚的資料移回本人輸入，治理仍在 admin。
+
+---
+
+### #13 P1 同工名單＋「本週不停」自動釋出
+
+**Decision:** Do ｜ **Status:** **Blocked** ｜ **Delivery:** —
+**Size:** M–L ｜ **Deployment:** TBD
+
+#### Unresolved decision（Blocked 原因）
+auto-release 業務規則未定。
+
+---
+
+### #14B 申請開放 override
+
+**Decision:** Do ｜ **Status:** **Blocked** ｜ **Delivery:** —
+**Size:** M ｜ **Deployment:** TBD ｜ **Depends on:** #14A（已完成）
+
+#### Decision
+`application_override` enum（`automatic`/`forced_open`/`forced_closed`）。
+
+#### Unresolved decision（Blocked 原因）
+規則未定：與時間視窗互動、關閉後既有申請、分配後重開——先不做，不卡 14A。
+
+---
+
+### #16 停車樣態分析（先聚合）
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** L ｜ **Deployment:** TBD
+
+#### Decision
+開放 P3 決策支援；價值隨營運週數累積。
+
+#### Constraints
+不列具名 No-show 排名。
+
+#### History
+Wave 5。
+
+---
+
+### #26 通知 LIFF deep-link 按鈕
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** M ｜ **Deployment:** App-only
+
+#### Decision
+確認保留/放棄、正在路上、回會員頁點擊即開 LIFF。
+
+#### History
+Wave 4。#25 已把「回覆」死指令改成導向會員頁，本項是其正解。
+
+---
+
+### #28 管理我的車牌（全自助）
+
+**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Size:** M ｜ **Deployment:** App-only ｜ **Invariants:** INV-03, INV-04
+
+#### Problem
+**Tier 0-2 做的是 ADMIN 側**（幹事在會友明細頁新增／停用／恢復車輛），會友自助仍待做——但本項要的 DB 語意已經成立且已驗證：**soft delete ＝ `is_active=false`（保留歷史 FK）**、**唯一性改為「使用中才唯一」**（`vehicles_active_plate_uq` partial on `is_active`，車牌因此可轉手而不改寫歷史）、**未結束預約擋停用**（在交易內、車列鎖下判定，狀態集合對齊 `lib/allocation/transitions.ts` 的非終局狀態）、**衝突訊息不洩他人姓名**（只回 `active_plate_owned_by_other`）、**增刪寫 audit**。
+
+#### Current scope
+剩下的是會友端 UI／路由、設預設＋暱稱、以及「至少留一台或允許零台」的產品決定。
+
+#### Constraints
+原始規格：新增/刪除/設預設＋暱稱。**刪除擋所有未結束關聯**（upcoming open/waiting/approved/temp-approved·offer/未 finalized 已釋出/未來多週）；**soft delete（`active=false`）保留歷史 FK**。normalize＋unique on normalized plate；collision 訊息不洩他人姓名；set default transactional；至少留一台或明確允許零台。**增刪寫 audit**。濫用治理＝輕護欄（plate 唯一性＋audit＋一人一週一位天花板）＋社群處理（勸導→停用）。
+
+#### History
+Wave 5；地基已由 Tier 0-2（`0038`）交付。
+
+---
+
+### #31 一位會友同時符合多種 P2 事由
+
+**Decision:** Do ｜ **Status:** **Blocked** ｜ **Delivery:** Post-delivery
+**Size:** M–L ｜ **Deployment:** Migration + App ｜ **Depends on:** #10（`review_status` 模型已成立）｜ **Invariants:** INV-01
+
+#### Problem
+**現況＝一人一事由**：`users.p2_reason` 單欄（[0001:47](../parking-system/supabase/migrations/0001_enums_core.sql#L47)）＋`p2_valid_until` 單一截止日；匯入以手機為會友主鍵，同一人多列 `申請原因` 不一致時 `resolveP2Group` **fail closed 整位跳過**（`GroupConflictField='reason_type'`）。
+
+**真實案例（2026-07-28 首次真會友名冊，已去識別化）**：一位會友一支手機兩台車——一台對應配偶行動不便（原因 1、**永久**），另一台對應幼兒同行（原因 3，`childCompanionValidUntil` 算出的效期為數年後的 8/31）。**兩者同時成立，但系統只能擇一**。
+
+**風險不是優先序、是效期**：P2 有一個成立事由即為 P2，擇一不影響本週分配；但 `p2_valid_until` 會跟著被選中的事由走 ⇒ **選到短效期的那個，資格會提早失效**（本例選了永久的原因 1 是對的，但這靠人判斷、無護欄）。
+
+#### Decision（若要做）
+`users` 單欄 → `member_p2_grounds` 一對多（每筆 reason＋眷屬＋valid_until＋各自 review_status），`p2_valid_until` 衍生為 `max(grounds.valid_until)`；匯入改為「同人多事由＝合併不衝突」而非 fail closed；#10 覆核 UI 要能逐事由核准/撤銷。
+
+#### Unresolved decision（Blocked 原因）
+**先決條件**：#10 的 `review_status` 權威模型已成立（可直接沿用），但**眷屬 model 與撤銷語意未定**，且無實際需求量（首份名冊 59 位僅 1 例）⇒ 不卡交付。
+
+#### 今日的暫行規則（人工）
+**擇一時**：選**效期最長**的事由；被捨棄的事由寫入備註。
+
+---
+
+### #32 首頁「本週概覽」沒有目前申請狀況
+
+**Decision:** Do ｜ **Status:** **Ready** ｜ **Delivery:** **Pre-delivery**
+**Size:** S ｜ **Deployment:** App-only ｜ **Depends on:** — ｜ **Migration:** No
+
+#### Problem
+**（2026-07-28 使用者回報）**：[/admin 首頁](../parking-system/app/admin/AdminOverview.tsx#L88-L96) 上指標只有**車位供給**三個數字——「可分配總數／保留·停用／已核准」（`promised` ＝ `approved`＋`temp_approved`，見 [parkingRepository.ts:2153](../parking-system/server/repositories/parkingRepository.ts#L2153)）。**申請端的需求量完全看不到**：週三～週五 `application_open` 階段，申請都還是 `pending`、分配尚未跑，於是「已核准」恆為 0 ⇒ 幹事**在最需要判斷供需的那幾天，首頁是空的**，只能改去別頁翻。
+
+#### Decision
+**要補的兩個數字**：`pending`（申請中）與 `waiting`（候補）。
+
+#### Constraints
+- 已核准已有、不重複；`attended`/`no_show`/`cancelled_*`/`walk_in` 等**終局狀態屬事後分析（#16），v1 不放**——概覽是「現在要不要處理」不是報表。
+- ① 與容量同一支 `getWeekOverview`、同一個 `weekly_event_id`，**不得另開資料源**（否則首頁自己跟自己不一致）。
+- ② PostgREST 無 group-by，別為此開 RPC／也別打三次 head-count——**一次 `select('status')` 取本週 reservations 在 app 端計數**即可（本週量級數十筆），或併進既有 `countPromisedReservations` 改成回三態 counts。
+- ③ **標籤隨階段變**：分配前 `pending` ＝「申請中」，分配後理應為 0（分配會轉成 approved/waiting），若非 0 代表有漏勾——因此**分配後仍顯示且非 0 時上 warning tone**，不要無條件隱藏。
+- ④ 供需一眼可讀＝把「申請中」排在「可分配總數」旁。
+- ⑤ 純計數、無個資，幹事/系統管理員同視野，**不需 #19 capability 判斷**。
+
+#### Acceptance
+`application_open` 階段首頁可看到 `pending`／`waiting`；分配後 `pending` 正常為 0、非 0 時呈 warning tone；`WeekOverview` type 加欄＋既有測試補 case。
+
+#### Implementation notes
+**規模 S**：app-only、**無 migration**、無新頁面。預計改動 `AdminOverview`／`adminOverviewService`／`WeekOverview` type。
+
+#### History
+2026-07-28 依使用者實際操作回報加入 triage（Wave 3 3e）。技術上非阻擋（不做也能運作），但它補的是 #8 在 `application_open` 階段**首頁等於空白**的缺口——正是同工交付後每週最常看的那幾天 ⇒ **建議併進交付前收尾**。
+
+---
+
+### #33a 眷屬顯示年齡＋幼兒「學齡前／已入學」
+
+**Decision:** Do ｜ **Status:** **Ready** ｜ **Delivery:** **Pre-delivery**
+**Size:** S ｜ **Deployment:** App-only ｜ **Migration:** No
+
+#### Problem
+**需求（2026-07-28 使用者提出）**：會友資料與覆核畫面要能看到幼兒與長者的年齡，並標示學齡前／非學齡前。
+
+**資料已存在、不需 migration**：`eligibility_dependents(dependent_kind, dependent_name, dependent_birthdate)`（[0020:15](../parking-system/supabase/migrations/0020_member_import.sql#L15)，`dependent_kind` enum＝`impaired/child/elder`）；匯入已收 `孩童生日1–3`／`長者生日`（[memberImportSchema.ts:46-52](../parking-system/lib/memberImportSchema.ts#L46-L52)）。明細頁**已經在顯示眷屬與原始生日**（[members/[id]/page.tsx:116-128](../parking-system/app/admin/members/[id]/page.tsx#L116-L128)）。
+
+#### Decision
+**33a 明細頁**：眷屬列在既有生日後補「N 歲」，`child` 另加 `學齡前`／`已入學` badge。**零新增揭露**——該頁本來就顯示完整生日（頁首已有 #12 資料最小化橫幅），年齡是更粗的衍生值。純 presentation、無 service 改動。
+
+#### Constraints
+- **⚠️「學齡前」不是新規則、不得新寫一條**：權威已存在＝`childCompanionValidUntil(bd)`（[eligibilityStatus.ts](../parking-system/lib/eligibilityStatus.ts)，國民教育法 9/1 inclusive cutoff，回傳入學前一年的 08-31）。標籤定義**只能是** `asOf <= childCompanionValidUntil(bd)` ⇒ 學齡前。任何自行用「年齡 < 6」判斷都會與 P2 效期在 9/1 前後差整整一年（該檔案標頭已明寫兩個相差一天的孩子差一個學年）——**那就是本專案最典型的雙重真相**。
+- **⚠️ as-of 必須是參數、不得用 clock**（同檔標頭鐵律）：本項兩個 surface 問的都是「今天要不要處理」⇒ `asOf = taipeiToday(now)`；**絕不可**被 `priority.ts` 的分配判定重用（那支的 as-of 是 `sunday_date`）。
+- **⚠️ 長者無年齡規則**：全 codebase 找不到 65 歲之類門檻，`elderly_companion` 只是事由、效期通常永久 ⇒ 顯示長者年齡**純屬輔助判讀，不得推導任何資格**；且 `長者生日` 為選填、常為 NULL ⇒ null 要顯示「生日未填」而非算成 0 歲。年齡＝週歲（滿歲），台北曆日計算。
+- **其他**：display-only、不寫 audit；若日後真要記，`0030`/`0035` 的 sanitizer 會擋 birthdate-shaped key 帶日期值（**boolean 才放行**）⇒ 只能記布林/enum。
+
+#### History
+與 #31（一人多事由）相關但獨立：#31 是能不能存多個事由，本項是把已存的那一個看清楚。Wave 3 3e，與 #32 同批。
+
+##### #33b 覆核佇列（Reject / Closed — Commit 3 移入 Archive）
+**33b 覆核佇列 ❌ 不做（2026-07-28 使用者決定「33a 即可」）**：`/admin/eligibility` **維持刻意不帶眷屬任何資料**（[eligibilityReviewService.ts:10](../parking-system/server/services/eligibilityReviewService.ts#L10) 明寫 "No PII beyond name … (no phone/dependents)"）。曾評估「只帶衍生 enum（`preschool`/`school_age`/`unknown`）、不帶生日/年齡/姓名」，但那仍是該頁隱私姿態的一次放寬，而覆核者點進明細頁即可看到（33a 已足）⇒ **不為此破線**。日後若真有「在列表就要分流」的需求再重啟，且屆時仍以「只帶衍生 enum」為底線。
+
+---
+
+### #34 Member Data Lifecycle 會友資料生命週期（Epic）
+
+**Decision:** Do ｜ **Status:** **Ready** ｜ **Delivery:** **Pre-pilot** ｜ **Size:** L（拆五刀，六個 work item）
+**Deployment:** TBD ｜ **Invariants:** INV-01, INV-02, INV-03, INV-04
+
+> **問題重新定義（採納外部審查）**：不是「CSV 改善」也不是「增加會員自助修改功能」，而是**把會友資料的 source of truth，從同工代填改成本人提交＋系統檢核＋必要治理覆核**。交付日的大量代填錯誤證明這不是 nice-to-have，是**下一輪正式資料導入前該收斂的營運風險** ⇒ 前三刀 **pilot 前**做，不整包丟 Wave 5。
+>
+> **來源＝交付日實況（2026-07-28，已匯入 prod 57 位）**：轉入 CSV 有**大量同工代填錯誤**與**該填卻空白的欄位**。
+>
+> **長期 architecture decision**：**CSV ＝ bootstrap / bulk compatibility tool；`/member` 逐漸成為資料的正常 source-of-truth surface。**
+
+#### Work items — canonical child state
+
+> **這張表是 `#34` 內部 work item 狀態的權威**（`Feature inventory` 只放 parent 一列）。
+> **Parent 聚合規則**：`#34` 的 Status／Delivery **反映下一個 actionable tranche**，不是所有 child 的聚合完成度——取「尚未 Done/Closed 的 child 中 Delivery 最早的那一個」。全部 child 皆 Done/Closed ⇒ parent `Done`。
+
+| Work item | 主題 | Decision | Status | Delivery | Deployment |
+|---|---|---|---|---|---|
+| 34-0 | Import integrity（匯入完整性） | Do | Ready | Pre-pilot | App-only |
+| 34-0b-A | Import auditability（真正發生的 mutation 可稽核） | Do | Ready | Pre-pilot | Migration + App |
+| 34-0b-B | Import run / diagnostics | Do | Deferred | Post-delivery | Migration + App |
+| 34a | Profile completeness & confirmation | Do | Ready | Pre-pilot | TBD |
+| 34b | Member self-maintenance | Do | Deferred | Pilot-early | TBD |
+| 34c | New-member intake | Do | Deferred | Post-delivery | Migration + App |
+
+#### 為什麼「再加強 CSV 驗證」不是根治
+匯入驗證已經很嚴：姓名/車牌/手機 row-level 必填（[memberImport.ts:189-193](../parking-system/lib/memberImport.ts#L189-L193)）、手機格式＋科學記號防護、同手機任一列壞掉整位跳過（Wave 0 row-completeness）、同手機不同姓名/同車牌多 owner/P2 資料矛盾一律 fail closed（Wave 0.1）。但 `0912xxxxxx + ABC-1234` **格式全對，不代表那是張三的手機與車牌**。驗證器能查格式，查不了歸屬，也叫不動知道答案的人。⇒ **換資料來源，不是再疊一層 parser 規則**。
+
+#### 貫穿全 Epic 的第一個 technical task
+**抽出 member profile completeness domain rule**（審查建議，採納為第一個工作項）：
+
+```text
+getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
+```
+
+**server authoritative、UI 只拿結果顯示**（`INV-02`）。現有 condition-aware 規則（reason 1/2 → 行動不便者姓名；reason 4 → 長者姓名＋生日；reason 3 → 孩童或孕婦資料；孩童**有姓名沒生日**不算 malformed、只降成 `reviewRequired`）必須收進這一份，**不可演變成 CSV validator 一套、LIFF form 一套、Admin review 又一套**。
+
+---
+
+#### 34-0 Import integrity — **strict by default**
+
+**Status:** Ready ｜ **Delivery:** Pre-pilot ｜ **Deployment:** App-only
+
+**Problem — 現況（已驗證）**：preview 出現錯誤/衝突時，操作者勾一個「上方標記為錯誤/衝突的列會被略過，其餘合法會友仍會寫入。我已了解並仍要匯入。」就能送出——`disabled={busy || (hasSkips && !acknowledged)}`（[MemberImport.tsx:238-245](../parking-system/app/admin/import/MemberImport.tsx#L238-L245)）。**這個 acknowledge 逃生口本身就是要改掉的核心。**
+
+**Decision（二輪審查改判，採納）：不引入任何 mode，預設所有 CSV import 都 strict。** 只要存在系統明確知道會跳過資料的 hard issue——`validationErrors`／`phoneNameConflicts`／`identityConflicts`／`plateConflicts`／`batchPlateConflicts`／`groupConflicts`——就**不能 Apply**，一般管理員只看到「**有錯誤 → 請修正後重新預覽**」。
+
+**Constraints：**
+- **⛔ 明確否決「以名冊是否為空自動判定 bootstrap」**（已由審查駁回、理由成立）：500 人第一次只匯進 300 人，`users` 就已不為 0，第二次進來會被誤判成 incremental——**但正式名冊 bootstrap 根本還沒完成**。且未來可能已有少數手工建立的會員或 pilot 人員，正式 roster 才第一次進來。**「DB 是否為空」不是 business state。** 操作者自選同樣否決（會被誤選）。
+- **partial import ＝ exceptional path，不是 normal path**：若未來真有「先匯 490 位、10 位之後處理」的實際需求，另做一個**系統管理員限定**的例外操作「略過錯誤資料並匯入其餘」，需二次確認＋寫 audit。**strict 是常態、partial 是例外**——比建立 bootstrap state 簡單，也更符合現在準備交付的系統。
+- **⚠️ `reviewRequired` 不可混成 hard error**（兩輪審查一致）：「幼兒同行但生日缺失」與「手機格式錯誤／同車牌兩個人／同手機不同姓名」不是同一種問題。
+
+| 類別 | 行為 |
+|---|---|
+| **Hard blocker** | 不能 Apply |
+| **Incomplete / review required** | 可建立 member，但**該會員不是 Ready** |
+
+後者的收斂路徑正是 34a：本人補資料 → completeness PASS → 本人確認 → P2 若需要仍由 Admin review。
+
+**Non-goal**：**這一刀解不了「ABC-1234 是不是王小明的」**，但能擋掉「明明系統知道有問題，仍產生半套正式名冊」。
+
+---
+
+#### 34-0b-A Import auditability
+
+**Status:** Ready ｜ **Delivery:** Pre-pilot ｜ **Deployment:** Migration + App ｜ **Invariants:** INV-04
+
+**Problem — 現況（已驗證）**：`/api/admin/members/import/apply` **完全不寫 audit**，報表只回瀏覽器且刻意不落地（[apply/route.ts:12](../parking-system/app/api/admin/members/import/apply/route.ts#L12) 明寫 "The CSV, report, and token are never logged"）。這在 #15 之後是明顯缺口：容量、P2 覆核、角色、車輛、名冊匯出全都寫 audit，**唯獨影響最大的批次寫入沒有**。
+
+**Decision — 真正發生的 mutation 必須可稽核。** 兩種列：
+- **per-member**：`member.import`，`entity_id` ＝ user UUID，metadata 僅 `created`／`vehicles_added`／`eligibility_written` 等布林與計數。這能回答「**這位會員是什麼時候因 CSV import 建立的？誰操作的？**」而完全不需把電話車牌複製進 audit。
+- **batch summary**：`member_import.apply`，僅 profile 與計數（rows／members／created／updated／vehicles_added／review_required／result）。
+
+**Constraints：**
+- **⚠️ 二輪審查的關鍵修正（採納）：audit ≠ import report，兩層要分開，不可為了保存 report 而破壞 audit substrate 的設計。** audit 的既有姿態就是「ordinary input validation 不 audit，避免把 user-supplied values 拉進 metadata」，且 writer 已硬性禁止 phone/line_id/plate/name/remarks/birthdate/address/email 出現在 metadata（`0030`／`0035` denylist）。**不要為 CSV report 打破它。**
+- **⚠️ 交易邊界（讀碼補充，審查規格未涵蓋）**：審查要求「audit 與 business write 同 transaction」——**per-member 列可以且必須如此**（`import_member` RPC 內部 append，天然同 txn，符合 #15「audit 與業務同生共死」）。但 **batch summary 不可能同 txn**：[memberImportService.ts:343-353](../parking-system/server/services/memberImportService.ts#L343-L353) 明寫 "Per-member RPC is atomic, but the whole CSV is not one transaction"，每位會友各自 commit，**整批沒有一個包住的 transaction**。⇒ batch 列是 best-effort 的收尾列；**per-member 列才是權威 trail**。實作推論：中途失敗（`CsvImportExecutionError`）時 batch 列不會寫出，但已 commit 的 per-member 列仍在——這是可接受的，也正是為什麼權威必須放在 per-member。
+- **實作要求**：`import_member` RPC 需取得 actor admin id／actor session id／request id（**route 後補 audit ❌**），沿用 #15 的 SECURITY DEFINER 業務 RPC 模式。
+
+---
+
+#### 34-0b-B Import Run / Import Diagnostics
+
+**Status:** Deferred ｜ **Delivery:** Post-delivery ｜ **Deployment:** Migration + App
+
+**Decision**：`member_import_runs`（performed_by／performed_at／profile／各項計數／result）＋短期 `member_import_issues`（`import_run_id`／`line_number`／`issue_code`，例 `line 37 → phone_name_conflict`），**不保存 raw row**。
+
+**為什麼延後**：**審查判斷「不一定」pilot 前做，我同意**：34-0 改 strict 後，「寫完才發現有人被跳過」這個主要問題已大幅消除 ⇒ 不為一個已被 gate 消除的問題再引入一整套 PII report storage。等實際操作證明需要再做。
+
+---
+
+#### 34a 我的資料＋完整度＋本人確認
+
+**Status:** Ready ｜ **Delivery:** Pre-pilot ｜ **Deployment:** TBD ｜ **Invariants:** INV-02
+
+**Decision — completeness 先於 confirm（採納審查修正）。** 原本提「唯讀看資料→按正確」是錯的順序——王小明的孩童生日空白時，他按下「資料正確」會把**一份不完整的資料認證成正確**。正確流程是：**完整度檢查 → 本人補齊 → 本人確認 → 必要時行政覆核**。
+
+畫面顯示「資料完整」或「還有 2 項需補填」（例：⚠ 尚未填寫孩童生日／⚠ 尚未確認車牌），**全部 completeness rule 通過才出現「確認我的資料」**。
+
+**Unresolved（開工前要定）**：**`profile_confirmed_at` 的語意必須先定義**（審查正確指出：這是 DB write，**不是先前說的「零寫入風險」**）：任何相關欄位後續被修改 ⇒ `profile_confirmed_at` 歸 null、要求重新確認；並決定是否寫 audit（傾向寫，`actor_type='member'`）。
+
+---
+
+#### 34b 本人補正 — 三種欄位是三種權限模型
+
+**Status:** Deferred ｜ **Delivery:** Pilot-early ｜ **Deployment:** TBD ｜ **Invariants:** INV-01, INV-02, INV-03
+
+審查在此比原本的切法更細，採納：
+
+| 欄位 | 模型 |
+|---|---|
+| **車輛新增／停用／恢復** | **可本人直接改**。`0038` 已備妥 soft delete／使用中才唯一／未結束預約不可停用／衝突不洩他人身分 ⇒ 把 #28 接到 member surface 是自然下一步 |
+| **手機號碼** | **不可 direct edit**。`users.id` 才是 identity、phone 是 mutable attribute（`0038` 整刀正是為修正「把 phone 當 identity」），且 phone 同時參與 binding identity ⇒ 走「提出變更 → 驗證／admin confirmation → update identity」 |
+| **P2 資料**（行動不便／孕婦／長者同行／幼兒同行＋孩童生日） | 本人可填，但 **submission ≠ eligibility approval**，走 #10 既有治理 |
+
+**⚠️ 審查的重要修正（採納）**：**不要把一般 profile update 也塞進 `review_status='unreviewed'`**。`review_status` 是 **P2 eligibility 的治理權威**，不是整份 profile 的 approval flag。三者語意分開：**基本資料 completeness／車輛 maintenance／P2 application-review**。（先前「會友送出的一律落 `unreviewed`」講得太寬——那條鐵律只適用於 P2 治理欄。）
+
+---
+
+#### 34c 新會友 self-onboarding
+
+**Status:** Deferred ｜ **Delivery:** Post-delivery（系統穩定後才建，但**現在就該定架構**）｜ **Deployment:** Migration + App
+
+審查與原案的差異其實比看起來小：**排序一致**（都放最後），差別在**現在就要把目標架構定下來**，否則會一直複製今天的問題——「同工先輸 CSV → 會友才能綁 OA → 會友再修同工輸錯的資料」。
+
+**目標流程**：`LINE identity（伺服器已驗證）→ pending member intake → 幹事核可 → 同一 transaction 內 create member + vehicles + binding + audit`；P2 若有申請仍進 #10 review。
+
+**Constraints：**
+- **共識：不讓未知使用者直接 INSERT canonical `users`**，但也**不必先由同工替他輸一列 CSV**。
+- **⚠️ 不要塞進 `pending_binding`**：該表用途已很明確（capture-time identity snapshot／approved-rejected／retention／PII redaction／concurrency）——`0038` 之所以 freeze `matched_user_id_at_capture`，正是為了避免 phone reassignment 造成跨人錯綁，代價是**送出當下無會員 ⇒ 事後才建會員也不能直接核准、必須重送**。另建 `member_intake_submissions`，讓 binding 與 profile onboarding 的 lifecycle 不互相污染。
+
+**屆時 CSV 退回它真正的角色**＝**bootstrap / bulk compatibility tool**，而非日常會友資料建立與維護入口。
+
+---
+
+#### #34 History
+
+**❌ 更正上一版的錯誤主張**：曾寫過「34-0b 讓**今天這批**可被追查」——**這句不成立**，審查修得對。report 未保存、瀏覽器已關、當時無 audit 也無 import run ⇒ **新增的 audit 無法回溯創造歷史**，精確重建「某次匯入第 53 列被跳過、理由是 X」是做不到的。
+**今天這批能做的是 reconciliation（不是 historical audit reconstruction），兩者文件上必須分清。**
+
+**✅ reconciliation 已完成（2026-07-29）**：跑**匯入器自身的 pipeline**（`importMembersFromCsvText` ＋ stub repository，非人工讀檔）核對 `01.主日停車場申請名冊2026.07.匯入用.csv`：
+- 61 資料列 → **54 位會友、60 台車**
+- **擋下 1 位**：檔案第 12 行缺手機號碼（孩童生日已填，補上手機即可正常匯入）
+- **群組衝突 0、同檔車牌衝突 0** —— 匯入前待補清單的「同手機兩種申請原因」已解決
+- **`reviewRequired` 4 位**：3 位原因 2（短期不便）無申請日期 ⇒ 算不出 6 個月效期；1 位孕婦（另計）
+- **prod 57 位 ＝ CSV 54 ＋ 使用者手動自建 3 位**（已確認，差額結清）
+
+⚠️ **範圍限制**：stub repo 的跑法**不涵蓋 DB 側衝突**（同手機不同名／identity candidate／車牌已屬他人）——那三類由 `import_member` RPC 判定，需連真 DB 才驗得出。
+⇒ 這是**一次性營運核對，不是新功能**。`reviewRequired` 那 4 位必須在 `/admin/eligibility` 覆核佇列清——**綁定宣導抓不到他們**（他們會正常綁定，資格靜靜躺著）。
+
+**連帶：文件同步 ✅ 已完成（2026-07-29）**
+`docs/current_handoff.md` header／剩餘 ops 行與 `go-live-checklist.md §1.3` 原寫「尚未匯入正式教會會員資料」，**已同步為「2026-07-28 已匯入 prod、57 位」**。（§6.x 內的歷史敘述**刻意不動**——那些是當時狀態的正確紀錄。）
+**名冊面殘留待辦記於 go-live §1.3**（4 位 `reviewRequired` 待設效期／1 位缺手機未匯入／其餘跳過者於宣導綁定時人工處理）——**權威在 go-live-checklist，本檔不重述**。
+**已知機制細節**：不在名冊者送出綁定申請會以 `unmatched_at_capture` 浮出；但補建會友後**原申請不能直接核准**（`0038` 核准讀送出當下凍結的 `matched_user_id_at_capture`，[0038:708](../parking-system/supabase/migrations/0038_member_maintenance.sql#L708)），需請本人**重新送出**。
+
+---
+
 > ⚠️ **Migration staging：以下為尚未搬移的 legacy content，非 canonical state。**
 > Commit 2 會把未完成項搬進 `Active feature details`、Commit 3 會把已完成項搬進 `Archive`，屆時本標記移除。
 > 在此之前，若下方內容與上方 `Feature inventory` 不一致，**以上方為準**。
@@ -196,23 +641,12 @@ Done           ⇒ Acceptance 已由實作／驗證滿足
 |---|------|---------|------|------|------|
 | 1 | 換人「換碼」＋手動轉發文案 | admin/staff-pin | S | ✅（-1） | 重發＝新碼、舊 hash 立即失效。文案：「換人值班？重發即可，舊 PIN 立即失效。請將新 PIN 手動傳給本週值班同工。」 |
 | 2 | 顯示回同一組 PIN | admin/staff-pin | — | ❌ | scrypt 單向、明碼不落地；換人本就該撤舊碼。 |
-| 3 | PIN 自動發同工 LINE 群 | webhook/通知/cron | **M＋安全 design review** | ✅（4） | ⚠️ **cron retry 反覆旋轉 PIN＝最大風險**。明碼不落地→push 失敗**無法重送同碼**，只能撤舊碼產新碼。**service 邊界**：`issueAndSendToGroup(eventId)`（cron 唯一入口、一次性；內部 issue 回明碼→in-process 交 push，明碼不持久化）／`rotateAndSend(eventId)`（**admin 專用**，撤上一組再產新碼送）。**push 失敗＝不自動 retry、標記「派送失敗」**，管理者手動「重新發碼並再送」（＝旋轉）。每次旋轉寫 audit。groupId 走 **allowlist/啟用流程**，不 auto-trust webhook。需獨立 design review。 |
-| 4 | PIN 個別私訊值班人 | 通知＋綁定＋輪值表 | L | ✅ defer（4） | 需同工完成 OA 綁定；全自動需輪值表 model。 |
 | 5A | 名冊瀏覽（最小欄位、server 分頁） | admin/members | M | ✅（1） | server pagination；欄位僅姓名/遮罩電話/車牌摘要/狀態；**不匯出、不 bulk、不預載敏感事由**，點入才讀完整。可在 role 前上（現有 admin session gate）；明確接受「全名冊可見」姿態先於 role。 |
-| 5B | 名冊匯出/批次/敏感欄位權限 | admin/members | M | **拆三：5B-a ✅ 完成（Wave 3 3d）／5B-b·5B-c deferred** | **依賴 #19**。**5B-a 名冊匯出**（僅系統管理員、含 audit）✅：新 capability `export_members`＋POST `/api/admin/members/export`（body-less、`guardAdminOrigin`、`no-store`）＋keyset 讀（cutoff）＋spreadsheet-injection 防護＋migration `0037` `log_member_roster_export`（FOR SHARE 重新授權＋audit `member_roster.export`，denied 不稽核）。**非 round-trip**（人類可讀行政匯出）。**5B-b 敏感欄位顯示分級**（明細頁依角色遮罩眷屬/生日）＋**5B-c 批次** → **post-delivery deferred**（無具體需求；今日幹事仍看完整電話/P2 事由，本刀不碰）。 |
-| 6A | Admin 憑車牌移車（第一版） | admin/members＋通知 | M | ✅（4） | 走通用通知目的地模型。含：憑車牌搜尋、車主解析、**未綁 LINE gating（明示無法通知不假送）**、二次確認、遮罩姓名+完整車牌核對、可選原因（擋出入口/車燈/施工/其他）、同車牌 5–10min 冷卻、reservation-independent dedupe、enqueue、**當次操作結果**、audit。送出後只顯示「通知已排入傳送，暫時無法送達會自動重試」。role：幹事可用、不看 ops 內部（#19 matrix）。 |
-| 6B | 移車通知歷史/狀態（polish） | admin/members | M | ✅ defer（後續） | 最近通知時間+狀態、重送入口/歷史。**避免第一版耦合完整 outbox 狀態 UI**（pending/processing/sent/retrying/failed）。 |
-| 7 | 移車/急件即時通知 | 通知/dispatcher | S–M | ✅（4） | **commit 後才 dispatch**：txn（業務寫入＋enqueue）→**commit**→回業務成功→**commit 後** best-effort「只 claim 這筆/dedupe key」bounded dispatch→LINE 失敗不回滾、cron 續 retry。（不可在 txn 未 commit 時觸發 dispatcher——另一連線看不到 row/讀到未完成狀態。）UI 三態文案：已排入／已送達／暫時失敗稍後重試。 |
 | 8 | 本週概覽（上指標下待辦） | admin/page | M | ✅ **完成（Wave 3 3a，PR #47）** | 鎖管理日曆當週主日（非 `getActiveEvent`）；標本週階段。容量顯示用**「可分配總數/保留·停用/已核准」，不用「外賓」字樣**（對齊 #14A 單一 blocked）。**實作**：`getWeekOverview`（`adminOverviewService`）＋`deriveWeekStage`（`lib/weekStage`，五階段）；`/admin` 首頁 `AdminOverview`。 |
 | 9 | Sidebar 待辦徽章 | admin sidebar | S–M | ✅ **完成（Wave 3 3a，PR #47）** | 與 #8 共用 **service contract**（不硬 RPC）：`adminTodoService.getAdminTodoSnapshot`（fail-soft、`React.cache` request clock）＋`badgeForHref`。**snapshot 模型**：layout 一次取 → `AdminTodoProvider` 單一源餵側欄＋概覽（共用 layout 在 soft-nav 不重跑，故不可各自取數）。badge：P2 待審／牧養 open（v1 不分逾期）／ops `attention`（含 due_backlog_stale，只系統管理員）；ops backlog 正常排空不亮。 |
-| 10 | P2 寫入型覆核 | admin/members/[id]＋eligibility inline | M | ✅ **交付阻擋已解除（2B-2a 模型 PR #41 / `155c7f7`；2B-2b 寫入 RPC＋明細頁 UI PR #42 / `c536b01`）；2B-2c 佇列列內操作＝非阻擋性便利化** | **避免雙重真相**：`review_status` 為權威、`p2_eligible` 改為衍生。**實作與本規格四處刻意分歧（以實作為準，見 [0032](../parking-system/supabase/migrations/0032_p2_review_status.sql) 標頭）**：① `p2_eligible` 衍生自 **`review_status='approved'` 而已、不含任何日期**——含日期會把「寫入者的 as-of」烘進去，兩個 reader 各自繼承（見 §6 2B-2a 的 silent-P3）。② **不新增 `effective_until`**：`p2_valid_until` 已經是截止日、正是 `priority.ts` 讀的權威，再加一個就是本列要消滅的雙重真相；只加 `p2_valid_from`。③ enum **三態** `unreviewed/approved/revoked`——`revoked` 必須代表「人撤銷過」，舊 false 回填成 revoked 是憑空捏造。④ **不加 `updated_at`**：樂觀鎖是 `review_version`（counter 非 timestamp，`0022:118-120`），顯示權威是 `reviewed_at`，該欄無消費者。<br>**2B-2a 已含**：`reviewed_by` FK 由 `users`→`admin_accounts`（原本根本存不進自己的覆核者）、`review_note`、`review_version`、幼兒到期改學年度制、匯入不得復活已撤銷者、**audit sanitizer 擋生日值**。**2B-2b 已含**（[0033](../parking-system/supabase/migrations/0033_p2_review_rpcs.sql)）：`set_p2_eligibility`／`mark_p2_reviewed`（「標記已覆核」≠「核准」，且**永不 inert**、不可照抄 0031 的 no-op 規則）、明細頁 inline `EligibilityForm`、匯入 precedence（**CSV 可建立無人決定過的資格，但不得覆寫任何人工治理欄**⇒`retained_governed`）、治理邊界收斂成**單一欄 `reviewed_at is not null`**（非 `review_version > 0`——那代表「RPC 寫過」不是「人決定過」）、**幼兒到期公式進 SQL 成 `IMMUTABLE` 函式＋CHECK** ⇒ 2B-2a 明寫的殘留（「不可覛改」只靠 UI）已關閉。**2B-2c 剩**：佇列列內操作（共用同一 service，非阻擋）。`pending/needs_information/rejected` 仍綁 #11——`mark_p2_reviewed` 用 **allowlist `<> 'approved'`** 拒絕，故 #11 新增狀態會 fail closed 而非默默可覆核。**依賴 #15，不依賴 #19**。 |
-| 11 | P2 會友自助申請＋待審 inbox | member＋eligibility | L | ✅ defer（5） | #10 的完整五態 enum 在此補齊。 |
 | 12 | 資料最小化橫幅 | eligibility, members/[id] | S | ✅（1） | 明示「不索取/不顯示診斷證明」。 |
-| 13 | P1 同工名單＋「本週不停」自動釋出 | admin | M–L | 🕒 defer | auto-release 業務規則未定。 |
 | 14A | 車位容量設定（交付前） | admin＋weekly_events | M | ✅ **已完成（2B-1，PR #40 / `8de24a0`）** | 解決「幹事不用 SQL 改容量」。`total_capacity`／`blocked_spaces`（顯示「保留·停用」、**不拆外賓/維修**）／effective 預覽。**transactional guard**：已分配後 `effective_capacity >= approved_count` 由 **DB RPC 在 txn 內**檢查（不能只 UI 警告）。寫 audit。**依賴 #15，不依賴 #19**。<br>**實作差異**：promised 集合＝`('approved','temp_approved')` 而非只 approved（`temp_approved` 已佔位，見 §6 2B-1）；`admin_reserved` 已**摺入 `blocked_spaces`** 並 `check (admin_reserved = 0)` 釘住 ⇒「保留·停用」單一數字**可證明**是全部。 |
-| 14B | 申請開放 override（後續） | admin＋weekly_events | M | ✅ defer（3） | `application_override` enum（`automatic`/`forced_open`/`forced_closed`）。規則未定：與時間視窗互動、關閉後既有申請、分配後重開——先不做，不卡 14A。 |
 | 15 | 稽核記錄（Audit Log） — 地基 | 橫切＋唯讀頁 | L | ✅ **全部完成**：**2A-1 ✅**（PR #38 / `8513912`）＋**2A-2 viewer ✅**（PR #39 / `d2e6890`）＋**2A-3 retention ✅**（PR #43 / `5db33bc`，migration `0034`） | **實作與下列原始規格有四處刻意分歧，以實作為準（見 [0030](../parking-system/supabase/migrations/0030_audit_substrate.sql) 標頭）**：①「app role 只 INSERT/SELECT」**做不到也不夠**——app 跑 service_role、RLS 對它無效，且 0004 已 blanket grant DML；改為 **revoke DML（含 TRUNCATE）＋ trigger 雙層**，且明確**不宣稱 immutability**（owner 仍有 DDL）、**不防 omission**（只提高偽造成本）。②「單一 RPC」升級為 **`private.append_audit_log`，EXECUTE 不授權給任何人**（含 service_role），只有 owner-controlled `SECURITY DEFINER` 業務 RPC 能在**業務 txn 內**呼叫＝audit 與業務同生共死。③ 治理拒絕**必須 typed return 不可 raise**（raise 會把記錄拒絕的那列一起 rollback）。④ metadata **flat depth-1**＋PII key denylist，由 RPC 內部組裝。原始規格其餘照做：actor 模型（actor_type enum＋actor_id＋actor_session_id＋actor_role_snapshot，**無 FK**）、存 ID 不存姓名、request_id（改 **NOT NULL**）、result（`success/denied/conflict`）。exemplar＝`set_admin_disabled`；其餘記錄項（容量/P2/PIN/群組/車牌 CRUD）隨各自 slice 接入。<br>原始規格存參：表已存在（[0003_infra.sql:49](../parking-system/supabase/migrations/0003_infra.sql#L49)）**無 insert path**→補 insert substrate。**actor 模型：`actor_type` enum（admin/staff_session/member/job/system）＋`actor_id` nullable＋`actor_role_snapshot` nullable**（不要四個 nullable FK；`actor_id` 為 snapshot ref、不做通用 FK）。**存 ID 不存姓名**，顯示時 join；刪除者顯示「已刪除會友（ID 尾碼 xxxx）」→ 故 **admin 帳號 soft-disable 不 hard-delete**（現況已 disabled_at）。其餘欄：action/entity_type/entity_id/event_id/request_id/result/metadata_redacted(allowlist)/created_at。**DB append-only**：app role 只 INSERT/SELECT、單一 RPC、**永不寫 PII/token/LINE ID**、retention 用受限 maintenance function。記錄：role change/帳號停用/容量修改/P2 覆核/PIN rotation/群組設定/會員車牌 CRUD。<br>**2A-3 retention（[0034](../parking-system/supabase/migrations/0034_audit_retention_purge.sql)）**：`purge_audit_logs` 每月清 24 個月前的列。**逃生口＝雙鎖**（交易域 GUC `audit.allow_purge` 只有 purge fn 開＋`current_user`＝table owner；SECURITY DEFINER 以 owner 身分執行、直接 service_role delete 不是 owner）⇒ 即使未來重演 blanket grant 也刪不掉；`UPDATE`/`TRUNCATE` 恆擋。**時鐘用 DB 的 `now()`、不收 `p_now`**（呼叫端傳未來時間即可洗掉全表——與 binding-PII 前例的有意分歧，因早刪 audit 不可逆）。`audit.substrate_enabled`／`audit.retention_purge` retention-exempt；只在真的刪了才寫 marker（否則永久灌爆）。verifier 釘 **fn owner ＝ table owner**（否則鎖2 連合法 purge 都擋）。UI 文案翻面「紀錄保留 24 個月，逾期後由定期維運作業清除」，**部署硬前置**＝prod cron 先設好（runbook §13）。 |
-| 16 | 停車樣態分析（先聚合） | admin＋歷史 | L | ✅（5） | 開放 P3 決策支援；價值隨營運週數累積；不列具名 No-show 排名。 |
 | 17 | 營運狀態頁 B＋C | admin/ops＋sidebar | M | ✅ **完成（Wave 3 3b）** | 頁改名「通知系統狀態」。**B**：白話健康摘要當主角、技術細節與死信重送摺疊 `<details>`（異常時預設展開）、時間 UTC→台北（重用 `fmtTaipeiDateTime`、標時區）、sidebar 移最下。**C 以實作為準**：幹事**不放行進 `/admin/ops`**，改在「本週概覽」看白話健康——`notificationHealth`（healthy/attention/unavailable）與技術 `ops` **拆兩欄**（`ops` 非 null ⇒ 具 view_ops——幹事恆 null、superadmin 在 health 無法取得時亦 null；授權以 role/capability 為準；幹事只收 enum 不落地計數），異常→「通知系統異常，請聯絡系統管理員」linkless 列；**health 查詢失敗隔離**（不連帶清空 P2/牧養、不 fail-open 當正常）；🎉 重定義為「此角色需處理的事項」。無 migration。 |
 | 18 | 側欄 IA 兩區 | admin sidebar | S–M | ✅ **完成（Wave 3 3c）** | 日常/系統維運，分區線＝#19 角色邊界。**只加分界線、無可見區標**（使用者定）；`daily`/`system` 是 IA 非 auth boundary。新 `lib/adminNav.ts`（`buildAdminNav`：capability 過濾先於 zone；`zone` 顯式非從 capability 推斷）；幹事 system 區空⇒不渲染 divider（與今日一致）。a11y：兩區 `role=group`＋`aria-label`（視覺仍無區標）。無 migration。 |
 | 19 | Admin 角色分級（兩級）＋新增管理者 | admin/accounts＋橫切 | M–L（地基） | ✅（**2C**） | 系統管理員/幹事；`role` enum（預留唯讀）。**session：敏感操作每 request 從 DB 讀 active+role**（既有 session 已重查 `disabled_at` [adminAuth.ts:36](../parking-system/server/http/adminAuth.ts#L36)，role 沿同路、不塞 cookie）；role 變更/停用 bump `session_version` 或刪 sessions；sidebar 隱藏只 UX。guardrails：不停用/降級最後一位系統管理員、不自我升權、禁自我降/停、CLI bootstrap=系統管理員、UI 預設幹事、重設密碼撤 sessions。role matrix 明確定義。 |
@@ -222,123 +656,9 @@ Done           ⇒ Acceptance 已由實作／驗證滿足
 | 23 | 點名備援清單搬 admin | /staff/print→admin | S–M | ✅（1） | 新增 `/admin/print`（gate `getAdminSession`，event 用管理日曆當週主日）；**`/staff/print` 移除或回 staff 首頁、不 redirect 到 /admin**（跨 auth domain 混亂）；**更新測試確認 staff PIN 不再能取列印資料**。資料源/`lib/staffRow`/`PrintButton` 全重用，保留 Staff-safe 最小內容。 |
 | 24 | staff footer 精簡 | /staff StaffCheckIn | S | ✅（1，於 #23 後） | footer 只留「＋登記現場車輛」；結束鍵移 header 選單、保留二次確認。 |
 | 25 | 通知死指令修正 | templates.ts | S | ✅ **必修（-1）** | 「回覆正在路上/請回覆確認」被 webhook ignored。全 template copy audit（≥2 則同類）。短期改寫指向 LIFF；正解=#26。 |
-| 26 | 通知 LIFF deep-link 按鈕 | 通知模板＋LIFF | M | ✅（4） | 確認保留/放棄、正在路上、回會員頁點擊即開 LIFF。 |
 | 27 | 通知內容 enrich | 通知模板＋payload | S–M | ✅（1） | 日期＋車牌＋粗體期限＋換行；producer 補 plate/date 到 payload。 |
-| 28 | 管理我的車牌（全自助） | app/member＋新 routes | M | ✅（5）｜**地基已由 Tier 0-2（`0038`）交付** | **Tier 0-2 做的是 ADMIN 側**（幹事在會友明細頁新增／停用／恢復車輛），會友自助仍待做——但本項要的 DB 語意已經成立且已驗證：**soft delete ＝ `is_active=false`（保留歷史 FK）**、**唯一性改為「使用中才唯一」**（`vehicles_active_plate_uq` partial on `is_active`，車牌因此可轉手而不改寫歷史）、**未結束預約擋停用**（在交易內、車列鎖下判定，狀態集合對齊 `lib/allocation/transitions.ts` 的非終局狀態）、**衝突訊息不洩他人姓名**（只回 `active_plate_owned_by_other`）、**增刪寫 audit**。剩下的是會友端 UI／路由、設預設＋暱稱、以及「至少留一台或允許零台」的產品決定。<br>原始規格：新增/刪除/設預設＋暱稱。**刪除擋所有未結束關聯**（upcoming open/waiting/approved/temp-approved·offer/未 finalized 已釋出/未來多週）；**soft delete（`active=false`）保留歷史 FK**。normalize＋unique on normalized plate；collision 訊息不洩他人姓名；set default transactional；至少留一台或明確允許零台。**增刪寫 audit**。濫用治理＝輕護欄（plate 唯一性＋audit＋一人一週一位天花板）＋社群處理（勸導→停用）。 |
 | 29 | member 顯示候補序號 | app/member | S | ✅（1） | 「目前候補第 N 位」＋「順序可能因取消、資格與分配狀態而變動」（動態非固定號碼）。 |
 | 30 | 取消加「不計違規」reassurance | app/member CancelButton | S | ✅（1） | 「10:30 前取消不計違規」，讓會友安心取消。可順帶補申請表「週五18:00截止」。 |
-| 31 | 一位會友同時符合多種 P2 事由 | DB `users`＋`memberImportService`＋#10 覆核 UI | M–L | 🕒 defer（post-delivery，規則未定） | **現況＝一人一事由**：`users.p2_reason` 單欄（[0001:47](../parking-system/supabase/migrations/0001_enums_core.sql#L47)）＋`p2_valid_until` 單一截止日；匯入以手機為會友主鍵，同一人多列 `申請原因` 不一致時 `resolveP2Group` **fail closed 整位跳過**（`GroupConflictField='reason_type'`）。<br>**真實案例（2026-07-28 首次真會友名冊，已去識別化）**：一位會友一支手機兩台車——一台對應配偶行動不便（原因 1、**永久**），另一台對應幼兒同行（原因 3，`childCompanionValidUntil` 算出的效期為數年後的 8/31）。**兩者同時成立，但系統只能擇一**。<br>**風險不是優先序、是效期**：P2 有一個成立事由即為 P2，擇一不影響本週分配；但 `p2_valid_until` 會跟著被選中的事由走 ⇒ **選到短效期的那個，資格會提早失效**（本例選了永久的原因 1 是對的，但這靠人判斷、無護欄）。<br>**擇一時的暫行規則（今日靠幹事人工）**：選**效期最長**的事由；被捨棄的事由寫入備註。<br>**若要做**：`users` 單欄 → `member_p2_grounds` 一對多（每筆 reason＋眷屬＋valid_until＋各自 review_status），`p2_valid_until` 衍生為 `max(grounds.valid_until)`；匯入改為「同人多事由＝合併不衝突」而非 fail closed；#10 覆核 UI 要能逐事由核准/撤銷。**先決條件**：#10 的 `review_status` 權威模型已成立（可直接沿用），但**眷屬 model 與撤銷語意未定**，且無實際需求量（首份名冊 59 位僅 1 例）⇒ 不卡交付。 |
-| 32 | 首頁「本週概覽」沒有目前申請狀況 | admin/page（`AdminOverview`＋`adminOverviewService`） | S | ✅（3e，非阻擋但建議交付前） | **問題（2026-07-28 使用者回報）**：[/admin 首頁](../parking-system/app/admin/AdminOverview.tsx#L88-L96) 上指標只有**車位供給**三個數字——「可分配總數／保留·停用／已核准」（`promised` ＝ `approved`＋`temp_approved`，見 [parkingRepository.ts:2153](../parking-system/server/repositories/parkingRepository.ts#L2153)）。**申請端的需求量完全看不到**：週三～週五 `application_open` 階段，申請都還是 `pending`、分配尚未跑，於是「已核准」恆為 0 ⇒ 幹事**在最需要判斷供需的那幾天，首頁是空的**，只能改去別頁翻。<br>**要補的兩個數字**：`pending`（申請中）與 `waiting`（候補）。已核准已有、不重複；`attended`/`no_show`/`cancelled_*`/`walk_in` 等**終局狀態屬事後分析（#16），v1 不放**——概覽是「現在要不要處理」不是報表。<br>**實作語意**：① 與容量同一支 `getWeekOverview`、同一個 `weekly_event_id`，**不得另開資料源**（否則首頁自己跟自己不一致）；② PostgREST 無 group-by，別為此開 RPC／也別打三次 head-count——**一次 `select('status')` 取本週 reservations 在 app 端計數**即可（本週量級數十筆），或併進既有 `countPromisedReservations` 改成回三態 counts；③ **標籤隨階段變**：分配前 `pending` ＝「申請中」，分配後理應為 0（分配會轉成 approved/waiting），若非 0 代表有漏勾——因此**分配後仍顯示且非 0 時上 warning tone**，不要無條件隱藏；④ 供需一眼可讀＝把「申請中」排在「可分配總數」旁；⑤ 純計數、無個資，幹事/系統管理員同視野，**不需 #19 capability 判斷**。<br>**規模 S**：app-only、**無 migration**、無新頁面。`WeekOverview` type 加欄＋既有測試補 case。 |
-| 33 | 眷屬顯示年齡＋幼兒「學齡前／已入學」 | admin/members/[id]（33b 原擬 admin/eligibility） | S | **拆二：33a ✅（3e，隨 #32 同批）／33b ❌ 不做（使用者 2026-07-28 定「33a 即可」）** | **需求（2026-07-28 使用者提出）**：會友資料與覆核畫面要能看到幼兒與長者的年齡，並標示學齡前／非學齡前。<br>**資料已存在、不需 migration**：`eligibility_dependents(dependent_kind, dependent_name, dependent_birthdate)`（[0020:15](../parking-system/supabase/migrations/0020_member_import.sql#L15)，`dependent_kind` enum＝`impaired/child/elder`）；匯入已收 `孩童生日1–3`／`長者生日`（[memberImportSchema.ts:46-52](../parking-system/lib/memberImportSchema.ts#L46-L52)）。明細頁**已經在顯示眷屬與原始生日**（[members/[id]/page.tsx:116-128](../parking-system/app/admin/members/[id]/page.tsx#L116-L128)）。<br>**⚠️「學齡前」不是新規則、不得新寫一條**：權威已存在＝`childCompanionValidUntil(bd)`（[eligibilityStatus.ts](../parking-system/lib/eligibilityStatus.ts)，國民教育法 9/1 inclusive cutoff，回傳入學前一年的 08-31）。標籤定義**只能是** `asOf <= childCompanionValidUntil(bd)` ⇒ 學齡前。任何自行用「年齡 < 6」判斷都會與 P2 效期在 9/1 前後差整整一年（該檔案標頭已明寫兩個相差一天的孩子差一個學年）——**那就是本專案最典型的雙重真相**。<br>**⚠️ as-of 必須是參數、不得用 clock**（同檔標頭鐵律）：本項兩個 surface 問的都是「今天要不要處理」⇒ `asOf = taipeiToday(now)`；**絕不可**被 `priority.ts` 的分配判定重用（那支的 as-of 是 `sunday_date`）。<br>**⚠️ 長者無年齡規則**：全 codebase 找不到 65 歲之類門檻，`elderly_companion` 只是事由、效期通常永久 ⇒ 顯示長者年齡**純屬輔助判讀，不得推導任何資格**；且 `長者生日` 為選填、常為 NULL ⇒ null 要顯示「生日未填」而非算成 0 歲。年齡＝週歲（滿歲），台北曆日計算。<br>**33a 明細頁（建議做）**：眷屬列在既有生日後補「N 歲」，`child` 另加 `學齡前`／`已入學` badge。**零新增揭露**——該頁本來就顯示完整生日（頁首已有 #12 資料最小化橫幅），年齡是更粗的衍生值。純 presentation、無 service 改動。<br>**33b 覆核佇列 ❌ 不做（2026-07-28 使用者決定「33a 即可」）**：`/admin/eligibility` **維持刻意不帶眷屬任何資料**（[eligibilityReviewService.ts:10](../parking-system/server/services/eligibilityReviewService.ts#L10) 明寫 "No PII beyond name … (no phone/dependents)"）。曾評估「只帶衍生 enum（`preschool`/`school_age`/`unknown`）、不帶生日/年齡/姓名」，但那仍是該頁隱私姿態的一次放寬，而覆核者點進明細頁即可看到（33a 已足）⇒ **不為此破線**。日後若真有「在列表就要分流」的需求再重啟，且屆時仍以「只帶衍生 enum」為底線。<br>**其他**：display-only、不寫 audit；若日後真要記，`0030`/`0035` 的 sanitizer 會擋 birthdate-shaped key 帶日期值（**boolean 才放行**）⇒ 只能記布林/enum。與 #31（一人多事由）相關但獨立：#31 是能不能存多個事由，本項是把已存的那一個看清楚。 |
-| 34 | **Member Data Lifecycle：同工代填 → 本人提交＋系統檢核＋治理覆核** | 匯入 UI／member LIFF／#10 覆核／綁定 | L（拆五刀） | ✅ **34-0／34-0b-A／34a ＝ pilot 前（非 Wave 5）／34b·#11 pilot 初期／34c 系統穩定後／34-0b-B 可延後** | **來源＝交付日實況（2026-07-28，已匯入 prod 57 位）**：轉入 CSV 有**大量同工代填錯誤**與**該填卻空白的欄位**。**經兩輪外部審查重新定義**：不是 CSV 改善、也不是自助功能，而是**把會友資料的 source of truth 從同工代填改成本人提交＋系統檢核＋治理覆核**。長期決策＝**CSV 是 bootstrap/bulk 工具、`/member` 才是正常 source-of-truth surface**。詳見下方專節。 |
-
----
-
-## #34 Member Data Lifecycle 會友資料生命週期（外部審查兩輪後改版，2026-07-28）
-
-> **問題重新定義（採納外部審查）**：不是「CSV 改善」也不是「增加會員自助修改功能」，而是**把會友資料的 source of truth，從同工代填改成本人提交＋系統檢核＋必要治理覆核**。交付日的大量代填錯誤證明這不是 nice-to-have，是**下一輪正式資料導入前該收斂的營運風險** ⇒ 前三刀 **pilot 前**做，不整包丟 Wave 5。
->
-> **長期 architecture decision**：**CSV ＝ bootstrap / bulk compatibility tool；`/member` 逐漸成為資料的正常 source-of-truth surface。** 五刀依此命名：
->
-> | 刀 | 主題 |
-> |---|---|
-> | 34-0 | Import integrity（匯入完整性） |
-> | 34-0b | Import auditability（匯入可稽核性） |
-> | 34a | Profile completeness & confirmation |
-> | 34b | Member self-maintenance |
-> | 34c | New-member intake |
-
-### 為什麼「再加強 CSV 驗證」不是根治
-匯入驗證已經很嚴：姓名/車牌/手機 row-level 必填（[memberImport.ts:189-193](../parking-system/lib/memberImport.ts#L189-L193)）、手機格式＋科學記號防護、同手機任一列壞掉整位跳過（Wave 0 row-completeness）、同手機不同姓名/同車牌多 owner/P2 資料矛盾一律 fail closed（Wave 0.1）。但 `0912xxxxxx + ABC-1234` **格式全對，不代表那是張三的手機與車牌**。驗證器能查格式，查不了歸屬，也叫不動知道答案的人。⇒ **換資料來源，不是再疊一層 parser 規則**。
-
-### 34-0 Import integrity — **strict by default**（pilot 前）
-**現況（已驗證）**：preview 出現錯誤/衝突時，操作者勾一個「上方標記為錯誤/衝突的列會被略過，其餘合法會友仍會寫入。我已了解並仍要匯入。」就能送出——`disabled={busy || (hasSkips && !acknowledged)}`（[MemberImport.tsx:238-245](../parking-system/app/admin/import/MemberImport.tsx#L238-L245)）。**這個 acknowledge 逃生口本身就是要改掉的核心。**
-
-**做法（二輪審查改判，採納）：不引入任何 mode，預設所有 CSV import 都 strict。** 只要存在系統明確知道會跳過資料的 hard issue——`validationErrors`／`phoneNameConflicts`／`identityConflicts`／`plateConflicts`／`batchPlateConflicts`／`groupConflicts`——就**不能 Apply**，一般管理員只看到「**有錯誤 → 請修正後重新預覽**」。
-
-**⛔ 明確否決「以名冊是否為空自動判定 bootstrap」**（我上一版提的待決項，已由審查駁回、理由成立）：500 人第一次只匯進 300 人，`users` 就已不為 0，第二次進來會被誤判成 incremental——**但正式名冊 bootstrap 根本還沒完成**。且未來可能已有少數手工建立的會員或 pilot 人員，正式 roster 才第一次進來。**「DB 是否為空」不是 business state。** 操作者自選同樣否決（會被誤選）。
-
-**partial import ＝ exceptional path，不是 normal path**：若未來真有「先匯 490 位、10 位之後處理」的實際需求，另做一個**系統管理員限定**的例外操作「略過錯誤資料並匯入其餘」，需二次確認＋寫 audit。**strict 是常態、partial 是例外**——比建立 bootstrap state 簡單，也更符合現在準備交付的系統。
-
-**⚠️ `reviewRequired` 不可混成 hard error**（兩輪審查一致）：「幼兒同行但生日缺失」與「手機格式錯誤／同車牌兩個人／同手機不同姓名」不是同一種問題。
-| 類別 | 行為 |
-|---|---|
-| **Hard blocker** | 不能 Apply |
-| **Incomplete / review required** | 可建立 member，但**該會員不是 Ready** |
-
-後者的收斂路徑正是 34a：本人補資料 → completeness PASS → 本人確認 → P2 若需要仍由 Admin review。
-
-**這一刀解不了「ABC-1234 是不是王小明的」**，但能擋掉「明明系統知道有問題，仍產生半套正式名冊」。
-
-### 34-0b Import auditability（pilot 前，本輪讀碼新發現）
-**現況（已驗證）**：`/api/admin/members/import/apply` **完全不寫 audit**，報表只回瀏覽器且刻意不落地（[apply/route.ts:12](../parking-system/app/api/admin/members/import/apply/route.ts#L12) 明寫 "The CSV, report, and token are never logged"）。這在 #15 之後是明顯缺口：容量、P2 覆核、角色、車輛、名冊匯出全都寫 audit，**唯獨影響最大的批次寫入沒有**。
-
-**⚠️ 二輪審查的關鍵修正（採納）：audit ≠ import report，兩層要分開，不可為了保存 report 而破壞 audit substrate 的設計。** audit 的既有姿態就是「ordinary input validation 不 audit，避免把 user-supplied values 拉進 metadata」，且 writer 已硬性禁止 phone/line_id/plate/name/remarks/birthdate/address/email 出現在 metadata（`0030`／`0035` denylist）。**不要為 CSV report 打破它。**
-
-**A 層（pilot 前必做）＝ 真正發生的 mutation 必須可稽核。** 兩種列：
-- **per-member**：`member.import`，`entity_id` ＝ user UUID，metadata 僅 `created`／`vehicles_added`／`eligibility_written` 等布林與計數。這能回答「**這位會員是什麼時候因 CSV import 建立的？誰操作的？**」而完全不需把電話車牌複製進 audit。
-- **batch summary**：`member_import.apply`，僅 profile 與計數（rows／members／created／updated／vehicles_added／review_required／result）。
-
-**⚠️ 交易邊界（本輪讀碼補充，審查規格未涵蓋）**：審查要求「audit 與 business write 同 transaction」——**per-member 列可以且必須如此**（`import_member` RPC 內部 append，天然同 txn，符合 #15「audit 與業務同生共死」）。但 **batch summary 不可能同 txn**：[memberImportService.ts:343-353](../parking-system/server/services/memberImportService.ts#L343-L353) 明寫 "Per-member RPC is atomic, but the whole CSV is not one transaction"，每位會友各自 commit，**整批沒有一個包住的 transaction**。⇒ batch 列是 best-effort 的收尾列；**per-member 列才是權威 trail**。實作推論：中途失敗（`CsvImportExecutionError`）時 batch 列不會寫出，但已 commit 的 per-member 列仍在——這是可接受的，也正是為什麼權威必須放在 per-member。
-**實作要求**：`import_member` RPC 需取得 actor admin id／actor session id／request id（**route 後補 audit ❌**），沿用 #15 的 SECURITY DEFINER 業務 RPC 模式。
-
-**B 層（Import Run / Import Diagnostics，可延後）**：`member_import_runs`（performed_by／performed_at／profile／各項計數／result）＋短期 `member_import_issues`（`import_run_id`／`line_number`／`issue_code`，例 `line 37 → phone_name_conflict`），**不保存 raw row**。
-**是否 pilot 前做？審查判斷「不一定」，我同意**：34-0 改 strict 後，「寫完才發現有人被跳過」這個主要問題已大幅消除 ⇒ 不為一個已被 gate 消除的問題再引入一整套 PII report storage。等實際操作證明需要再做。
-
-**❌ 更正我上一版的錯誤主張**：我寫過「34-0b 讓**今天這批**可被追查」——**這句不成立**，審查修得對。report 未保存、瀏覽器已關、當時無 audit 也無 import run ⇒ **新增的 audit 無法回溯創造歷史**，精確重建「某次匯入第 53 列被跳過、理由是 X」是做不到的。
-**今天這批能做的是 reconciliation（不是 historical audit reconstruction），兩者文件上必須分清。**
-
-**✅ reconciliation 已完成（2026-07-29）**：跑**匯入器自身的 pipeline**（`importMembersFromCsvText` ＋ stub repository，非人工讀檔）核對 `01.主日停車場申請名冊2026.07.匯入用.csv`：
-- 61 資料列 → **54 位會友、60 台車**
-- **擋下 1 位**：檔案第 12 行缺手機號碼（孩童生日已填，補上手機即可正常匯入）
-- **群組衝突 0、同檔車牌衝突 0** —— 匯入前待補清單的「同手機兩種申請原因」已解決
-- **`reviewRequired` 4 位**：3 位原因 2（短期不便）無申請日期 ⇒ 算不出 6 個月效期；1 位孕婦（另計）
-- **prod 57 位 ＝ CSV 54 ＋ 使用者手動自建 3 位**（已確認，差額結清）
-
-⚠️ **範圍限制**：stub repo 的跑法**不涵蓋 DB 側衝突**（同手機不同名／identity candidate／車牌已屬他人）——那三類由 `import_member` RPC 判定，需連真 DB 才驗得出。
-⇒ 這是**一次性營運核對，不是新功能**。`reviewRequired` 那 4 位必須在 `/admin/eligibility` 覆核佇列清——**綁定宣導抓不到他們**（他們會正常綁定，資格靜靜躺著）。
-
-### 34a 我的資料＋完整度＋本人確認（pilot 前）
-**採納審查的修正：completeness 先於 confirm。** 我原本提「唯讀看資料→按正確」是錯的順序——王小明的孩童生日空白時，他按下「資料正確」會把**一份不完整的資料認證成正確**。正確流程是：**完整度檢查 → 本人補齊 → 本人確認 → 必要時行政覆核**。
-畫面顯示「資料完整」或「還有 2 項需補填」（例：⚠ 尚未填寫孩童生日／⚠ 尚未確認車牌），**全部 completeness rule 通過才出現「確認我的資料」**。
-**`profile_confirmed_at` 的語意必須先定義**（審查正確指出：這是 DB write，**不是我先前說的「零寫入風險」**）：任何相關欄位後續被修改 ⇒ `profile_confirmed_at` 歸 null、要求重新確認；並決定是否寫 audit（傾向寫，`actor_type='member'`）。
-
-### 34b 本人補正 — 但三種欄位是三種權限模型（pilot 初期）
-審查在此比我原本的切法更細，採納：
-| 欄位 | 模型 |
-|---|---|
-| **車輛新增／停用／恢復** | **可本人直接改**。`0038` 已備妥 soft delete／使用中才唯一／未結束預約不可停用／衝突不洩他人身分 ⇒ 把 #28 接到 member surface 是自然下一步 |
-| **手機號碼** | **不可 direct edit**。`users.id` 才是 identity、phone 是 mutable attribute（`0038` 整刀正是為修正「把 phone 當 identity」），且 phone 同時參與 binding identity ⇒ 走「提出變更 → 驗證／admin confirmation → update identity」 |
-| **P2 資料**（行動不便／孕婦／長者同行／幼兒同行＋孩童生日） | 本人可填，但 **submission ≠ eligibility approval**，走 #10 既有治理 |
-
-**⚠️ 審查的重要修正（採納）**：**不要把一般 profile update 也塞進 `review_status='unreviewed'`**。`review_status` 是 **P2 eligibility 的治理權威**，不是整份 profile 的 approval flag。三者語意分開：**基本資料 completeness／車輛 maintenance／P2 application-review**。（我先前「會友送出的一律落 `unreviewed`」講得太寬——那條鐵律只適用於 P2 治理欄。）
-
-### 34c 新會友 self-onboarding（系統穩定後才建，但**現在就該定架構**）
-審查與我的差異其實比看起來小：**排序一致**（都放最後），差別在**現在就要把目標架構定下來**，否則會一直複製今天的問題——「同工先輸 CSV → 會友才能綁 OA → 會友再修同工輸錯的資料」。
-**目標流程**：`LINE identity（伺服器已驗證）→ pending member intake → 幹事核可 → 同一 transaction 內 create member + vehicles + binding + audit`；P2 若有申請仍進 #10 review。
-**共識：不讓未知使用者直接 INSERT canonical `users`**，但也**不必先由同工替他輸一列 CSV**。
-**⚠️ 不要塞進 `pending_binding`**：該表用途已很明確（capture-time identity snapshot／approved-rejected／retention／PII redaction／concurrency）——`0038` 之所以 freeze `matched_user_id_at_capture`，正是為了避免 phone reassignment 造成跨人錯綁，代價是**送出當下無會員 ⇒ 事後才建會員也不能直接核准、必須重送**。另建 `member_intake_submissions`，讓 binding 與 profile onboarding 的 lifecycle 不互相污染。
-
-### 貫穿四刀的第一個 technical task
-**抽出 member profile completeness domain rule**（審查建議，採納為第一個工作項）：
-
-```text
-getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
-```
-
-**server authoritative、UI 只拿結果顯示**。現有 condition-aware 規則（reason 1/2 → 行動不便者姓名；reason 4 → 長者姓名＋生日；reason 3 → 孩童或孕婦資料；孩童**有姓名沒生日**不算 malformed、只降成 `reviewRequired`）必須收進這一份，**不可演變成 CSV validator 一套、LIFF form 一套、Admin review 又一套**。
-
-### 排序
-| 時機 | 刀 |
-|---|---|
-| **現在／pilot 前** | **34-0** Import integrity（**strict by default**：有 hard issue 就不能 Apply，移除 acknowledge 逃生口）→ **34-0b-A** Import auditability（per-member `member.import` 在 `import_member` txn 內＋batch summary）→ **34a** Profile completeness & confirmation（completeness 先於 confirm） |
-| **pilot 初期** | **34b** 車輛自助維護（接 `0038` lifecycle）／**#11** P2 自助申請（孩童生日等本人最清楚的資料移回本人輸入，治理仍在 admin） |
-| **系統穩定後** | **34c** 新會友 self-onboarding（LINE identity → member intake → admin approve → atomic create + bind）。屆時 CSV 退回它真正的角色＝**bootstrap / bulk compatibility tool**，而非日常會友資料建立與維護入口。**34-0b-B**（`member_import_runs`／`member_import_issues`）亦在此層級，除非實際操作證明需要否則不做 |
-
-### 連帶：文件同步 ✅ 已完成（2026-07-29）
-`docs/current_handoff.md` header／剩餘 ops 行與 `go-live-checklist.md §1.3` 原寫「尚未匯入正式教會會員資料」，**已同步為「2026-07-28 已匯入 prod、57 位」**。（§6.x 內的歷史敘述**刻意不動**——那些是當時狀態的正確紀錄。）
-**名冊面殘留待辦記於 go-live §1.3**（4 位 `reviewRequired` 待設效期／1 位缺手機未匯入／其餘跳過者於宣導綁定時人工處理）——**權威在 go-live-checklist，本檔不重述**。
-**已知機制細節**：不在名冊者送出綁定申請會以 `unmatched_at_capture` 浮出；但補建會友後**原申請不能直接核准**（`0038` 核准讀送出當下凍結的 `matched_user_id_at_capture`，[0038:708](../parking-system/supabase/migrations/0038_member_maintenance.sql#L708)），需請本人**重新送出**。
 
 ---
 
