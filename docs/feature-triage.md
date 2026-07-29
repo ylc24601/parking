@@ -37,8 +37,8 @@ feature **尚未完成時，兩者不同是預期狀態**，不是矛盾。
 | **Decision** | `Do` | 已接受、值得做 |
 | | `Reject` | 不做 |
 | **Status** | `Ready` | 規格已足夠開工 |
-| | `Blocked` | 缺必要產品或 domain 決策，今天想做也不能安全開工 |
-| | `Deferred` | 規格已夠，純粹刻意排到未來 |
+| | `Blocked` | 缺一個**別人要給的**決策（產品規則／domain 語意），實作者無法自行決定 |
+| | `Deferred` | 規格已夠、無待決事項，純粹刻意排到未來 |
 | | `Done` | 已實作完成並 merge |
 | | `Closed` | 決定不做、已結案 |
 | **Delivery** | `Pre-delivery` | 交付前 |
@@ -51,7 +51,10 @@ feature **尚未完成時，兩者不同是預期狀態**，不是矛盾。
 | | `L` | 需切多刀 |
 | **Deployment** | `None` / `App-only` / `Migration` / `Migration + App` / `Config` / `TBD` | 這項功能的 rollout 類型 |
 
-**`Blocked` 優先於 `Deferred`**：只要今天即使想做也不能安全開工（缺產品／domain 決策），一律 `Blocked`。
+**`Blocked` 優先於 `Deferred`**：只要存在一個實作者無法自行決定的待決事項，一律 `Blocked`，不論排程多後面。
+
+**分界線**：slice 內的**設計工作**（安全 design review、要建的新 model、選型）算在工作量裡 ⇒ 仍是 `Deferred`（例：#3 需獨立 design review、#4 需輪值表 model，兩者的約束都已寫定）。**別人要給的決策**（產品規則、domain 語意）⇒ `Blocked`（例：#28「至少留一台或允許零台」、34a `profile_confirmed_at` 語意）。
+判準：**這件事我讀完規格能自己決定嗎？** 能 ⇒ `Deferred`；不能 ⇒ `Blocked`。
 
 **`Delivery` 與 `Deployment` 不同**：`Delivery` 答「何時交付」，完成後成為 `—`；`Deployment` 答「rollout 類型」，**完成後仍保留**（例如 #19 帶 migration `0035`/`0036`，清成 `—` 就是在 canonical state 裡丟資訊）。
 
@@ -60,11 +63,12 @@ feature **尚未完成時，兩者不同是預期狀態**，不是矛盾。
 ### Validation invariants
 
 ```
-Reject         ⇔ Closed
-Done | Closed  ⇒ 不出現在 Current work
-Blocked        ⇒ details 內必須有明載的 unresolved decision / dependency
-Deferred       ⇒ 今天改優先序即可開工，不缺 blocking decision
-Done           ⇒ Acceptance 已由實作／驗證滿足
+Reject           ⇔ Closed
+Done | Closed    ⇒ 不出現在 Current work
+Blocked          ⇒ details 內必須有 "Unresolved decision" 段落，明載待決事項
+Deferred         ⇒ details 內不得有 Unresolved decision（有 ⇒ 應為 Blocked）
+Ready | Pre-*    ⇒ details 內必須有 Acceptance 段落
+Done             ⇒ Acceptance 已由實作／驗證滿足
 ```
 
 ---
@@ -90,17 +94,17 @@ Done           ⇒ Acceptance 已由實作／驗證滿足
 
 > 只回答「現在下一步」。不出現 `Done`／`Closed`，也不列完整 post-delivery backlog（那在「交付分級」）。
 
-| Work | Delivery | Why now |
-|---|---|---|
-| #32 概覽補申請狀況 | `Pre-delivery` | `application_open` 那幾天首頁等於空白，是同工每週最常看的時段 |
-| #33a 眷屬年齡＋學齡前 badge | `Pre-delivery` | 與 #32 同批 app-only、零新增揭露 |
-| 34-0 Import integrity | `Pre-pilot` | 下一輪正式資料導入前的營運風險 |
-| 34-0b-A Import auditability | `Pre-pilot` | 影響最大的批次寫入是唯一沒有 audit 的路徑 |
-| 34a Profile completeness | `Pre-pilot` | 把 source of truth 從同工代填改成本人提交 |
-| 34b 會友自助維護 | `Pilot-early` | 接 `0038` 已備妥的 vehicle lifecycle |
-| #11 P2 自助申請 | `Pilot-early` | 與 34b 合併規劃，治理仍留 admin |
+| Work | Status | Delivery | Why now |
+|---|---|---|---|
+| #32 概覽補申請狀況 | `Ready` | `Pre-delivery` | `application_open` 那幾天首頁等於空白，是同工每週最常看的時段 |
+| #33a 眷屬年齡＋學齡前 badge | `Ready` | `Pre-delivery` | 與 #32 同批 app-only、零新增揭露 |
+| 34-0 Import integrity | `Ready` | `Pre-pilot` | 下一輪正式資料導入前的營運風險 |
+| 34-0b-A Import auditability | `Ready` | `Pre-pilot` | 影響最大的批次寫入是唯一沒有 audit 的路徑 |
+| 34a Profile completeness | **`Blocked`** | `Pre-pilot` | 仍是 pilot gate，但**先定 `profile_confirmed_at` 語意**再開工 |
+| 34b 會友自助維護 | `Deferred` | `Pilot-early` | 接 `0038` 已備妥的 vehicle lifecycle |
+| #11 P2 自助申請 | `Deferred` | `Pilot-early` | 與 34b 合併規劃，治理仍留 admin |
 
-**Needs decision（`Blocked`，等產品決策才能開工）**：#13 auto-release 業務規則未定／#14B override 與時間視窗互動規則未定／#31 眷屬 model 與撤銷語意未定。
+**其餘 `Blocked`（不在近期視野）**：#13 auto-release 業務規則未定／#14B override 與時間視窗互動規則未定／#28「至少留一台或允許零台」未定／#31 眷屬 model 與撤銷語意未定。
 
 ---
 
@@ -140,7 +144,7 @@ Done           ⇒ Acceptance 已由實作／驗證滿足
 | #25 | 通知死指令修正 | templates.ts | Do | Done | — | S | App-only | -1 | 「回覆」被 webhook ignored；改導向會員頁 |
 | #26 | 通知 LIFF deep-link 按鈕 | 通知模板＋LIFF | Do | Deferred | Post-delivery | M | App-only | 4 | #25 的正解 |
 | #27 | 通知內容 enrich | 通知模板＋payload | Do | Done | — | S–M | App-only | 1 | 日期＋車牌＋粗體期限＋換行 |
-| #28 | 管理我的車牌（全自助） | app/member＋新 routes | Do | Deferred | Post-delivery | M | App-only | 5 | DB 語意已由 `0038` 交付；剩會友端 UI 與產品決定 |
+| #28 | 管理我的車牌（全自助） | app/member＋新 routes | Do | Blocked | Post-delivery | M | App-only | 5 | DB 語意已由 `0038` 交付；剩會友端 UI 與產品決定 |
 | #29 | member 顯示候補序號 | app/member | Do | Done | — | S | App-only | 1 | 動態序號非固定號碼 |
 | #30 | 取消加「不計違規」reassurance | app/member CancelButton | Do | Done | — | S | App-only | 1 | 讓會友安心取消 |
 | #31 | 一位會友同時符合多種 P2 事由 | DB `users`＋import＋#10 覆核 | Do | Blocked | Post-delivery | M–L | Migration + App | — | 風險在效期不在優先序；眷屬 model 與撤銷語意未定 |
@@ -169,6 +173,8 @@ Done           ⇒ Acceptance 已由實作／驗證滿足
 
 > **canonical specification。** 狀態以 `Feature inventory` 為準（`#34` 子項以下方 Work items 表為準）。
 > 每項固定四層：`Problem`（為什麼）／`Decision`＋`Constraints`（要做什麼、不做什麼）／`Acceptance`（怎麼算完成）／`History`（決策沿革，**非需求**）。
+> `Acceptance` 是 `Ready` 與 `Pre-delivery`／`Pre-pilot` 項目的**必要欄位**（見 Validation invariants）；`Deferred` 項可在排入近期時再補，不預先虛構驗收標準。
+> `Blocked` 項必須有 `Unresolved decision` 段落，寫明**誰要決定什麼**。
 
 ---
 
@@ -361,7 +367,7 @@ Wave 4。#25 已把「回覆」死指令改成導向會員頁，本項是其正�
 
 ### #28 管理我的車牌（全自助）
 
-**Decision:** Do ｜ **Status:** Deferred ｜ **Delivery:** Post-delivery
+**Decision:** Do ｜ **Status:** **Blocked** ｜ **Delivery:** Post-delivery
 **Size:** M ｜ **Deployment:** App-only ｜ **Invariants:** INV-03, INV-04
 
 #### Problem
@@ -369,6 +375,9 @@ Wave 4。#25 已把「回覆」死指令改成導向會員頁，本項是其正�
 
 #### Current scope
 剩下的是會友端 UI／路由、設預設＋暱稱、以及「至少留一台或允許零台」的產品決定。
+
+#### Unresolved decision（Blocked 原因）
+**「至少留一台或允許零台」未定**——這是產品規則，實作者無法自行決定：允許零台則會友可把自己停到不能申請；強制留一台則「換車」變成必須先新增再停用。決定後本項即為 `Ready`。
 
 #### Constraints
 原始規格：新增/刪除/設預設＋暱稱。**刪除擋所有未結束關聯**（upcoming open/waiting/approved/temp-approved·offer/未 finalized 已釋出/未來多週）；**soft delete（`active=false`）保留歷史 FK**。normalize＋unique on normalized plate；collision 訊息不洩他人姓名；set default transactional；至少留一台或明確允許零台。**增刪寫 audit**。濫用治理＝輕護欄（plate 唯一性＋audit＋一人一週一位天花板）＋社群處理（勸導→停用）。
@@ -450,6 +459,13 @@ Wave 5；地基已由 Tier 0-2（`0038`）交付。
 - **⚠️ 長者無年齡規則**：全 codebase 找不到 65 歲之類門檻，`elderly_companion` 只是事由、效期通常永久 ⇒ 顯示長者年齡**純屬輔助判讀，不得推導任何資格**；且 `長者生日` 為選填、常為 NULL ⇒ null 要顯示「生日未填」而非算成 0 歲。年齡＝週歲（滿歲），台北曆日計算。
 - **其他**：display-only、不寫 audit；若日後真要記，`0030`/`0035` 的 sanitizer 會擋 birthdate-shaped key 帶日期值（**boolean 才放行**）⇒ 只能記布林/enum。
 
+#### Acceptance
+- 明細頁每位眷屬在既有生日後顯示「N 歲」（週歲、台北曆日）。
+- `child` 眷屬顯示 `學齡前`／`已入學`，判定**呼叫 `childCompanionValidUntil`**，不得另寫年齡門檻——測試需涵蓋 9/1 前後相差一天的兩個生日，兩者學年不同。
+- `asOf` 由呼叫端傳入（`taipeiToday(now)`），非在函式內讀 clock。
+- 生日為 NULL 時顯示「生日未填」，不顯示 0 歲、不顯示 badge。
+- `/admin/eligibility` 覆核佇列**未新增**任何眷屬欄位（#33b 已否決）。
+
 #### History
 與 #31（一人多事由）相關但獨立：#31 是能不能存多個事由，本項是把已存的那一個看清楚。Wave 3 3e，與 #32 同批。
 
@@ -476,9 +492,11 @@ Wave 5；地基已由 Tier 0-2（`0038`）交付。
 | 34-0 | Import integrity（匯入完整性） | Do | Ready | Pre-pilot | App-only |
 | 34-0b-A | Import auditability（真正發生的 mutation 可稽核） | Do | Ready | Pre-pilot | Migration + App |
 | 34-0b-B | Import run / diagnostics | Do | Deferred | Post-delivery | Migration + App |
-| 34a | Profile completeness & confirmation | Do | Ready | Pre-pilot | TBD |
+| 34a | Profile completeness & confirmation | Do | Blocked | Pre-pilot | TBD |
 | 34b | Member self-maintenance | Do | Deferred | Pilot-early | TBD |
 | 34c | New-member intake | Do | Deferred | Post-delivery | Migration + App |
+
+**Acceptance**：Epic parent 無獨立驗收標準——由各 work item 各自承擔（見上表連結的小節）。parent 標為 `Ready` 只表示**下一個 tranche**（34-0／34-0b-A）可開工。
 
 #### 為什麼「再加強 CSV 驗證」不是根治
 匯入驗證已經很嚴：姓名/車牌/手機 row-level 必填（[memberImport.ts:189-193](../parking-system/lib/memberImport.ts#L189-L193)）、手機格式＋科學記號防護、同手機任一列壞掉整位跳過（Wave 0 row-completeness）、同手機不同姓名/同車牌多 owner/P2 資料矛盾一律 fail closed（Wave 0.1）。但 `0912xxxxxx + ABC-1234` **格式全對，不代表那是張三的手機與車牌**。驗證器能查格式，查不了歸屬，也叫不動知道答案的人。⇒ **換資料來源，不是再疊一層 parser 規則**。
@@ -516,6 +534,12 @@ getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
 
 **Non-goal**：**這一刀解不了「ABC-1234 是不是王小明的」**，但能擋掉「明明系統知道有問題，仍產生半套正式名冊」。
 
+**Acceptance：**
+- preview 出現任一 hard issue 時 Apply **不可點**，且沒有任何勾選框能解除——`acknowledged` 逃生口已移除。
+- 只有 `reviewRequired` 時 Apply **可點**，寫入成功，該會員標為未完成（不是 Ready）。
+- 一般管理員看到的訊息是「有錯誤 → 請修正後重新預覽」，不是「將略過 N 列」。
+- 例外的 partial import 若實作，僅系統管理員可用、二次確認、寫 audit。
+
 ---
 
 #### 34-0b-A Import auditability
@@ -533,6 +557,12 @@ getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
 - **⚠️ 交易邊界（讀碼補充，審查規格未涵蓋）**：審查要求「audit 與 business write 同 transaction」——**per-member 列可以且必須如此**（`import_member` RPC 內部 append，天然同 txn，符合 #15「audit 與業務同生共死」）。但 **batch summary 不可能同 txn**：[memberImportService.ts:343-353](../parking-system/server/services/memberImportService.ts#L343-L353) 明寫 "Per-member RPC is atomic, but the whole CSV is not one transaction"，每位會友各自 commit，**整批沒有一個包住的 transaction**。⇒ batch 列是 best-effort 的收尾列；**per-member 列才是權威 trail**。實作推論：中途失敗（`CsvImportExecutionError`）時 batch 列不會寫出，但已 commit 的 per-member 列仍在——這是可接受的，也正是為什麼權威必須放在 per-member。
 - **實作要求**：`import_member` RPC 需取得 actor admin id／actor session id／request id（**route 後補 audit ❌**），沿用 #15 的 SECURITY DEFINER 業務 RPC 模式。
 
+**Acceptance：**
+- 每一位因匯入而 commit 的會友都有一列 `member.import`，與該會友的寫入**同 transaction**（RPC 失敗則兩者皆不存在）。
+- audit metadata 只含布林與計數，**不含** phone／plate／name／birthdate 等——沿用 `0030`／`0035` denylist，該 denylist 不得為此放寬。
+- 整批成功時另有一列 `member_import.apply`（僅 profile 與計數）；中途失敗時該列不存在，但已 commit 的 per-member 列仍在。
+- 匯入報表仍不落地，audit 不是 report 的替代品。
+
 ---
 
 #### 34-0b-B Import Run / Import Diagnostics
@@ -547,13 +577,20 @@ getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
 
 #### 34a 我的資料＋完整度＋本人確認
 
-**Status:** Ready ｜ **Delivery:** Pre-pilot ｜ **Deployment:** TBD ｜ **Invariants:** INV-02
+**Status:** **Blocked** ｜ **Delivery:** Pre-pilot ｜ **Deployment:** TBD ｜ **Invariants:** INV-02
 
 **Decision — completeness 先於 confirm（採納審查修正）。** 原本提「唯讀看資料→按正確」是錯的順序——王小明的孩童生日空白時，他按下「資料正確」會把**一份不完整的資料認證成正確**。正確流程是：**完整度檢查 → 本人補齊 → 本人確認 → 必要時行政覆核**。
 
 畫面顯示「資料完整」或「還有 2 項需補填」（例：⚠ 尚未填寫孩童生日／⚠ 尚未確認車牌），**全部 completeness rule 通過才出現「確認我的資料」**。
 
-**Unresolved（開工前要定）**：**`profile_confirmed_at` 的語意必須先定義**（審查正確指出：這是 DB write，**不是先前說的「零寫入風險」**）：任何相關欄位後續被修改 ⇒ `profile_confirmed_at` 歸 null、要求重新確認；並決定是否寫 audit（傾向寫，`actor_type='member'`）。
+**Unresolved decision（Blocked 原因）**：**`profile_confirmed_at` 的語意必須先定義**（審查正確指出：這是 DB write，**不是先前說的「零寫入風險」**）：任何相關欄位後續被修改 ⇒ `profile_confirmed_at` 歸 null、要求重新確認；並決定是否寫 audit（傾向寫，`actor_type='member'`）。
+仍列 `Pre-pilot`——它是 pilot gate，只是下一步是**完成這個決策**而不是直接 coding。
+
+**Acceptance**（決策底定後適用）：
+- completeness 不通過時**看不到**「確認我的資料」按鈕；缺項逐條列出。
+- 本人補齊後 completeness PASS，才可送出確認並寫入 `profile_confirmed_at`。
+- 任一相關欄位事後被修改 ⇒ `profile_confirmed_at` 回到 null，重新要求確認。
+- P2 欄位即使由本人填寫，仍走 `INV-01` 治理，不因本人確認而視為核准。
 
 ---
 
@@ -589,7 +626,7 @@ getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
 
 ---
 
-#### #34 History
+#### Epic history — 匯入實況與 reconciliation
 
 **❌ 更正上一版的錯誤主張**：曾寫過「34-0b 讓**今天這批**可被追查」——**這句不成立**，審查修得對。report 未保存、瀏覽器已關、當時無 audit 也無 import run ⇒ **新增的 audit 無法回溯創造歷史**，精確重建「某次匯入第 53 列被跳過、理由是 X」是做不到的。
 **今天這批能做的是 reconciliation（不是 historical audit reconstruction），兩者文件上必須分清。**
