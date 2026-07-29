@@ -14,10 +14,14 @@
 ## 0. 前置 gate — 先指派三個負責人（不指派不啟動）
 
 > 出處：[go-live-readiness.md](go-live-readiness.md) §1。下面每一步的「誰」都指回這三個角色。
+>
+> **具名記錄不入本 repo。** 本 repo 為**公開**；「誰保管 OA token」「誰能停排程／壓 transport」與具名個人綁在一起公開，等於提供社交工程的著力點，且當事人未同意姓名上 GitHub。⇒ **本檔只記「已指派＋日期＋權威記錄在哪」**，姓名與聯絡方式一律放教會內部交接文件。
 
-- [ ] **OA token owner** — 一位具名的 OA 管理者，保管 channel access token＋channel secret；只透過 secret store 交付給 dev，**絕不進 repo**；定義輪替聯絡人。手把手操作步驟：[oa-token-owner-runbook.md](oa-token-owner-runbook.md)。
-- [ ] **Copy approver** — 一位具名簽核者，負責 3 個通知模板（`move_car_request`／`reservation_released`／`reservation_cancelled`）＋移車 A/B/C/D 變體。**未簽核前不得對真實會友送出任何一則。**
-- [ ] **Scheduler / rollback on-call operator** — 一位具名 on-call，能 (a) 停用外部排程器、(b) 把 transport 壓回 `mock`/`log`、(c) 跑 `requeue-failed`。runbook：[dispatcher-ops.md](dispatcher-ops.md)。
+- [x] **OA token owner** — 一位具名的 OA 管理者，保管 channel access token＋channel secret；只透過 secret store 交付給 dev，**絕不進 repo**；定義輪替聯絡人。手把手操作步驟：[oa-token-owner-runbook.md](oa-token-owner-runbook.md)。 **已指派（記錄於 2026-07-29）**；具名資料見教會內部交接文件。
+- [x] **Copy approver** — 一位具名簽核者，負責 3 個通知模板（`move_car_request`／`reservation_released`／`reservation_cancelled`）＋移車 A/B/C/D 變體。**未簽核前不得對真實會友送出任何一則。** **已指派（記錄於 2026-07-29）**；具名資料見教會內部交接文件。
+- [x] **Scheduler / rollback on-call operator** — 一位具名 on-call，能 (a) 停用外部排程器、(b) 把 transport 壓回 `mock`/`log`、(c) 跑 `requeue-failed`。runbook：[dispatcher-ops.md](dispatcher-ops.md)。 **已指派（記錄於 2026-07-29）**；具名資料見教會內部交接文件。
+
+> ⚠️ **三個角色目前由同一人兼任**（§1.2 的紀錄即為「本次使用者身兼 OA token owner 與 dev」）。形式上 gate 已過，**實質上沒有備援**——§2 的 rollback runbook 假設「on-call 能在你不在時動手」，但目前無第二人能停排程、把 transport 壓回 `mock`、或跑 `requeue-failed`。**§1.7 pilot 擴大前需補一位備援 on-call**，否則出國／生病／手機沒電的那個主日沒有第二層保險。（讀本檔的人不要因為三格都打勾就以為有三層保險。）
 
 ---
 
@@ -46,7 +50,11 @@
 - [x] **自管加密備份上線 — 選 Free 後的新交付 gate，非可選**（2026-07-20 完成並驗證，見 [current_handoff.md](current_handoff.md) §6.37）：真 PII ＋不可重建稽核軌若零備份，就是唯一會真痛的風險。CSV 也救不回綁定/預約/稽核/幹事手動覆核。
   - **實作已在 main**（PR #44 / `cc6b66a`，一輪外部審查後修正）：排程 GitHub Action `pg_dump（public+private）→ age 加密 → 上傳 R2/B2`，**每次產出 dump ＋ manifest 兩個檔**（manifest 記每張表列數＋dump 雜湊）。程式＋設定＋還原見 **[backup-restore-runbook.md](backup-restore-runbook.md)**。
   - **還原有四道自動關卡**（全過才算成功，非零退出）：雜湊比對／pg_restore 錯誤 allowlist／**逐表列數與 manifest 完全一致**／`verify_schema_prod.sql` 通過。**「印出列數讓人自己看」不是災難復原的成功條件**——部分還原與整張表消失在數字裡都很正常。
-  - **待教會填**：① 產 age 金鑰對、私鑰離線保管（**≥2 人各一份、跟備份分開放**）；② 建 R2/B2 private bucket；③ 設 GitHub Secrets/Variables；④ bucket lifecycle rule；⑤ **設 `HEARTBEAT_URL`**（見下）；⑥ 全部就緒後才把 `BACKUP_ENABLED` 設成 `true`（**arm 之前 workflow 什麼都不做**，故 merge 不會每天噴失敗信）。
+  - **✅ 已完成 arm、備份實跑中**（原「待教會填」六項全數完成；2026-07-29 實查更正——本檔一度仍列為待辦）：`gh variable list` 顯示 **`BACKUP_ENABLED=true`（2026-07-20 設定）**＋`AGE_RECIPIENT`／`S3_BUCKET`／`S3_ENDPOINT`／`AWS_DEFAULT_REGION`，`gh secret list` 顯示 `SUPABASE_DB_URL`／`AWS_ACCESS_KEY_ID`／`AWS_SECRET_ACCESS_KEY`／**`HEARTBEAT_URL`** 均已設定。
+    **實跑證據**：`gh run list --workflow=db-backup.yml` 連續成功；2026-07-28 19:27 UTC 該筆產出 `parking-20260728T192803Z.pgc.age`（254,106 bytes）＋manifest（涵蓋 18 張表）並上傳 `s3://parking-db-backups/parking-db/`。**該筆晚於當日的真名冊匯入 ⇒ 57 位會友資料已在異地加密備份內。**
+    還原演練已於 2026-07-20 執行並通過四道關卡（`restore: OK`，見 [current_handoff.md](current_handoff.md)）。
+    **原六項留存供日後輪替／重建時參照**：① age 金鑰對（私鑰離線、≥2 人各一份、與備份分開放）② R2/B2 private bucket ③ GitHub Secrets/Variables ④ bucket lifecycle rule ⑤ `HEARTBEAT_URL` ⑥ `BACKUP_ENABLED=true`。
+    ⚠️ **這一格的教訓**：勾選框會過期。**涉及外部系統狀態（GitHub Actions／Vercel／cron／Supabase）的項目，回答前用 `gh`／dashboard 實查，不要只信本檔的勾**。
   - **⚠️ 監控要對「沒發生」告警**：GitHub 只在「有跑但失敗」時寄信。本 repo 是**公開**的，而 **GitHub 對公開 repo 會在無活動 60 天後自動停用排程 workflow**——教會交付後 repo 必然安靜，屆時備份**無聲停止、不產生任何錯誤**。故必須設 dead-man's-switch heartbeat（healthchecks.io 免費即可），沒收到 ping 才會有人知道。
   - **Verify**：arm 後手動觸發跑一次 ＋ **做一次 §5 還原演練**看到 `restore: OK`——未驗過還原的備份等於沒有備份。
   - **替代**：若治理要求 PII 不進第三方雲 ⇒ 同一支腳本設 `LOCAL_DEST` 走 NAS／加密硬碟（需 self-hosted runner 或本機 cron），見 runbook §7。
