@@ -21,7 +21,7 @@
 - [x] **Copy approver** — 一位具名簽核者，負責 3 個通知模板（`move_car_request`／`reservation_released`／`reservation_cancelled`）＋移車 A/B/C/D 變體。**未簽核前不得對真實會友送出任何一則。** **已指派（記錄於 2026-07-29）**；具名資料見教會內部交接文件。
 - [x] **Scheduler / rollback on-call operator** — 一位具名 on-call，能 (a) 停用外部排程器、(b) 把 transport 壓回 `mock`/`log`、(c) 跑 `requeue-failed`。runbook：[dispatcher-ops.md](dispatcher-ops.md)。 **已指派（記錄於 2026-07-29）**；具名資料見教會內部交接文件。
 
-> ⚠️ **三個角色目前由同一人兼任**（§1.2 的紀錄即為「本次使用者身兼 OA token owner 與 dev」）。形式上 gate 已過，**實質上沒有備援**——§2 的 rollback runbook 假設「on-call 能在你不在時動手」，但目前無第二人能停排程、把 transport 壓回 `mock`、或跑 `requeue-failed`。**§1.7 pilot 擴大前需補一位備援 on-call**，否則出國／生病／手機沒電的那個主日沒有第二層保險。（讀本檔的人不要因為三格都打勾就以為有三層保險。）
+> ⚠️ **三個角色目前由同一人兼任**（§1.2 的紀錄即為「本次使用者身兼 OA token owner 與 dev」）。形式上 gate 已過，**實質上沒有備援**——§2 的 rollback runbook 假設「on-call 能在你不在時動手」，但目前無第二人能停排程、把 transport 壓回 `mock`、或跑 `requeue-failed`。**§1.7 已加一條 HARD GATE：pilot 放行前必須有備援 on-call 就位**——且通過條件是「已取得 runbook／告警處置／escalation 資訊並實際演練過一次」，不是名冊上多一個名字。（讀本檔的人不要因為三格都打勾就以為有三層保險。）
 
 ---
 
@@ -94,6 +94,21 @@
 - **Detail**：[go-live-readiness.md](go-live-readiness.md) §2（config lock）、[dispatcher-ops.md](dispatcher-ops.md)
 
 ### 1.7 Pilot 分批放行（onboard + bind，逐步）
+
+- [ ] **HARD GATE — 備援 on-call 已就位（pilot 放行前必須先過）**
+  > **這個 gate 不是「有人被指定」。** 名字寫上去零成本、也零效果——§2 的 rollback runbook 假設有人**當下能動手**，而 §0 目前三個角色由同一人兼任。真正要擋的情境是：主日早上出事，唯一懂系統的人在飛機上／住院／手機沒電。
+  >
+  > ⇒ 通過條件是**至少一位備援已實際具備接手能力**，不是名冊上多一個名字。
+
+  **通過條件（四項全需成立）**：
+  1. **已取得 runbook 並讀過**：[dispatcher-ops.md](dispatcher-ops.md)（停排程／transport／requeue）＋本檔 §2 rollback ＋ [prod-deploy-runbook.md](prod-deploy-runbook.md) §1.5/§2.5（Instant Rollback 會關掉 auto-assign、Undo 又會打開）。
+  2. **告警處置**：知道 `/outbox-alert` 的 503 會送到哪裡、收到後第一步做什麼；知道備份 heartbeat（dead-man's-switch）沒 ping 代表什麼、去哪看。
+  3. **escalation 資訊齊備**：主要 on-call 的聯絡方式、Supabase／Vercel／Cloudflare R2／cron 排程器的登入途徑（**憑證走 secret store，不進 repo**）、以及「打不通時第二順位是誰」。
+  4. **實際演練過一次**：由**備援本人**（非主要 on-call 代跑）完成一次 rollback 演練——停外部排程器 → `NOTIFICATION_TRANSPORT` 壓回 `mock` → 確認無送出 → 復原。演練日期記入本檔。
+
+  **Verify**：四項逐一確認、記錄演練日期。**未過不得開始 §1.7 的第一批放行**——pilot 一旦開跑就有真會友在等通知，那不是補訓練的時機。
+  **具名資料一律不入本 repo**（同 §0）：此處只記「已就位＋演練日期」，姓名與聯絡方式放教會內部交接文件。
+  **若短期內無法安排備援**：pilot 規模就必須壓到「全部失效一個主日也只是回到人工引導」的程度，並在 [admin-operations-guide.md](admin-operations-guide.md) 對同工說明清楚——**縮小範圍是可接受的替代，跳過這個 gate 不是**。
 - **Who**：church office（發綁定碼）＋ admin（審核綁定）＋ Scheduler operator（看健康度）
 - **Verify**：先一個小組走綁定碼流程 → admin 審核寫 `line_id`（尊重 `users_line_id_key` 唯一性、衝突要顯式處理）→ 只對該 cohort 開送出 → **看 `/outbox-alert` 撐過至少一個主日循環再擴大**。每次擴大前：無不明 terminal `failed`、無 stale `processing` lease、DUE backlog 在門檻內、未綁定車主顯示 fallback 文案、log/`last_error` **絕無** `line_id`/車牌/內文。
 - **Detail**：[go-live-readiness.md](go-live-readiness.md) §5（pilot rollout）、[binding-ops.md](binding-ops.md)
