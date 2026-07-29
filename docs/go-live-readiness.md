@@ -52,7 +52,7 @@ appear related; re-collect on the production channel.
 | **Which OA** | **Reuse the existing church OA.** Members already added it; the onboarding doc assumes it. A parking-only OA restarts the join-rate problem from zero. |
 | **Token owner** | One named **OA admin owner** holds the channel access token + channel secret. Dev receives them only via a secret store, never in the repo. Define a rotation contact. |
 | **Copy approver** | One named **approver** signs off the 3 provisional templates (`move_car_request`, `reservation_released`, `reservation_cancelled`) + the move-car A/B/C/D variants. No production send until signed. |
-| **Scheduler / rollback operator** | One named **on-call operator** who can (a) disable the external scheduler (the real production lever), (b) pull `LINE_CHANNEL_ACCESS_TOKEN` for a fail-fast stand-down, (c) run `requeue-failed`. Runbook: `docs/dispatcher-ops.md`. |
+| **Scheduler / rollback operator** | One named **on-call operator** who can (a) disable the external scheduler — **the only immediate, verified production kill switch** — and (b) run `requeue-failed`. Runbook: `docs/dispatcher-ops.md`. |
 
 **Gate:** nothing below starts until these four owners are named.
 
@@ -152,10 +152,15 @@ no `line_id`/plate/body ever appears in logs or `last_error`.
    refused on a production runtime by design (`mock_in_production`, `lineTransport.ts`). Setting it
    would stop delivery only by making every scheduled invocation throw — a crash-loop dressed up as a
    kill switch, and one that buries any real alert. Step 1 is the lever.
-   If a stand-down is needed while the scheduler keeps running, **removing `LINE_CHANNEL_ACCESS_TOKEN`**
-   is the supported path: `getLineTransport()` fails fast with `missing_line_token` **before any row is
-   claimed**, so nothing is sent and nothing is marked `sent`. (`LINE_SEND_ENABLED` is not wired to
-   anything — see §2 note.)
+   ⚠️ **Removing `LINE_CHANNEL_ACCESS_TOKEN` is NOT an incident-time lever either.** The code path is
+   sound — `getLineTransport()` fails fast with `missing_line_token` **before any row is claimed** — but
+   editing a Vercel environment variable does not affect the deployment currently being served; it
+   applies to the next deployment. Delete the token mid-incident and production keeps the old value and
+   may keep sending. **Step 1 is the only immediate, verified production kill switch.**
+   📌 **Known gap**: if "keep the scheduler running but block outbound sends immediately" is ever
+   needed, it requires a purpose-built production-safe kill switch (e.g. a DB flag the dispatcher reads
+   each cycle). No such switch exists today — do not fake one with env vars or transport modes.
+   (`LINE_SEND_ENABLED` is not wired to anything — see §2 note.)
 3. **Requeue `failed` rows only after the root cause is fixed** — `requeue-failed` is manual-only by
    design. Never replay into a broken transport.
 

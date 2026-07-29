@@ -19,7 +19,7 @@
 
 - [x] **OA token owner** — 一位具名的 OA 管理者，保管 channel access token＋channel secret；只透過 secret store 交付給 dev，**絕不進 repo**；定義輪替聯絡人。手把手操作步驟：[oa-token-owner-runbook.md](oa-token-owner-runbook.md)。 **已指派（記錄於 2026-07-29）**；具名資料見教會內部交接文件。
 - [x] **Copy approver** — 一位具名簽核者，負責 3 個通知模板（`move_car_request`／`reservation_released`／`reservation_cancelled`）＋移車 A/B/C/D 變體。**未簽核前不得對真實會友送出任何一則。** **已指派（記錄於 2026-07-29）**；具名資料見教會內部交接文件。
-- [x] **Scheduler / rollback on-call operator** — 一位具名 on-call，能 (a) **停用外部排程器**（production 的真正 lever）、(b) 需要保留排程但停送時，拔掉 `LINE_CHANNEL_ACCESS_TOKEN` 走 fail-fast、(c) 跑 `requeue-failed`。**⚠️ 不要在 production 動 `NOTIFICATION_TRANSPORT`**（無 `log` mode；`mock` 在 production 會被拒，見 §2）。runbook：[dispatcher-ops.md](dispatcher-ops.md)。 **已指派（記錄於 2026-07-29）**；具名資料見教會內部交接文件。
+- [x] **Scheduler / rollback on-call operator** — 一位具名 on-call，能 (a) **停用外部排程器**——**這是目前唯一即時、已驗證的 production kill switch**、(b) 跑 `requeue-failed`。**⚠️ 不要在 production 動 `NOTIFICATION_TRANSPORT` 或改 Vercel env 當作停送手段**（前者會被拒、後者要 redeploy 才生效，見 §2）。runbook：[dispatcher-ops.md](dispatcher-ops.md)。 **已指派（記錄於 2026-07-29）**；具名資料見教會內部交接文件。
 
 > ⚠️ **三個角色目前由同一人兼任**（§1.2 的紀錄即為「本次使用者身兼 OA token owner 與 dev」）。形式上 gate 已過，**實質上沒有備援**——§2 的 rollback runbook 假設「on-call 能在你不在時動手」，但目前無第二人能停排程或跑 `requeue-failed`。**§1.7 有一條 HARD GATE：備援 on-call 就位是「pilot 擴大」的前置**（首批由主要 on-call 全程在場的 supervised pilot 不受此擋），通過條件是「已取得 runbook／告警處置／escalation 資訊，並由備援本人實際演練過一次」，不是名冊上多一個名字。（讀本檔的人不要因為三格都打勾就以為有三層保險。）
 
@@ -113,7 +113,7 @@
   1. **已取得 runbook 並讀過**：[dispatcher-ops.md](dispatcher-ops.md)（停排程／transport／requeue）＋本檔 §2 rollback ＋ [prod-deploy-runbook.md](prod-deploy-runbook.md) §1.5/§2.5（Instant Rollback 會關掉 auto-assign、Undo 又會打開）。
   2. **告警處置**：知道 `/outbox-alert` 的 503 會送到哪裡、收到後第一步做什麼；知道備份 heartbeat（dead-man's-switch）沒 ping 代表什麼、去哪看。
   3. **escalation 資訊齊備**：主要 on-call 的聯絡方式、Supabase／Vercel／Cloudflare R2／cron 排程器的登入途徑（**憑證走 secret store，不進 repo**）、以及「打不通時第二順位是誰」。
-  4. **實際演練過一次**：由**備援本人**（非主要 on-call 代跑）完成一次 rollback 演練——停外部排程器 → `NOTIFICATION_TRANSPORT` 壓回 `mock` → 確認無送出 → 復原。演練日期記入本檔。
+  4. **實際演練過一次**：由**備援本人**（非主要 on-call 代跑）完成一次 rollback 演練——**停外部 dispatcher 排程 → 確認排程已停、無新的 dispatch invocation → 以 `/admin/ops`（通知系統狀態）確認 queue 保留、未送出 → 恢復排程 → 確認正常 drain**。演練日期記入本檔。⚠️ **演練的必須是真正的 production kill switch**（停排程），**不要碰 `NOTIFICATION_TRANSPORT`**——理由見 §2。
 
   **Verify**：四項逐一確認、記錄演練日期。**未過不得擴大 cohort。**
   **具名資料一律不入本 repo**（同 §0）：此處只記「已就位＋演練日期」，姓名與聯絡方式放教會內部交接文件。
@@ -140,7 +140,9 @@
 - **`mock` 在 production 會被主動拒絕**（`mock_in_production`，[lineTransport.ts:117-129](../parking-system/server/services/notification/lineTransport.ts#L117-L129)）——那是刻意的設計：production 不得靜默 no-op 真實通知。
 - 硬設下去確實會停止送出，但機制是**讓每一次排程 invocation 拋錯**——crash-loop 假扮 kill switch，還會把真正的告警淹掉。**不是 rollback 手段。**
 
-**3. 若必須「保留排程但停送」**：拔掉 `LINE_CHANNEL_ACCESS_TOKEN`。`getLineTransport()` 以 `missing_line_token` **在 claim 任何一列之前** fail fast ⇒ 不送出、也不會把列標 `sent`。這是受支援的路徑。
+**3. ⚠️ 「拔掉 `LINE_CHANNEL_ACCESS_TOKEN`」不是即時 kill switch，事故當下不要靠它**（2026-07-29 外部審查更正）：程式面確實會以 `missing_line_token` 在 claim 任何一列之前 fail fast（不送出、也不標 `sent`），**但 Vercel 上刪改 Environment Variable 不會影響正在服務的 deployment**——要建立新的 deployment 才生效。事故當下刪掉 token，現行 production deployment 仍握著舊值、仍可能照送。
+⇒ **目前唯一即時、已驗證的 production kill switch 就是第 1 步（停外部排程器）。**
+📌 **已知缺口**：若未來需要「排程照跑、但即時禁止對外送出」，必須**另做一個 production-safe 的 kill switch**（例如 DB 端旗標，dispatcher 每輪讀取）——目前系統**沒有**這個東西，不要用 env 或 transport mode 假冒。
 
 **4. 根因修好後才** `requeue-failed`（手動限定、絕不 replay 進壞掉的 transport）。
 
