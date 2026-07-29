@@ -60,6 +60,8 @@
 - **Detail**：[prod-deploy-runbook.md](prod-deploy-runbook.md) §13、§11（token 失效語意）、[member-liff-setup.md](member-liff-setup.md)、[oa-token-owner-runbook.md](oa-token-owner-runbook.md)
 
 ### 1.3 匯入真會友 CSV（P2 申請資料）
+- [x] **已完成（2026-07-28）**：正式名冊已匯入 prod，**現況 57 位 ＝ CSV 54 位 ＋ 手動自建 3 位**。2026-07-29 以匯入器自身 pipeline 做過 reconciliation（見 [feature-triage.md](feature-triage.md) #34 專節）。
+  - **殘留待辦（名冊面，非阻擋）**：① **`reviewRequired` 4 位**（3 位「原因 2 短期不便」無申請日期 ⇒ 系統算不出 6 個月效期；1 位孕婦另計）需到 `/admin/eligibility` 人工設定效期——**這批綁定宣導時抓不到**，他們會正常綁定、資格靜靜躺著；② **1 位因缺手機被擋下未匯入**（孩童生日已填，補手機即可）；③ 其餘被跳過者的處理方式已定為**宣導綁定時人工處理**——不在名冊者送出綁定申請會以 `unmatched_at_capture` 浮出，但**補建會友後原申請不能直接核准**（`0038` 讀送出當下凍結的 `matched_user_id_at_capture`），需請本人**重新送出**。
 - **Who**：church office（提供 CSV）＋ admin（走 Admin 匯入 UI）
 - **Verify**：透過 `/admin`（會友匯入）跑 preview → 檢查衝突/資格 → apply；spot-check 資格正確；`line_id` 匯入時維持 NULL（綁定另外接）。若輪替過 service-role key，**避開 30 分鐘匯入窗**（它同時簽 import HMAC）。
 - **Detail**：[member-import-ops.md](member-import-ops.md)、[delivery-model-and-roadmap.md](delivery-model-and-roadmap.md)（CSV→schema 對照）
