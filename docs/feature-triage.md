@@ -1,9 +1,179 @@
-# 功能想法 Triage（rev.3 — 兩輪外部審查後接近定稿）
+# Feature Triage — 功能決策索引
 
-> 目的：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A（全）✅、2B（全）✅、2C #19 ✅（PR #45/#46）、3a #8/#9 ✅（PR #47）、3b #17 ✅（PR #48）、3c #18 ✅、3d #5B-a ✅**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
+> 最後檢視：2026-07-29
+
+## 本檔回答什麼
+
+**記錄**：① 哪些功能值得做　② 何時做　③ 尚未完成項目的產品與實作邊界。
+
+**不記錄**：production go-live 操作、目前 repo 實作狀態、完整施工歷史、交付門檻勾選清單——這些各有專屬權威檔，本檔不重述。
+
+### Source of truth
+
+| 問題 | 權威 |
+|---|---|
+| 功能決策／優先序 | **本檔** |
+| 目前 repo 實作狀態與施工歷史 | [current_handoff.md](current_handoff.md) |
+| production / pilot ops | [go-live-checklist.md](go-live-checklist.md) |
+| 交付門檻可勾清單 | [pre-delivery-polish-backlog.md](pre-delivery-polish-backlog.md) |
+| 程式實際語意 | code / migration 標頭 |
+
+### desired behavior vs current behavior
+
+```
+Accepted future scope / desired behavior  → 本檔 Active feature details
+Current implemented behavior              → code / migration
+```
+
+feature **尚未完成時，兩者不同是預期狀態**，不是矛盾。
+標為 `Done` 後仍不同 ⇒ **以 implementation 為準**，並把差異記入該項 `History`。
+
+---
+
+## 詞彙表
+
+| 欄位 | 允許值 | 中文 |
+|---|---|---|
+| **Decision** | `Do` | 已接受、值得做 |
+| | `Reject` | 不做 |
+| **Status** | `Ready` | 規格已足夠開工 |
+| | `Blocked` | 缺必要產品或 domain 決策，今天想做也不能安全開工 |
+| | `Deferred` | 規格已夠，純粹刻意排到未來 |
+| | `Done` | 已實作完成並 merge |
+| | `Closed` | 決定不做、已結案 |
+| **Delivery** | `Pre-delivery` | 交付前 |
+| | `Pre-pilot` | pilot 前 |
+| | `Pilot-early` | pilot 初期 |
+| | `Post-delivery` | 交付後 |
+| | `—` | 無交付時點，或已完成 |
+| **Size** | `S` | < 半天 |
+| | `S–M` / `M` / `M–L` | 介於之間／1–2 天／偏大 |
+| | `L` | 需切多刀 |
+| **Deployment** | `None` / `App-only` / `Migration` / `Migration + App` / `Config` / `TBD` | 這項功能的 rollout 類型 |
+
+**`Blocked` 優先於 `Deferred`**：只要今天即使想做也不能安全開工（缺產品／domain 決策），一律 `Blocked`。
+
+**`Delivery` 與 `Deployment` 不同**：`Delivery` 答「何時交付」，完成後成為 `—`；`Deployment` 答「rollout 類型」，**完成後仍保留**（例如 #19 帶 migration `0035`/`0036`，清成 `—` 就是在 canonical state 裡丟資訊）。
+
+**Emoji 只作視覺輔助，不承擔 machine semantics**——不再使用 `✅ defer`、`✅（4）` 這類把 acceptance 與 timing 混在一起的複合符號。
+
+### Validation invariants
+
+```
+Reject         ⇔ Closed
+Done | Closed  ⇒ 不出現在 Current work
+Blocked        ⇒ details 內必須有明載的 unresolved decision / dependency
+Deferred       ⇒ 今天改優先序即可開工，不缺 blocking decision
+Done           ⇒ Acceptance 已由實作／驗證滿足
+```
+
+---
+
+## Canonical layer
+
+**本檔內哪一段是權威**（避免 dashboard／inventory／details／compatibility view 形成新的四重真相）：
+
+| 區塊 | 角色 |
+|---|---|
+| **Feature inventory** | **canonical state（top-level）** — Decision / Status / Delivery / Size / Deployment 的唯一權威 |
+| **#34 Work items 表** | **canonical state（#34 internal）** — 唯一例外；#34 六個子刀狀態各異，單一 row 表達不了 |
+| **Active feature details** | **canonical specification** — Problem / Decision / Constraints / Acceptance 的唯一權威 |
+| **Current work** | dashboard，純 projection，不建立新語意 |
+| **交付分級** | compatibility view，為既有外部引用保留 |
+| **Archive** | historical, **non-normative** |
+
+不一致時：狀態以 inventory（`#34` 子項以 Work items 表）為準，規格以 details 為準。
+
+---
+
+## Current work
+
+> 只回答「現在下一步」。不出現 `Done`／`Closed`，也不列完整 post-delivery backlog（那在「交付分級」）。
+
+| Work | Delivery | Why now |
+|---|---|---|
+| #32 概覽補申請狀況 | `Pre-delivery` | `application_open` 那幾天首頁等於空白，是同工每週最常看的時段 |
+| #33a 眷屬年齡＋學齡前 badge | `Pre-delivery` | 與 #32 同批 app-only、零新增揭露 |
+| 34-0 Import integrity | `Pre-pilot` | 下一輪正式資料導入前的營運風險 |
+| 34-0b-A Import auditability | `Pre-pilot` | 影響最大的批次寫入是唯一沒有 audit 的路徑 |
+| 34a Profile completeness | `Pre-pilot` | 把 source of truth 從同工代填改成本人提交 |
+| 34b 會友自助維護 | `Pilot-early` | 接 `0038` 已備妥的 vehicle lifecycle |
+| #11 P2 自助申請 | `Pilot-early` | 與 34b 合併規劃，治理仍留 admin |
+
+**Needs decision（`Blocked`，等產品決策才能開工）**：#13 auto-release 業務規則未定／#14B override 與時間視窗互動規則未定／#31 眷屬 model 與撤銷語意未定。
+
+---
+
+## Feature inventory
+
+> **canonical state。** 一行一條，含已完成項。規格細節見「Active feature details」，已完成項全文見「Archive」。
+
+| ID | Feature | Surface | Decision | Status | Delivery | Size | Deployment | Wave | 摘要 |
+|---|---|---|---|---|---|---|---|---|---|
+| #1 | 換人「換碼」＋手動轉發文案 | admin/staff-pin | Do | Done | — | S | App-only | -1 | 重發＝新碼、舊 hash 立即失效 |
+| #2 | 顯示回同一組 PIN | admin/staff-pin | Reject | Closed | — | — | None | — | scrypt 單向、明碼不落地 |
+| #3 | PIN 自動發同工 LINE 群 | webhook/通知/cron | Do | Deferred | Post-delivery | M | Migration + App | 4 | cron retry 反覆旋轉 PIN 為最大風險；需獨立 design review |
+| #4 | PIN 個別私訊值班人 | 通知＋綁定＋輪值表 | Do | Deferred | Post-delivery | L | TBD | 4 | 需同工完成 OA 綁定；全自動需輪值表 model |
+| #5A | 名冊瀏覽（最小欄位、server 分頁） | admin/members | Do | Done | — | M | App-only | 1 | 不匯出、不 bulk、不預載敏感事由 |
+| #5B | 名冊匯出／批次／敏感欄位權限 | admin/members | Do | Deferred | Post-delivery | M | Migration + App | 3d | 5B-a 匯出已完成（`0037`）；5B-b 顯示分級、5B-c 批次待做 |
+| #6A | Admin 憑車牌移車（第一版） | admin/members＋通知 | Do | Deferred | Post-delivery | M | Migration + App | 4 | 走通用通知目的地模型；未綁 LINE 明示不假送 |
+| #6B | 移車通知歷史／狀態（polish） | admin/members | Do | Deferred | Post-delivery | M | App-only | 後續 | 避免第一版耦合完整 outbox 狀態 UI |
+| #7 | 移車／急件即時通知 | 通知/dispatcher | Do | Deferred | Post-delivery | S–M | Migration + App | 4 | commit 後才 dispatch；UI 三態文案 |
+| #8 | 本週概覽（上指標下待辦） | admin/page | Do | Done | — | M | App-only | 3a | `getWeekOverview`＋`deriveWeekStage`（PR #47） |
+| #9 | Sidebar 待辦徽章 | admin sidebar | Do | Done | — | S–M | App-only | 3a | snapshot 模型：layout 一次取、Provider 餵側欄＋概覽（PR #47） |
+| #10 | P2 寫入型覆核 | admin/members/[id]＋eligibility inline | Do | Deferred | Post-delivery | M | Migration + App | 2B-2 | 2B-2a／2B-2b 已完成（`0032`/`0033`）；剩 2B-2c 佇列列內操作 |
+| #11 | P2 會友自助申請＋待審 inbox | member＋eligibility | Do | Deferred | Pilot-early | L | TBD | 5 | #10 的完整五態 enum 在此補齊 |
+| #12 | 資料最小化橫幅 | eligibility, members/[id] | Do | Done | — | S | App-only | 1 | 明示不索取／不顯示診斷證明 |
+| #13 | P1 同工名單＋「本週不停」自動釋出 | admin | Do | Blocked | — | M–L | TBD | — | auto-release 業務規則未定 |
+| #14A | 車位容量設定 | admin＋weekly_events | Do | Done | — | M | Migration + App | 2B-1 | 幹事不用 SQL 改容量；DB RPC 在 txn 內守 capacity（`0031`） |
+| #14B | 申請開放 override | admin＋weekly_events | Do | Blocked | — | M | TBD | 3 | `application_override` enum；與時間視窗互動規則未定 |
+| #15 | 稽核記錄（Audit Log）— 地基 | 橫切＋唯讀頁 | Do | Done | — | L | Migration + App | 2A | substrate／viewer／retention 三刀全完成（`0030`/`0034`） |
+| #16 | 停車樣態分析（先聚合） | admin＋歷史 | Do | Deferred | Post-delivery | L | TBD | 5 | 價值隨營運週數累積；不列具名 No-show 排名 |
+| #17 | 營運狀態頁 B＋C | admin/ops＋sidebar | Do | Done | — | M | App-only | 3b | 頁改名「通知系統狀態」；幹事只收 health enum |
+| #18 | 側欄 IA 兩區 | admin sidebar | Do | Done | — | S–M | App-only | 3c | `daily`/`system` 是 IA 非 auth boundary |
+| #19 | Admin 角色分級（兩級）＋新增管理者 | admin/accounts＋橫切 | Do | Done | — | M–L | Migration + App | 2C | 系統管理員／幹事；`0035`/`0036`（PR #45/#46） |
+| #20 | 匯入中文 header＋reason 對照 | lib/memberImport | Do | Done | — | S | App-only | 0 | 中文→canonical 集中在單一 `REASON_ALIASES` |
+| #21 | 簡易全體會友匯入 | admin/import＋service | Do | Done | — | M | App-only | 0 | 重用既有 `memberImportService`，非重建 |
+| #22 | 匯入手機容錯 | lib/memberImport | Do | Done | — | S | App-only | 0 | 9 碼補 `0`；科學記號拒絕不還原 |
+| #23 | 點名備援清單搬 admin | /staff/print→admin | Do | Done | — | S–M | App-only | 1 | 新增 `/admin/print`；staff PIN 不再能取列印資料 |
+| #24 | staff footer 精簡 | /staff StaffCheckIn | Do | Done | — | S | App-only | 1 | footer 只留「＋登記現場車輛」 |
+| #25 | 通知死指令修正 | templates.ts | Do | Done | — | S | App-only | -1 | 「回覆」被 webhook ignored；改導向會員頁 |
+| #26 | 通知 LIFF deep-link 按鈕 | 通知模板＋LIFF | Do | Deferred | Post-delivery | M | App-only | 4 | #25 的正解 |
+| #27 | 通知內容 enrich | 通知模板＋payload | Do | Done | — | S–M | App-only | 1 | 日期＋車牌＋粗體期限＋換行 |
+| #28 | 管理我的車牌（全自助） | app/member＋新 routes | Do | Deferred | Post-delivery | M | App-only | 5 | DB 語意已由 `0038` 交付；剩會友端 UI 與產品決定 |
+| #29 | member 顯示候補序號 | app/member | Do | Done | — | S | App-only | 1 | 動態序號非固定號碼 |
+| #30 | 取消加「不計違規」reassurance | app/member CancelButton | Do | Done | — | S | App-only | 1 | 讓會友安心取消 |
+| #31 | 一位會友同時符合多種 P2 事由 | DB `users`＋import＋#10 覆核 | Do | Blocked | Post-delivery | M–L | Migration + App | — | 風險在效期不在優先序；眷屬 model 與撤銷語意未定 |
+| #32 | 本週概覽沒有目前申請狀況 | admin/page | Do | **Ready** | **Pre-delivery** | S | App-only | 3e | 補 `pending`／`waiting` 兩數字，同一支 `getWeekOverview` |
+| #33a | 眷屬顯示年齡＋幼兒學齡前 badge | admin/members/[id] | Do | **Ready** | **Pre-delivery** | S | App-only | 3e | 標籤定義只能是 `childCompanionValidUntil`，不得新寫規則 |
+| #33b | 覆核佇列帶眷屬衍生 enum | admin/eligibility | Reject | Closed | — | S | None | — | 不為此放寬該頁隱私姿態（使用者 2026-07-28 定） |
+| #34 | **Member Data Lifecycle**（Epic） | 匯入 UI／member LIFF／#10／綁定 | Do | **Ready** | **Pre-pilot** | L | TBD | — | 子刀狀態見 #34 Work items 表 |
+
+---
+
+## Cross-feature invariants
+
+> 跨 feature 的不變量。各 feature 只寫 `Invariants: INV-0x` 指標，不再逐條複述。
+
+- **`INV-01` P2 governance** — P2 寫入 service（`review_status` 權威、`p2_eligible` 衍生、樂觀鎖）→ #10。✅ **已建成**：`server/services/p2EligibilityService.ts`＋`POST /api/admin/eligibility`（2B-2b）；2B-2c 佇列與 #11 自助申請、**#34 會友自助補正**都接同一支，不得另開寫入路徑。**`review_status` 只是 P2 eligibility 的治理權威，不是整份 profile 的 approval flag** —— 只有 P2 提案落 `unreviewed`，且**永不**由會友端直接寫 `review_status`／`p2_valid_*`（與匯入的 `retained_governed` 同一條線）。
+- **`INV-02` Member profile completeness** — `getMemberCompleteness` **server authoritative、UI 只拿結果顯示**；表單與匯入共用同一份 condition-aware 規則，**不可演變成 CSV validator 一套、LIFF form 一套、Admin review 又一套**。
+- **`INV-03` Vehicle lifecycle** — `0038` 已備妥：soft delete（`is_active=false` 保留歷史 FK）／**使用中才唯一**（`vehicles_active_plate_uq` partial）／未結束預約擋停用（交易內、車列鎖下判定）／衝突訊息不洩他人姓名（只回 `active_plate_owned_by_other`）／增刪寫 audit。→ #28／#34b。
+- **`INV-04` Audit actor model** — 既有 `audit_logs` 補 insert substrate → #10/#14A/#19/#28/所有寫入。`actor_type`＋`actor_id`＋`actor_role_snapshot`（非多個 nullable FK）；**存 ID、DB 層 append-only**；audit 與業務**同 transaction**（route 後補 audit ❌）。audit `actor_type='member'` 已預留。詳見 #15。
+- **`INV-05` Notification dispatch** — 通用通知目的地模型 → #3/#6/#7。`recipient_kind`(member/line_group)＋`context_kind`(reservation/weekly_event/vehicle/system)＋nullable `recipient_user_id`/`weekly_event_id`/`reservation_id`/`vehicle_id`＋受控 `recipient_line_target`，加 **DB CHECK constraint** 保證每組合必要欄位。`groupId` 不顯示於一般 UI、不進 log/錯誤、不被 webhook 覆寫，走 allowlist/啟用確認。**commit-then-dispatch**：txn commit 後才 dispatch。
+- **`INV-06` Admin role boundary** — Admin 角色 enum＋session 撤銷 → #17-C/#18/#19/#5B/#6 matrix。敏感操作每 request 從 DB 讀 active+role，不塞 cookie；role 變更／停用 bump `session_version` 或刪 sessions；sidebar 隱藏只 UX。
+- **「會友提案 → 幹事覆核」骨架** → #11／#34。**三種語意必須分開，不可共用一個 approval flag**（外部審查修正）：**① 基本資料 completeness（`INV-02`）／② 車輛 maintenance（`INV-03`，本人可直接改）／③ P2 application-review（`INV-01`）**。
+
+---
+
+> ⚠️ **Migration staging：以下為尚未搬移的 legacy content，非 canonical state。**
+> Commit 2 會把未完成項搬進 `Active feature details`、Commit 3 會把已完成項搬進 `Archive`，屆時本標記移除。
+> 在此之前，若下方內容與上方 `Feature inventory` 不一致，**以上方為準**。
+
+> 文件版本沿革（待移入 Archive）
 > rev.1（2026-07-16）：30 條判定＋動工順序。
 > rev.2：一輪審查，修規格＋改 delivery-first 排序。
 > rev.3：二輪審查，修實作語意（PIN 旋轉、commit-then-dispatch、雙真相、actor 模型、拒絕科學記號…）＋拆 Wave 2A/2B/2C。
+> 原「目的」：Phase 9 收官後的功能規劃；記錄可行性與**實作語意決策**。**已動工：Wave -1/0/0.1/1 ✅、2A（全）✅、2B（全）✅、2C #19 ✅（PR #45/#46）、3a #8/#9 ✅（PR #47）、3b #17 ✅（PR #48）、3c #18 ✅、3d #5B-a ✅**（每列狀態欄為準；實作與規格分歧處**一律以實作為準**並記在該列與 migration 標頭）。
 > 對應：[current_handoff.md](current_handoff.md)（每刀 merge 後同步，最新到 Wave 3 3d §6.47；其後 §6.48／§6.48.1 為上 prod 與 staged deployment 制度）、[prod-deploy-runbook.md](prod-deploy-runbook.md)。
 
 ---
@@ -174,12 +344,10 @@ getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
 
 ## 審查後的關鍵設計決策（跨切地基）
 
-- **通用通知目的地模型** → #3/#6/#7。`recipient_kind`(member/line_group)＋`context_kind`(reservation/weekly_event/vehicle/system)＋nullable `recipient_user_id`/`weekly_event_id`/`reservation_id`/`vehicle_id`＋受控 `recipient_line_target`，加 **DB CHECK constraint** 保證每組合必要欄位。`groupId` 不顯示於一般 UI、不進 log/錯誤、不被 webhook 覆寫，走 allowlist/啟用確認。
-- **稽核 substrate**（既有 `audit_logs` 補 insert）→ #10/#14A/#19/#28/所有寫入。`actor_type`＋`actor_id`＋`actor_role_snapshot`（非多個 nullable FK）；存 ID、DB 層 append-only。詳見 #15。
+> 仍約束未來實作的五條已升格為上方 `Cross-feature invariants`（INV-01／INV-04／INV-05／INV-06 與「會友提案→幹事覆核」骨架）。
+> 以下兩條只解釋**已完成**的施工順序，不再約束未來 ⇒ Commit 3 移入 Archive。
+
 - **待辦計數 service contract**（不硬 RPC）→ #8/#9。
-- **P2 寫入 service（review_status 權威、p2_eligible 衍生、樂觀鎖）** → #10。✅ **已建成**：`server/services/p2EligibilityService.ts`＋`POST /api/admin/eligibility`（2B-2b）；2B-2c 佇列與 #11 自助申請、**#34 會友自助補正**都接同一支，不得另開寫入路徑。
-- **「會友提案 → 幹事覆核」骨架** → #11／#34。**三種語意必須分開，不可共用一個 approval flag**（外部審查修正）：**① 基本資料 completeness**（`getMemberCompleteness` server-authoritative、表單與匯入共用同一份 condition-aware 規則）／**② 車輛 maintenance**（`0038` 語意已備妥，本人可直接改）／**③ P2 application-review**（走 #10）。**`review_status` 只是 P2 eligibility 的治理權威，不是整份 profile 的 approval flag** —— 只有 P2 提案落 `unreviewed`，且**永不**由會友端直接寫 `review_status`／`p2_valid_*`（與匯入的 `retained_governed` 同一條線）。audit `actor_type='member'`（#15 已預留）。
-- **Admin 角色 enum＋session 撤銷** → #17-C/#18/#19/#5B/#6 matrix。
 - **依賴關係（rev.3 釐清）**：`#10 需 #15、不需 #19`；`#14A 需 #15、不需 #19`；`#5B/#17/#18 需 #19`。→ Audit 與角色兩地基**可分離**，讓 #10/#14A 先於角色交付。
 
 ---
