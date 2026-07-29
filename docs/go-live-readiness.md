@@ -52,7 +52,7 @@ appear related; re-collect on the production channel.
 | **Which OA** | **Reuse the existing church OA.** Members already added it; the onboarding doc assumes it. A parking-only OA restarts the join-rate problem from zero. |
 | **Token owner** | One named **OA admin owner** holds the channel access token + channel secret. Dev receives them only via a secret store, never in the repo. Define a rotation contact. |
 | **Copy approver** | One named **approver** signs off the 3 provisional templates (`move_car_request`, `reservation_released`, `reservation_cancelled`) + the move-car A/B/C/D variants. No production send until signed. |
-| **Scheduler / rollback operator** | One named **on-call operator** who can (a) disable the external scheduler, (b) hold transport at `mock`/`log`, (c) run `requeue-failed`. Runbook: `docs/dispatcher-ops.md`. |
+| **Scheduler / rollback operator** | One named **on-call operator** who can (a) disable the external scheduler (the real production lever), (b) pull `LINE_CHANNEL_ACCESS_TOKEN` for a fail-fast stand-down, (c) run `requeue-failed`. Runbook: `docs/dispatcher-ops.md`. |
 
 **Gate:** nothing below starts until these four owners are named.
 
@@ -74,8 +74,11 @@ This is safe on the production OA because the risky, congregation-wide failure m
 
 ### Config lock during dry-run (required)
 
-- **Do NOT enable production reservation notifications.** Keep `NOTIFICATION_TRANSPORT=mock` (or a
-  `log` mode that records intent without sending).
+- **Do NOT enable production reservation notifications.** Keep `NOTIFICATION_TRANSPORT=mock`.
+  ⚠️ **There is no `log` mode** — `getLineTransport()` accepts exactly `mock` and `line`, and anything
+  else (including unset) raises `invalid_transport_mode`. `mock` is ALSO rejected on a production
+  runtime (`mock_in_production`), so this lever belongs to dry-run/preview environments only; for a
+  production stand-down see §6.
 - Keep a new **`LINE_SEND_ENABLED=false`** by default. Any real outbound call (the optional single
   test reply / test notification) is gated behind explicitly flipping `LINE_SEND_ENABLED=true` for
   that one test, then flipping it back.
@@ -131,7 +134,7 @@ Layer these:
    capture on the church OA; send one test notification to a consenting operator by manually
    inserting a single `notification_outbox` row for that `user_id` and triggering
    `dispatch-notifications` once (`LINE_SEND_ENABLED` is not wired to anything — see §2 note).
-   Reservation notifications stay OFF (`NOTIFICATION_TRANSPORT=mock`/`log`).
+   Reservation notifications stay OFF (`NOTIFICATION_TRANSPORT=mock` — non-production runtime only).
 3. **Small real cohort** — one small group binds via the code flow; approve them; enable delivery
    for that cohort only; watch `/outbox-alert` through at least one Sunday cycle before expanding.
 
@@ -145,9 +148,14 @@ no `line_id`/plate/body ever appears in logs or `last_error`.
 
 1. **Disable the external scheduler** first — the dispatcher is pull-driven, so no scheduler = no
    sends.
-2. **Hold transport at `mock`/`log`** to run the app without real delivery — this is the real lever
-   (`LINE_SEND_ENABLED` is not wired to anything, see §2 note). Fail-fast means removing the token
-   also halts real sends safely — it will not mark rows `sent`.
+2. **Do NOT reach for `NOTIFICATION_TRANSPORT` on production.** There is no `log` mode, and `mock` is
+   refused on a production runtime by design (`mock_in_production`, `lineTransport.ts`). Setting it
+   would stop delivery only by making every scheduled invocation throw — a crash-loop dressed up as a
+   kill switch, and one that buries any real alert. Step 1 is the lever.
+   If a stand-down is needed while the scheduler keeps running, **removing `LINE_CHANNEL_ACCESS_TOKEN`**
+   is the supported path: `getLineTransport()` fails fast with `missing_line_token` **before any row is
+   claimed**, so nothing is sent and nothing is marked `sent`. (`LINE_SEND_ENABLED` is not wired to
+   anything — see §2 note.)
 3. **Requeue `failed` rows only after the root cause is fixed** — `requeue-failed` is manual-only by
    design. Never replay into a broken transport.
 
