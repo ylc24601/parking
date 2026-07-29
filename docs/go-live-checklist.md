@@ -113,7 +113,7 @@
   1. **已取得 runbook 並讀過**：[dispatcher-ops.md](dispatcher-ops.md)（停排程／transport／requeue）＋本檔 §2 rollback ＋ [prod-deploy-runbook.md](prod-deploy-runbook.md) §1.5/§2.5（Instant Rollback 會關掉 auto-assign、Undo 又會打開）。
   2. **告警處置**：知道 `/outbox-alert` 的 503 會送到哪裡、收到後第一步做什麼；知道備份 heartbeat（dead-man's-switch）沒 ping 代表什麼、去哪看。
   3. **escalation 資訊齊備**：主要 on-call 的聯絡方式、Supabase／Vercel／Cloudflare R2／cron 排程器的登入途徑（**憑證走 secret store，不進 repo**）、以及「打不通時第二順位是誰」。
-  4. **實際演練過一次**：由**備援本人**（非主要 on-call 代跑）完成一次 rollback 演練——**停外部 dispatcher 排程 → 確認排程已停、無新的 dispatch invocation → 以 `/admin/ops`（通知系統狀態）確認 queue 保留、未送出 → 恢復排程 → 確認正常 drain**。演練日期記入本檔。⚠️ **演練的必須是真正的 production kill switch**（停排程），**不要碰 `NOTIFICATION_TRANSPORT`**——理由見 §2。
+  4. **實際演練過一次**：由**備援本人**（非主要 on-call 代跑）完成一次 rollback 演練——**停外部 dispatcher 排程 → 確認排程已停、沒有新的 dispatch invocation → 若當下已有 in-flight run，等該輪跑完 → 以 `/admin/ops`（通知系統狀態）確認沒有新的送出批次、queue 狀態合理 → 恢復排程 → 確認正常 drain**。演練日期記入本檔。⚠️ **演練的必須是真正的 production kill switch**（停排程），**不要碰 `NOTIFICATION_TRANSPORT`**——理由見 §2。
 
   **Verify**：四項逐一確認、記錄演練日期。**未過不得擴大 cohort。**
   **具名資料一律不入本 repo**（同 §0）：此處只記「已就位＋演練日期」，姓名與聯絡方式放教會內部交接文件。
@@ -133,7 +133,7 @@
 
 ## 2. Rollback（隨時可用，operator runbook）
 
-**1. 先停外部排程器** —— dispatcher 是 pull-driven，**無 invocation ＝ 無送出**。這是 production 唯一該用的 kill switch。
+**1. 先停外部排程器** —— dispatcher 是 pull-driven；停排程會阻止**新的 scheduled invocation／新的送出批次**。⚠️ **已經開始執行的 dispatch run 不會被取消**，可能仍把本輪已 claim 的通知送完（已 claim 的列也持有 lease 直到到期）。⇒ **停用後要確認沒有新的 invocation，才算止血完成**——不要期待「按下停用的那一秒起絕對零送出」。
 
 **2. ⚠️ 不要在 production 改 `NOTIFICATION_TRANSPORT`**（本檔原本寫「壓回 `mock`/`log`」，**已於 2026-07-29 更正**）：
 - **根本沒有 `log` mode**。`getLineTransport()` 只認 `mock` 與 `line`，其餘（含未設）一律 `invalid_transport_mode`。
