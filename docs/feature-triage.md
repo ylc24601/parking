@@ -749,16 +749,22 @@ Friday allocation 已完成
 - ① **分配後的新申請不得再進 `pending`**：要嘛 atomic direct approve、要嘛拒絕。留下分配後的 `pending` 列會讓 #32 的 warning 永久亮著，也沒有任何流程會再處理它。
 - ② **不得超賣**：「檢查 capacity → insert approved」必須在 **DB transactional guard** 內完成（比照 `0031` 的容量守衛），**不可**在 TypeScript 先 count 再 insert。
 - ③ **既有 `waiting` / 進行中的 offer 一律優先於晚鳥**：晚鳥不得插隊，尤其**不得搶正在 2 小時確認中的 `temp_approved`**——那是**已經 hold 住的一格**，`approved < capacity` 並不代表有空位（`countPromisedReservations` 之所以把 `temp_approved` 算進 promised，正是同一個理由）。
+  **「只要存在任何 `waiting`，晚鳥即不得 direct approve」是第一版的定案，不留例外。** 理由：offer `expired`／`declined` 後該筆會回到 `waiting` 且 `allocation_order` **未被改動**（[0024:41-42](../parking-system/supabase/migrations/0024_offer_expiry_guard.sql#L41-L42)）⇒ **候補權利仍然存在**。若日後要讓「錯過一次 offer 即失去候補權」，那是獨立的 business-rule change，須自行走決策，不得以 #36 的例外形式偷渡。
 - ④ **不順便做「週五後加入候補尾端」**：那是另一條產品規則。第一版只解決「**真的有剩位卻不能申請**」。
 - ⑤ **容量沿用現有 `computeCapacity` 語意**（含 blocked／guest／P1 減項），**不在這一刀重新發明容量公式**。
 - ⑥ **`effective_priority` 仍須照常凍結**：「直接核准、不排序」≠ priority 不重要——後續 P2 的 10:20 提醒、10:45／10:55 釋出時點全都依 priority 運作（[release.ts](../parking-system/lib/allocation/release.ts)）。
 - ⑦ **#14B 必須建立在本項的 automatic semantics 之上**：先定義「正常模式」怎麼運作，才談得上 `forced_open` 到底 override 了什麼。⇒ **本項不可併入 #14B**（那是人工 override，且自身仍 Blocked）。
+- ⑧ **窗口有結束時間，且不得晚於主日 10:30**：PRD §八.4 明訂 **10:30 起進入現場調度**——「不再保證依候補順位保留車位，以現場交通安全、入口秩序與 Staff 指引為優先」，而 10:30 的 release sweep 也會廣播給全體候補、語意是**現場先到先停**。線上 direct-approve 若延續到那之後，等於在系統裡發出一個現場已經不保證的承諾。**確切截止點（10:00 現場點名開始／10:30 切點）列為待決**，見下方 Unresolved decision。
+  ⚠️ **連帶影響容量算法**：若窗口允許進入 10:00–10:30，此時已可能有 `attended` 與現場車輛，「真的有空位」就**不能只看 `approved + temp_approved`**。截止點一旦選在 10:00 之後，容量判定必須一併重新定義。
+- ⑨ **direct approve 必須寫出完整的 approved row**：`0002:74` 有 `check (status <> 'approved' or release_deadline_at is not null)`，而 `release_deadline_at` 依 frozen `effective_priority` 算出（P3 10:30／P2 10:45／P2 正在路上 10:55，見 [release.ts](../parking-system/lib/allocation/release.ts)）。Friday allocator 正是 freeze priority → `computeReleaseDeadline` → 一併寫入（[fridayAllocationService.ts:64](../parking-system/server/services/fridayAllocationService.ts#L64)）。⇒ 晚鳥路徑**不可只 insert `approved`**，必須同一 statement 寫入 `approved_at` 與 deadline，否則 DB 直接拒絕。
 
 #### Unresolved decision（Blocked 原因）
-需求本身清楚，卡的是**並發與公平規則**必須先釘死：
+需求本身清楚，卡的是以下三項：
+- **晚鳥線上窗口何時截止**（見 Constraint ⑧）：選 10:00（現場點名開始）還是 10:30（現場調度切點）。**上限已定：不得晚於 10:30。**
 - 兩人同時搶最後一格的判定放在哪一層（RPC 內 `for update` 鎖 event 列？）
-- 「有 `waiting` 就一律拒絕晚鳥」是否為最終規則——或允許「waiting 皆已收到 offer 且逾時」這類例外（傾向**不開例外**，第一版從嚴）
 - 晚鳥核准是否發通知、用哪個 template
+
+> **「有 `waiting` 是否一律拒絕」不是待決事項**——見 Constraint ③，第一版直接釘死為「是」。錯過一次 offer 後是否失去候補權，是**另一個 business-rule change**，不得偷偷變成 #36 的例外。
 
 #### Acceptance
 以容量 20 為例：
@@ -770,8 +776,9 @@ Friday allocation 已完成
 | `approved=19`、`temp_approved=1` | 新申請**拒絕**（不得搶 held seat） |
 | `approved=19`、`waiting=1` | 新申請**拒絕**（既有候補優先） |
 | 兩人同時搶最後一格 | **最多一人** approved，不超賣 |
+| 窗口截止時點之後（不晚於主日 10:30） | 新申請**拒絕**，即使仍有空位 |
 
-並驗：晚鳥核准的列 `effective_priority` 與一般申請一樣被正確凍結。
+**每一筆晚鳥核准的列必須是完整的 approved row**：`effective_priority` 與一般申請一樣被正確凍結，且**同一 statement 內**寫入 `approved_at` 與依該 frozen priority 算出的 `release_deadline_at`（P3 10:30／P2 10:45）。**不可產生缺少 deadline 的 approved 列**——`0002:74` 的 CHECK 會直接拒絕，而那個 CHECK 正是為了讓「已核准卻沒有釋出時點」這種列不可能存在。
 
 #### History
 2026-07-30 由 PR #60 的文件審查衍生——會友說明照 PRD 寫，才發現 PRD 與實作不一致。**獨立成條、不併入 #14B**（外部審查判定）：#36 是自動業務規則，#14B 是人工 override，把前者綁進一個自身仍 Blocked 的 feature 只會一起卡住。
