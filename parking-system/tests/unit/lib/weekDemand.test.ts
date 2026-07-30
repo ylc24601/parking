@@ -75,17 +75,18 @@ describe('summarizeWeekReservations', () => {
     })
   })
 
-  // No current path produces one (the six full-time-staff spots sit outside total_capacity
-  // and outside this system; the member apply flow refuses full_time_staff outright), but
-  // the allocator does sort P1 first, so 優先 is where such a row belongs. Throwing would
-  // only take the admin dashboard down over data that is already being handled correctly.
+  // No current path produces one (the member apply flow refuses full_time_staff outright),
+  // but the allocator does sort P1 first, so 優先 is where such a row belongs. Throwing would
+  // only take the admin dashboard down over data the allocator already handles correctly.
   it('counts a P1 row as 優先 rather than throwing', () => {
     const counts = summarizeWeekReservations([row('pending', 1), row('pending', 3)])
     expect(counts.pending).toEqual({ total: 2, priority: 1, general: 1 })
   })
 
-  it('throws on a value the DB CHECK could not have stored', () => {
-    expect(() => summarizeWeekReservations([row('waiting', 4)])).toThrow(/effective_priority 4/)
+  it.each([0, -1, 4])('throws on effective_priority %i, which the DB CHECK could not store', p => {
+    expect(() => summarizeWeekReservations([row('waiting', p)])).toThrow(
+      new RegExp(`effective_priority ${p}`),
+    )
   })
 
   it('exports exactly the statuses it counts, for the query filter to reuse', () => {

@@ -54,7 +54,11 @@ const GROUP_LABEL = 'text-[11px] font-bold tracking-[0.1em] text-muted'
 // The 優先/一般 split, plus — when the number is highlighted — wording for why. Says what the
 // state IS ("still pending"), not what the operator did wrong: a running allocation job
 // legitimately shows pending rows (see lib/weekDemand.ts).
-function pendingSub(pending: DemandCounts, needsAttention: boolean): string {
+//
+// Zero gets no sub-line: 「優先 0 ／ 一般 0」 restates the 0 above it, and a normal post-
+// allocation week would carry that noise permanently.
+function pendingSub(pending: DemandCounts, needsAttention: boolean): string | undefined {
+  if (pending.total === 0) return undefined
   const split = `優先 ${pending.priority} ／ 一般 ${pending.general}`
   return needsAttention ? `${split} · 分配後仍有申請中` : split
 }

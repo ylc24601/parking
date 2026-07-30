@@ -8,12 +8,16 @@ import type { WeekStage } from '@/lib/weekStage'
 // already reduced the rows to numbers.
 //
 // ── effective_priority is FROZEN AT APPLY TIME, and must stay that way ────────
-// The Friday allocator sorts on this very column (lib/allocation/sort.ts), so the
-// overview's 「優先 N 位」 is exactly the set the allocator will treat as P2. A member
-// whose eligibility is revoked AFTER applying still counts as P2 here — matching the
-// allocation outcome. Deriving priority from users/eligibility instead would produce a
-// second truth ("overview says 4, allocator says 3"), so this module deliberately takes
-// nothing but the reservation row.
+// 「優先」 means: the reservations the Friday allocator sorts ahead of ordinary ones by
+// their frozen effective_priority (today, `<= 2`) — NOT "the P2 ones". The two give the
+// same number today, but the definitions differ, and only the first one survives contact
+// with a P1 row.
+//
+// The allocator sorts on this very column (lib/allocation/sort.ts), so the overview's
+// 「優先 N 位」 is exactly the set it will rank first. A member whose eligibility is revoked
+// AFTER applying still counts as 優先 here — matching the allocation outcome. Deriving the
+// split from users/eligibility instead would produce a second truth ("overview says 4,
+// allocator says 3"), so this module deliberately takes nothing but the reservation row.
 
 // The statuses that make up "this week's live demand + promised seats". Exported so the
 // repository's .in('status', …) filter and the counter below cannot drift apart.
@@ -33,8 +37,8 @@ export interface WeekReservationRow {
 // and genuinely means "gets priority treatment in the Friday sort".
 export interface DemandCounts {
   total: number
-  priority: number   // effective_priority <= 2 — P2 today; a P1 row would belong here too
-  general: number    // effective_priority === 3
+  priority: number   // effective_priority 1 or 2 — sorted ahead of ordinary reservations
+  general: number    // effective_priority 3
 }
 
 export interface WeekReservationCounts {
@@ -45,17 +49,18 @@ export interface WeekReservationCounts {
 
 const emptyCounts = (): DemandCounts => ({ total: 0, priority: 0, general: 0 })
 
-// P1 is counted as 優先 rather than rejected. It cannot arrive through any current path
-// (full-time staff hold six spots that sit OUTSIDE total_capacity and outside this system
-// entirely — they are also refused by the member apply flow, memberReservationService's
-// staff_use_p1), but the allocator does contemplate P1 reservations and sorts them first
-// (lib/allocation/sort.ts, and 'P1 always ranks before P3' in allocate.test.ts). Throwing
-// on one would take the /admin landing page down for every admin the moment some future
-// slice writes such a row — a large blast radius bought for no benefit, since 優先 is the
-// correct bucket for it anyway. Only a value the DB CHECK could not have stored throws.
+// P1 is counted as 優先 rather than rejected. The member apply flow refuses full-time staff
+// outright (memberReservationService's staff_use_p1) so no current path produces one, but
+// the allocator does contemplate P1 reservations and sorts them first (lib/allocation/sort.ts,
+// and 'P1 always ranks before P3' in allocate.test.ts). Throwing on one would take the /admin
+// landing page down for every admin the moment some future slice writes such a row — a large
+// blast radius bought for no benefit, since 優先 is where it belongs anyway.
+//
+// Each band is matched exactly, so the guard covers what its comment claims: 0 and -1 are
+// as impossible as 4, and none of them may pass as 優先.
 function bump(counts: DemandCounts, priority: number): void {
   counts.total += 1
-  if (priority <= 2) {
+  if (priority === 1 || priority === 2) {
     counts.priority += 1
     return
   }
