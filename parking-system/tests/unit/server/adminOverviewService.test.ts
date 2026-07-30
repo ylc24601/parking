@@ -19,11 +19,13 @@ const capRow = (over: Partial<WeeklyCapacityAdminRow>): WeeklyCapacityAdminRow =
   ...over,
 })
 
+const noDemand = { total: 0, p2: 0, p3: 0 }
+
 describe('getWeekOverview', () => {
-  it('no weekly_events row → stage no_event, capacity null (not an error)', async () => {
+  it('no weekly_events row → stage no_event, capacity + demand null (not an error)', async () => {
     const repo: MockRepo = makeMockRepo({ getWeeklyCapacityAdmin: vi.fn(async () => null) })
     const res = await getWeekOverview({ now: NOW }, asRepo(repo))
-    expect(res).toEqual({ sunday: SUNDAY, stage: 'no_event', capacity: null })
+    expect(res).toEqual({ sunday: SUNDAY, stage: 'no_event', capacity: null, demand: null })
     expect(repo.getWeeklyCapacityAdmin).toHaveBeenCalledWith(SUNDAY) // Taipei calendar, not getActiveEvent
   })
 
@@ -31,12 +33,51 @@ describe('getWeekOverview', () => {
     const repo: MockRepo = makeMockRepo({
       getWeeklyCapacityAdmin: vi.fn(async () => capRow({ status: 'open' })),
       hasFridayAllocationRun: vi.fn(async () => false),
-      countPromisedReservations: vi.fn(async () => 8),
+      countWeekReservations: vi.fn(async () => ({
+        promised: 8,
+        pending: { total: 12, p2: 3, p3: 9 },
+        waiting: { total: 5, p2: 1, p3: 4 },
+      })),
     })
     const res = await getWeekOverview({ now: NOW }, asRepo(repo))
     expect(res.stage).toBe('application_open')
     // 30 - 5 blocked - 0 admin_reserved - 3 staff = 22
     expect(res.capacity).toEqual({ allocatable: 22, blocked: 5, promised: 8 })
+  })
+
+  // promised now rides along on the demand read (one reservations query for all three),
+  // so the capacity page's own head-count helper must be left out of this path entirely.
+  it('takes promised from countWeekReservations and never calls countPromisedReservations', async () => {
+    const repo: MockRepo = makeMockRepo({
+      getWeeklyCapacityAdmin: vi.fn(async () => capRow({ status: 'open' })),
+      hasFridayAllocationRun: vi.fn(async () => false),
+      countWeekReservations: vi.fn(async () => ({
+        promised: 7,
+        pending: noDemand,
+        waiting: noDemand,
+      })),
+    })
+    const res = await getWeekOverview({ now: NOW }, asRepo(repo))
+    expect(res.capacity?.promised).toBe(7)
+    expect(repo.countWeekReservations).toHaveBeenCalledWith('event-1')
+    expect(repo.countPromisedReservations).not.toHaveBeenCalled()
+  })
+
+  it('passes the pending / waiting splits through to demand', async () => {
+    const repo: MockRepo = makeMockRepo({
+      getWeeklyCapacityAdmin: vi.fn(async () => capRow({ status: 'open' })),
+      hasFridayAllocationRun: vi.fn(async () => false),
+      countWeekReservations: vi.fn(async () => ({
+        promised: 0,
+        pending: { total: 5, p2: 2, p3: 3 },
+        waiting: { total: 3, p2: 0, p3: 3 },
+      })),
+    })
+    const res = await getWeekOverview({ now: NOW }, asRepo(repo))
+    expect(res.demand).toEqual({
+      pending: { total: 5, p2: 2, p3: 3 },
+      waiting: { total: 3, p2: 0, p3: 3 },
+    })
   })
 
   it('open + allocation run → allocated', async () => {

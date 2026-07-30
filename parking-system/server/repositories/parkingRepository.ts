@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AdminRole } from '@/lib/adminRoles'
 import { getServiceClient } from '@/lib/supabase/server'
+import {
+  WEEK_DEMAND_STATUSES,
+  summarizeWeekReservations,
+  type WeekReservationCounts,
+} from '@/lib/weekDemand'
 import type {
   EffectivePriority,
   Reservation,
@@ -807,6 +812,17 @@ export interface ParkingRepository {
   // a held seat, not a pending one (0006:26-36 promotes a waiting row straight into it,
   // and apply_offer_resolution later flips it to approved with no capacity check).
   countPromisedReservations(eventId: string): Promise<number>
+  // Wave 3 3e (#32) — the overview's supply AND demand numbers in one read: promised
+  // (approved + temp_approved), plus pending / waiting split by frozen effective_priority.
+  //
+  // One select over the event's live rows, counted in the app: PostgREST has no group-by,
+  // and the alternatives are worse — an RPC for two numbers, or three head-counts that can
+  // disagree with each other. Volume is this week's reservations (dozens).
+  //
+  // Deliberately NOT folded into countPromisedReservations: that one is still the capacity
+  // page's promised read path (capacityAdminService), and widening its return type would
+  // push this change into a page this slice does not touch.
+  countWeekReservations(eventId: string): Promise<WeekReservationCounts>
   // Wraps set_weekly_capacity (0031): locks the event row, guards, and writes the audit
   // row in the SAME transaction. Refusals come back as typed reasons, never throws.
   setWeeklyCapacity(args: {
@@ -2159,6 +2175,17 @@ export function createParkingRepository(
       if (error) throw new Error(`countPromisedReservations failed: ${error.message}`)
       if (count === null) throw new Error('countPromisedReservations failed: count unavailable')
       return count
+    },
+
+    async countWeekReservations(eventId) {
+      const { data, error } = await client
+        .from('reservations')
+        .select('status, effective_priority')
+        .eq('weekly_event_id', eventId)
+        .in('status', WEEK_DEMAND_STATUSES)
+      if (error) throw new Error(`countWeekReservations failed: ${error.message}`)
+      if (data === null) throw new Error('countWeekReservations failed: rows unavailable')
+      return summarizeWeekReservations(data as { status: string; effective_priority: number }[])
     },
 
     async setWeeklyCapacity(args) {
