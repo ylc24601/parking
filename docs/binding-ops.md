@@ -2,6 +2,8 @@
 
 > 用途：把「已知會友」的 LINE 帳號綁定到 `users.line_id`，讓移車/通知送得到本人。整體系統邏輯與 Admin 後台其他頁面總覽見 [admin-operations-guide.md](admin-operations-guide.md)。
 > 兩條進件路徑：**LIFF 申請**（Phase 7 Slice 2，會友自助）與 **`綁定 <code>` 發碼**（Phase 5B，fallback／同工協助）。
+>
+> 本文是**操作者視角**。要轉發給會友／試跑同工的白話版步驟見 [member-binding-guide.md](member-binding-guide.md)。
 > schema/RPC 見 handoff §6.20 / §6.24；擷取端見 §6.19；規劃背景 [go-live-readiness.md](go-live-readiness.md)。
 >
 > 🔒 **隱私規則（全程）**：輸出/日誌**不得**出現完整 `line_user_id`、完整 code 或完整手機號碼；唯一例外是
@@ -13,8 +15,21 @@
 - **主要：Admin UI `/admin/bindings`**（handoff §6.27）——per-admin 帳號登入（`admin:create` 開帳號），
   待審列表（遮罩）→ 預覽 → 核准/退回；核准者記入 `pending_binding.decided_by_admin_id` 供稽核。
   預覽→核准帶版本防偷換（申請被重送會回「請重新預覽」）。
-- **Fallback：下方 CLI**（`binding:pending/approve/reject`）照舊可用；CLI 決行的 `decided_by_admin_id`
+- **Fallback：下方 CLI**（`binding:pending/approve/reject`）；CLI 決行的 `decided_by_admin_id`
   為 null（「CLI／未具名」）。發碼 `binding:issue` 目前仍 CLI-only（發碼 UI 排在會友管理 slice）。
+
+> ⚠️ **CLI 目前無法用 `npm run` 直接啟動（2026-07-30 起）**
+>
+> `a199580`（#54）在 `lib/supabase/server.ts` 加了 `import 'server-only'` 守住 service-role client。
+> 該套件只有在 `react-server` export condition 下才是 no-op——Next.js 會設，**`tsx` 不會** ⇒ 本文所有
+> `npm run binding:*` / `job:*` 指令一啟動就 throw。
+>
+> **繞行方式**（已實測可用）：把 `npm run <script>` 換成
+> `npx tsx --conditions=react-server scripts/run-<script>.ts`，其餘參數不變。例：
+> `npx tsx --conditions=react-server scripts/run-binding-pending.ts -- --limit 50`
+>
+> **不受影響**：`/admin/bindings` 這條**主要**路徑跑在 Next 裡面，完全正常；prod 的排程也正常
+> （cron 打的是 `/api/jobs/*` route）。壞的只有本機 CLI。修復已排入待辦，屆時本註記即可移除。
 
 ---
 
