@@ -101,6 +101,7 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | 34-0 Import integrity | `Ready` | `Pre-pilot` | 下一輪正式資料導入前的營運風險 |
 | 34-0b-A Import auditability | `Ready` | `Pre-pilot` | 影響最大的批次寫入是唯一沒有 audit 的路徑 |
 | 34a Profile completeness | **`Blocked`** | `Pre-pilot` | 仍是 pilot gate，但**先定 `profile_confirmed_at` 語意**再開工 |
+| #36 晚鳥即時預約 | **`Blocked`** | `Pre-pilot` | PRD 已寫、實作沒做，落差已教錯會友一次；**先釘並發／公平規則**再開工 |
 | 34b 會友自助維護 | `Deferred` | `Pilot-early` | 接 `0038` 已備妥的 vehicle lifecycle |
 | #11 P2 自助申請 | `Deferred` | `Pilot-early` | 與 34b 合併規劃，治理仍留 admin |
 
@@ -153,6 +154,7 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | #33b | 覆核佇列帶眷屬衍生 enum | admin/eligibility | Reject | Closed | — | S | None | — | 不為此放寬該頁隱私姿態（使用者 2026-07-28 定） |
 | #34 | **Member Data Lifecycle**（Epic） | 匯入 UI／member LIFF／#10／綁定 | Do | **Ready** | **Pre-pilot** | L | TBD | — | 子刀狀態見 #34 Work items 表 |
 | #35 | 本週申請清單（點數字看名單） | admin/week（新頁） | Do | **Ready** | **Pre-pilot** | S–M | App-only | 3f | #32 的下游；pending／waiting 目前無任何 UI 可見 |
+| #36 | 週五分配後晚鳥即時預約 | member apply＋`0023` RPC | Do | **Blocked** | **Pre-pilot** | M | Migration + App | — | PRD §六.3 已寫、**未實作**；並發／公平規則待釘 |
 
 ---
 
@@ -715,13 +717,78 @@ getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
 
 ---
 
-## 交付分級
+### #36 週五分配後晚鳥即時預約
+
+**Decision:** Do ｜ **Status:** **Blocked** ｜ **Delivery:** **Pre-pilot**
+**Size:** M ｜ **Deployment:** Migration + App ｜ **Depends on:** —
+
+#### Problem
+**PRD 已寫、但從未實作**。[PRD §六.3](Church_Parking_Management_System_PRD.md) 明訂「**晚鳥即時預約**：週五分配後若未滿額，系統保持開放，新申請採『隨送隨核准』直到滿額」。
+
+實際行為相反：Friday allocation 一 claim（`job_runs` 進 `running`），`apply_reservation` 即回 `applications_closed`（[0023:49](../parking-system/supabase/migrations/0023_member_apply.sql#L49)），會友從此無法線上申請，即使**真的還有空位**。
+
+**這個落差已經造成一次實害**：撰寫會友說明時照 PRD 寫成「週五後有空位就隨到隨核准」，等於教錯會友行為（PR #60 review 抓出）。canonical requirement 與實作不一致，下一個人還會再照它寫錯一次 ⇒ 必須明確列為 backlog item，而不是留在 PRD 裡看起來像已實作。
+
+#### Decision
+週五分配後，若**真的有沒有任何既有權利主張的空位**，新申請直接核准。
+
+**不是**把 `applications_closed` 改成開放而已——必須在 **transaction 內**判定：
+
+```
+Friday allocation 已完成
+        │
+        ▼
+還有可分配容量？
+   ├─ 否 → 拒絕
+   └─ 是 → 有 waiting / temp_approved 嗎？
+            ├─ 有 → 拒絕（既有候補權利優先）
+            └─ 無 → 新申請直接 approved
+```
+
+#### Constraints
+- ① **分配後的新申請不得再進 `pending`**：要嘛 atomic direct approve、要嘛拒絕。留下分配後的 `pending` 列會讓 #32 的 warning 永久亮著，也沒有任何流程會再處理它。
+- ② **不得超賣**：「檢查 capacity → insert approved」必須在 **DB transactional guard** 內完成（比照 `0031` 的容量守衛），**不可**在 TypeScript 先 count 再 insert。
+- ③ **既有 `waiting` / 進行中的 offer 一律優先於晚鳥**：晚鳥不得插隊，尤其**不得搶正在 2 小時確認中的 `temp_approved`**——那是**已經 hold 住的一格**，`approved < capacity` 並不代表有空位（`countPromisedReservations` 之所以把 `temp_approved` 算進 promised，正是同一個理由）。
+  **「只要存在任何 `waiting`，晚鳥即不得 direct approve」是第一版的定案，不留例外。** 理由：offer `expired`／`declined` 後該筆會回到 `waiting` 且 `allocation_order` **未被改動**（[0024:41-42](../parking-system/supabase/migrations/0024_offer_expiry_guard.sql#L41-L42)）⇒ **候補權利仍然存在**。若日後要讓「錯過一次 offer 即失去候補權」，那是獨立的 business-rule change，須自行走決策，不得以 #36 的例外形式偷渡。
+- ④ **不順便做「週五後加入候補尾端」**：那是另一條產品規則。第一版只解決「**真的有剩位卻不能申請**」。
+- ⑤ **容量沿用現有 `computeCapacity` 語意**（含 blocked／guest／P1 減項），**不在這一刀重新發明容量公式**。
+- ⑥ **`effective_priority` 仍須照常凍結**：「直接核准、不排序」≠ priority 不重要——後續 P2 的 10:20 提醒、10:45／10:55 釋出時點全都依 priority 運作（[release.ts](../parking-system/lib/allocation/release.ts)）。
+- ⑦ **#14B 必須建立在本項的 automatic semantics 之上**：先定義「正常模式」怎麼運作，才談得上 `forced_open` 到底 override 了什麼。⇒ **本項不可併入 #14B**（那是人工 override，且自身仍 Blocked）。
+- ⑧ **窗口有結束時間，且不得晚於主日 10:30**：PRD §八.4 明訂 **10:30 起進入現場調度**——「不再保證依候補順位保留車位，以現場交通安全、入口秩序與 Staff 指引為優先」，而 10:30 的 release sweep 也會廣播給全體候補、語意是**現場先到先停**。線上 direct-approve 若延續到那之後，等於在系統裡發出一個現場已經不保證的承諾。**確切截止點（10:00 現場點名開始／10:30 切點）列為待決**，見下方 Unresolved decision。
+  ⚠️ **連帶影響容量算法**：若窗口允許進入 10:00–10:30，此時已可能有 `attended` 與現場車輛，「真的有空位」就**不能只看 `approved + temp_approved`**。截止點一旦選在 10:00 之後，容量判定必須一併重新定義。
+- ⑨ **direct approve 必須寫出完整的 approved row**：`0002:74` 有 `check (status <> 'approved' or release_deadline_at is not null)`，而 `release_deadline_at` 依 frozen `effective_priority` 算出：**direct approve 的初始 deadline 為 P3 10:30、P2 10:45**；10:55 只有在 `p2_on_the_way` 為真時才成立（[release.ts:18-19](../parking-system/lib/allocation/release.ts#L18-L19)），亦即晚鳥核准後**另經既有「正在路上」回報流程**才會延長，不是核准當下的值。Friday allocator 正是 freeze priority → `computeReleaseDeadline` → 一併寫入（[fridayAllocationService.ts:64](../parking-system/server/services/fridayAllocationService.ts#L64)）。⇒ 晚鳥路徑**不可只 insert `approved`**，必須同一 statement 寫入 `approved_at` 與 deadline，否則 DB 直接拒絕。
+
+#### Unresolved decision（Blocked 原因）
+需求本身清楚，卡的是以下三項：
+- **晚鳥線上窗口何時截止**（見 Constraint ⑧）：選 10:00（現場點名開始）還是 10:30（現場調度切點）。**上限已定：不得晚於 10:30。**
+- 兩人同時搶最後一格的判定放在哪一層（RPC 內 `for update` 鎖 event 列？）
+- 晚鳥核准是否發通知、用哪個 template
+
+> **「有 `waiting` 是否一律拒絕」不是待決事項**——見 Constraint ③，第一版直接釘死為「是」。錯過一次 offer 後是否失去候補權，是**另一個 business-rule change**，不得偷偷變成 #36 的例外。
+
+#### Acceptance
+以容量 20 為例：
+
+| 情境 | 期望 |
+|---|---|
+| 分配後 `approved=17`、`waiting=0`、`temp_approved=0` | 新申請**直接 approved**，可用到 20 |
+| `approved=20` | 新申請**拒絕** |
+| `approved=19`、`temp_approved=1` | 新申請**拒絕**（不得搶 held seat） |
+| `approved=19`、`waiting=1` | 新申請**拒絕**（既有候補優先） |
+| 兩人同時搶最後一格 | **最多一人** approved，不超賣 |
+| 窗口截止時點之後（不晚於主日 10:30） | 新申請**拒絕**，即使仍有空位 |
+
+**每一筆晚鳥核准的列必須是完整的 approved row**：`effective_priority` 與一般申請一樣被正確凍結，且**同一 statement 內**寫入 `approved_at` 與依該 frozen priority 算出的 `release_deadline_at`（P3 10:30／P2 10:45）。**不可產生缺少 deadline 的 approved 列**——`0002:74` 的 CHECK 會直接拒絕，而那個 CHECK 正是為了讓「已核准卻沒有釋出時點」這種列不可能存在。
+
+#### History
+2026-07-30 由 PR #60 的文件審查衍生——會友說明照 PRD 寫，才發現 PRD 與實作不一致。**獨立成條、不併入 #14B**（外部審查判定）：#36 是自動業務規則，#14B 是人工 override，把前者綁進一個自身仍 Blocked 的 feature 只會一起卡住。
+**文件分工**：面向會友的說明**一律描述今天 production 的真實行為**（＝分配後線上登記關閉）；PRD 保留這條產品需求，但標明尚未實作。現況與產品目標不再混為一談。
 
 > **compatibility view。** 依 `Delivery` token 分組投影 `Feature inventory`；狀態權威仍在 inventory，本節不建立新語意。
 > 舊版「交付前必修／強烈建議交付前／可交付後迭代」的敘述已完成其任務，移入 Archive 保存。
 
 - **`Pre-delivery`（交付前）**：#33a
-- **`Pre-pilot`（pilot 前）**：34-0、34-0b-A、34a、#35
+- **`Pre-pilot`（pilot 前）**：34-0、34-0b-A、34a、#35、#36
 - **`Pilot-early`（pilot 初期）**：34b、#11
 - **`Post-delivery`（交付後）**：#3、#4、#5B（5B-b／5B-c）、#6A、#6B、#7、#10（2B-2c）、#16、#26、#28、#31、34-0b-B、34c
 - **No delivery target（`Blocked`，等產品決策）**：#13、#14B
