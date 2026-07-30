@@ -75,22 +75,13 @@ Staff 結束點名 ── 整場沒出現、也沒取消的預約，結算為 no
 
 ### 1.6 系統什麼時候會發 LINE 通知
 
-依一週的時間順序：
-
-| 時機 | 情境 | 通知內容（`template_key`） | 誰觸發 |
-|---|---|---|---|
-| **週五 18:00** | 分配核准 | 「○月○日主日的停車申請已核准」（`reservation_approved`） | 系統自動 |
-| **週五 18:00** | 額滿進候補 | 「車位已額滿，您目前候補第 N 位」（`reservation_waiting`，帶名次） | 系統自動 |
-| 週五～主日凌晨 | 候補遞補，需 2 小時內確認 | 「有一個車位釋出給您，請 2 小時內確認」（`offer_2hr_confirm`） | 系統自動 |
-| 週五～主日 | 會友自己取消的確認 | `reservation_cancelled`（晚期取消另有文案） | 系統自動 |
-| **主日 00:00** | 到期仍未確認的 offer 自動升為核准 | 「有名額釋出，已為您自動保留車位」（`offer_auto_approved`） | 系統自動 |
-| **主日 00:00 後** | 此時才有人取消 → 遞補者**直接核准**，不用再等確認 | `reservation_approved`（同分配核准文案） | 系統自動 |
-| 主日 10:20 | P2 到場提醒 | 「您保留的車位將於 10:45 釋出，正路上請回覆」（`p2_arrival_reminder`） | 系統自動 |
-| 主日 10:30 / 10:45 | 未到場者的保留車位釋出（資訊性） | `reservation_released` | 系統自動 |
-| 主日 10:30 | **廣播給所有候補中的人**：現在有名額釋出 | `broadcast_release`（現場先到先停、不保證保留） | 系統自動 |
-| 主日現場 | 同工按「請車主移車」 | `move_car_request`（A 一般／B 緊急／C 散會後／D 車位調度，四種文案任選） | Staff 現場操作 |
-
-> `staff_reminder`／`admin_finalize_reminder` 兩個模板已寫好但**目前沒有任何排程會送出**，不列入上表。
+| 情境 | 通知內容 | 誰觸發 |
+|---|---|---|
+| 候補遞補，需 2 小時內確認 | 「有一個車位釋出給您，請 2 小時內確認」 | 系統自動 |
+| 保留車位釋出（資訊性） | reservation_released | 系統自動 |
+| 預約被取消（含晚期取消轉釋出） | reservation_cancelled | 系統自動 |
+| 主日 10:20 P2 到場提醒 | 「您保留的車位將於 10:45 釋出，正路上請回覆」 | 系統自動 |
+| 同工在現場按「請車主移車」 | move_car_request（A 一般／B 緊急／C 散會後／D 車位調度，四種文案任選） | Staff 現場操作 |
 
 所有通知都是**教會 LINE 官方帳號（OA）代發**、不會外露同工或其他會友的個人聯絡方式；前提是該會友已完成 LINE 綁定（見 [綁定審核](#綁定審核-adminbindings)）。通知的排隊與送出機制、健康度監控見 [通知系統狀態](#通知系統狀態-adminops) 頁與 [dispatcher-ops.md](dispatcher-ops.md)。
 
@@ -178,9 +169,7 @@ Staff 結束點名 ── 整場沒出現、也沒取消的預約，結算為 no
 把系統從「模擬送出」切成「真的透過 LINE 送出」。切換前會先對**一位知情的操作者帳號**送一則測試通知，確認真的收得到，才繼續。
 
 ### Step 4：分批放行（1.7，最關鍵的一步）
-1. **先找一個小組**（例如同工自己這一組），走綁定流程。會友端的完整白話步驟（含「一定要先加官方帳號好友」）在 **[member-binding-guide.md](member-binding-guide.md)**，可整份轉發給他們。兩條路徑：
-   - **主要（自助）**：組員加官方帳號好友 → 從選單進會員專區 → 填姓名＋手機送出 → Admin 到 [綁定審核](#綁定審核-adminbindings) 頁核准。⚠️ **系統不會通知你有人申請**，要主動去看這一頁（或跑 `npm run binding:pending`）。
-   - **備用（發碼）**：Admin 發一次性綁定碼給組員 → 組員在 LINE 傳「綁定 `<碼>`」→ 一樣到綁定審核頁核准。
+1. **先找一個小組**（例如同工自己這一組），走綁定流程：由 Admin 發一次性綁定碼給組員 → 組員在 LINE 傳「綁定 `<碼>`」→ Admin 到 [綁定審核](#綁定審核-adminbindings) 頁核准。
 2. **只對這個小組開放真實送出**（其他人維持不送，避免大範圍出錯）。
 3. **觀察至少一個完整主日循環**：看 [通知系統狀態](#通知系統狀態-adminops) 頁的健康度——沒有異常失敗、沒有卡住的處理中列、未綁定的車主畫面上有正確顯示「無法通知」的提示。
 4. **確認沒問題後才擴大到下一批**，重複「發碼綁定 → 觀察一個主日 → 再擴大」直到全教會。
@@ -231,8 +220,7 @@ Staff 結束點名 ── 整場沒出現、也沒取消的預約，結算為 no
 | 交付日／試營運權威清單 | [go-live-checklist.md](go-live-checklist.md) |
 | 試營運背後的設計理由（為何用綁定碼、為何分批） | [go-live-readiness.md](go-live-readiness.md) |
 | 名單匯入操作步驟 | [member-import-ops.md](member-import-ops.md) |
-| LINE 綁定審核操作步驟（給 Admin） | [binding-ops.md](binding-ops.md) |
-| 會友怎麼綁定（可直接轉發給試跑同工） | [member-binding-guide.md](member-binding-guide.md) |
+| LINE 綁定審核操作步驟 | [binding-ops.md](binding-ops.md) |
 | 通知系統監控與重送 | [dispatcher-ops.md](dispatcher-ops.md) |
 | Admin 帳號生命週期管理 | [admin-account-ops.md](admin-account-ops.md) |
 | 教會 OA 加入率方案＋通知文案 | [oa-onboarding-and-move-car-copy.md](oa-onboarding-and-move-car-copy.md) |

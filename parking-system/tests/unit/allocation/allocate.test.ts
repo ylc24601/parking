@@ -63,9 +63,12 @@ describe('computeCapacity', () => {
     ).toThrow()
   })
 
-  // ── P1 skip releases a public space ────────────────────────────────────────
+  // ── A P1 who needs no system-managed space leaves one in the public pool ───
+  // 'skipped' means "does not need one of the 23 this week" — typically because they
+  // use the church-managed staff area, which is outside this system. It is NOT
+  // "absent from church" (see WeeklyStaffAllocation in lib/types.ts).
 
-  it('a skipped P1 staff frees one public space (capacity +1 vs all reserved)', () => {
+  it('a P1 needing no system space leaves one more in the public pool', () => {
     const event = { total_capacity: DEFAULT_TOTAL_CAPACITY, admin_reserved: 0, blocked_spaces: 0 }
     const allReserved = [
       makeStaffAllocation(),
@@ -75,7 +78,7 @@ describe('computeCapacity', () => {
     const oneSkipped = [
       makeStaffAllocation(),
       makeStaffAllocation(),
-      makeStaffAllocation({ status: 'skipped', skip_reason: '外教會服事' }),
+      makeStaffAllocation({ status: 'skipped', skip_reason: '停教會自管停車區' }),
     ]
     const capAll     = computeCapacity(event, countActiveFullTimeStaffReserved(allReserved))
     const capSkipped = computeCapacity(event, countActiveFullTimeStaffReserved(oneSkipped))
