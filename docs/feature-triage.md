@@ -104,7 +104,7 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | 34b 會友自助維護 | `Deferred` | `Pilot-early` | 接 `0038` 已備妥的 vehicle lifecycle |
 | #11 P2 自助申請 | `Deferred` | `Pilot-early` | 與 34b 合併規劃，治理仍留 admin |
 
-**其餘 `Blocked`（不在近期視野）**：#13 auto-release 業務規則未定／#14B override 與時間視窗互動規則未定／#28「至少留一台或允許零台」未定／#31 眷屬 model 與撤銷語意未定。
+**其餘 `Blocked`（不在近期視野）**：#13 P1 每週狀態生命週期未定／#14B override 與時間視窗互動規則未定／#28「至少留一台或允許零台」未定／#31 眷屬 model 與撤銷語意未定。
 
 ---
 
@@ -128,7 +128,7 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | #10 | P2 寫入型覆核 | admin/members/[id]＋eligibility inline | Do | Deferred | Post-delivery | M | Migration + App | 2B-2 | 2B-2a／2B-2b 已完成（`0032`/`0033`）；剩 2B-2c 佇列列內操作 |
 | #11 | P2 會友自助申請＋待審 inbox | member＋eligibility | Do | Deferred | Pilot-early | L | TBD | 5 | #10 的完整五態 enum 在此補齊 |
 | #12 | 資料最小化橫幅 | eligibility, members/[id] | Do | Done | — | S | App-only | 1 | 明示不索取／不顯示診斷證明 |
-| #13 | P1 同工名單＋本週是否需要系統車位 | admin | Do | Blocked | — | M–L | TBD | — | auto-release 業務規則未定；UI 須問「是否需要系統車位」而非「有沒有來」 |
+| #13 | P1 同工名單＋本週是否需要系統車位 | admin | Do | Blocked | — | M–L | TBD | — | 每週狀態生命週期未定（初始化／標記責任／鎖定時點）；UI 須問「是否需要系統車位」而非「有沒有來」 |
 | #14A | 車位容量設定 | admin＋weekly_events | Do | Done | — | M | Migration + App | 2B-1 | 幹事不用 SQL 改容量；DB RPC 在 txn 內守 capacity（`0031`） |
 | #14B | 申請開放 override | admin＋weekly_events | Do | Blocked | — | M | TBD | 3 | `application_override` enum；與時間視窗互動規則未定 |
 | #15 | 稽核記錄（Audit Log）— 地基 | 橫切＋唯讀頁 | Do | Done | — | L | Migration + App | 2A | substrate／viewer／retention 三刀全完成（`0030`/`0034`） |
