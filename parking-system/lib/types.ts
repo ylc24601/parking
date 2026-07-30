@@ -47,7 +47,15 @@ export interface WeeklyEvent {
 }
 
 // P1 full-time staff weekly record (replaces the old users.p1_skip_this_week).
-// status 'skipped' = 在外服事本週不停車 → releases the reserved space to the public pool.
+//
+// The question this row answers is "does this staff member need one of the SYSTEM-managed
+// 23 spaces this week?" — NOT "are they at church this week?".
+//   'reserved' = yes: hold one of the 23 for them (e.g. they have to leave early, so the
+//                church-managed area does not work for them this week)
+//   'skipped'  = no: they use the church-managed staff parking area, or they are away
+// The church-managed area is outside this system entirely — it is never counted, and how
+// many cars sit in it has no effect on capacity. Someone who attends but parks there is
+// 'skipped'.
 export interface WeeklyStaffAllocation {
   id: string
   weekly_event_id: string

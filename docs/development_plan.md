@@ -10,7 +10,8 @@
     - guest_reserved            -- 外賓保留位（Admin 每週手動設定）
     - active_full_time_staff_reserved
   ```
-  其中 `active_full_time_staff_reserved = 全職同工名單人數 - 本週標記不停車(skipped)人數`。
+  其中 `active_full_time_staff_reserved = 本週需要占用這 23 格中一格的全職同工人數`（＝ `COUNT(status='reserved')`）。
+  ⚠️ **不是「名單人數 − 本週沒來的人數」**：教會另有**自行控管的停車區**供全職同工使用，**完全不在本系統容量內**，該區停幾台都不進公式。只有同工本週需改停系統管理的 23 格（例如需提早離開）時才計入本欄。
   全職同工（P1）與外賓**皆不進入公開排序**，於分配前先從容量扣除。
   > 註：`Weekly_Events.admin_reserved` 僅代表「外賓保留位 `guest_reserved`」，**不含**全職同工保留位；全職同工保留位由當週 P1 名單動態計算，避免 Admin 手動維護兩個數字。
 * **不指定車格：** MVP 僅管理「可用車位總數」，不指定實體車位號碼，實際停放由現場同工引導。
@@ -67,8 +68,9 @@
 * `weekly_event_id`: UUID (FK → Weekly_Events)
 * `user_id`: UUID (FK → Users，role = full_time_staff)
 * `status`: Enum ('reserved' | 'skipped' | 'attended' | 'no_show')
-  * `reserved`：本週占用 P1 保留名額（預設）
-  * `skipped`：本週在外服事，週五前自行標記，名額釋出給公開候補
+  * `reserved`：**本週需要占用系統管理 23 格中的一格**（例如需提早離開，不便停教會自管區）
+  * `skipped`：**本週不需要系統車位**——照常停教會自管的停車區，或本週沒來
+  * ⚠️ 判準是**「本週是否需要系統車位」，不是「本週有沒有來教會」**：會來教會但停自管區者仍是 `skipped`。教會自管區不在本系統容量內，該區停幾台都不影響任何數字。
 * `skip_reason`: String (NULL)
 * `updated_at`: Timestamp
 * （唯一鍵：`(weekly_event_id, user_id)`）

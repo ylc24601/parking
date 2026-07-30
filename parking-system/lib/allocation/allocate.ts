@@ -7,9 +7,13 @@ import type {
 } from '@/lib/types'
 import { sortReservations } from './sort'
 
-// Number of P1 full-time staff still holding a reserved space this week:
-// roster count − those who marked themselves 'skipped' (在外服事). Only 'reserved'
-// counts; skipped/attended/no_show do not occupy a held public space.
+// Number of P1 full-time staff who need one of the SYSTEM-managed spaces this week.
+// Only 'reserved' counts; skipped/attended/no_show do not hold a space out of the pool.
+//
+// Not "how many staff are at church": staff normally park in the church-managed area,
+// which is outside this system and never counted (see WeeklyStaffAllocation in
+// lib/types.ts). A row is 'reserved' only when that area does not work for them that
+// week — typically because they have to leave early.
 export function countActiveFullTimeStaffReserved(
   allocations: WeeklyStaffAllocation[],
 ): number {
@@ -18,9 +22,9 @@ export function countActiveFullTimeStaffReserved(
 
 // Public allocatable capacity (the pool the Friday sort draws from):
 //   total_capacity − blocked_spaces − guest_reserved − active_full_time_staff_reserved
-// where event.admin_reserved IS the guest-reserved count, and P1 full-time staff
-// reserved spaces are passed in (computed from the weekly P1 list). Both P1 staff
-// and guests are excluded from the public pool.
+// where event.admin_reserved IS the guest-reserved count, and the P1 count is the staff
+// who need a system-managed space THIS week (passed in, computed from the weekly P1 list).
+// Both are carved out of total_capacity before the public sort, so neither competes in it.
 export function computeCapacity(
   event: Pick<WeeklyEvent, 'total_capacity' | 'admin_reserved' | 'blocked_spaces'>,
   activeFullTimeStaffReserved: number,

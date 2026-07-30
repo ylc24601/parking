@@ -128,7 +128,7 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | #10 | P2 寫入型覆核 | admin/members/[id]＋eligibility inline | Do | Deferred | Post-delivery | M | Migration + App | 2B-2 | 2B-2a／2B-2b 已完成（`0032`/`0033`）；剩 2B-2c 佇列列內操作 |
 | #11 | P2 會友自助申請＋待審 inbox | member＋eligibility | Do | Deferred | Pilot-early | L | TBD | 5 | #10 的完整五態 enum 在此補齊 |
 | #12 | 資料最小化橫幅 | eligibility, members/[id] | Do | Done | — | S | App-only | 1 | 明示不索取／不顯示診斷證明 |
-| #13 | P1 同工名單＋「本週不停」自動釋出 | admin | Do | Blocked | — | M–L | TBD | — | auto-release 業務規則未定 |
+| #13 | P1 同工名單＋本週是否需要系統車位 | admin | Do | Blocked | — | M–L | TBD | — | auto-release 業務規則未定；UI 須問「是否需要系統車位」而非「有沒有來」 |
 | #14A | 車位容量設定 | admin＋weekly_events | Do | Done | — | M | Migration + App | 2B-1 | 幹事不用 SQL 改容量；DB RPC 在 txn 內守 capacity（`0031`） |
 | #14B | 申請開放 override | admin＋weekly_events | Do | Blocked | — | M | TBD | 3 | `application_override` enum；與時間視窗互動規則未定 |
 | #15 | 稽核記錄（Audit Log）— 地基 | 橫切＋唯讀頁 | Do | Done | — | L | Migration + App | 2A | substrate／viewer／retention 三刀全完成（`0030`/`0034`） |
@@ -314,13 +314,25 @@ Wave 4，排在 destination model 之後、#6A 之前。
 
 ---
 
-### #13 P1 同工名單＋「本週不停」自動釋出
+### #13 P1 同工名單＋本週是否需要系統車位
 
 **Decision:** Do ｜ **Status:** **Blocked** ｜ **Delivery:** —
 **Size:** M–L ｜ **Deployment:** TBD
 
 #### Unresolved decision（Blocked 原因）
 auto-release 業務規則未定。
+
+#### Constraints（2026-07-30 語意釘正，實作時必須遵守）
+- **UI 要問的是「本週是否需要占用系統管理的車位」，不可問「本週有沒有來／要不要停車」。** 教會另有自行控管的停車區供全職同工使用，**完全不在本系統容量內**；**會來教會但停自管區的人不占系統車位**，兩種問法會得到不同答案。建議形式：
+
+  ```
+  王同工   ○ 使用教會自管停車區    ● 本週需保留系統車位
+  ```
+
+  而非 `☐ 本週不停車`。
+- `active_full_time_staff_reserved` ＝ `COUNT(status='reserved')` ＝ **本週需要占用 23 格中一格的同工數**。`computeCapacity` 的減項因此是正確的、**不需修改**——要守住的是填入這個欄位的語意。
+- 舊文件曾把它記成「名單人數 − 本週標記不停車的人數」（＝在數出席）。照那個語意填，同工都來、都停自管區時會算成滿員，**平白吃掉會友的車位**。該敘述已於本刀在 PRD／development_plan／operations guide／`lib/types.ts`／`lib/allocation/allocate.ts`／seed fixture 六處更正。
+- **不必改 member apply flow**：全職同工被 `staff_use_p1` 擋在會友申請之外是**設計正確**——P1 要用系統車位不應與 P2/P3 搶排序，而是由本功能標記 `reserved`、讓容量先扣一格。缺的只是操作介面。
 
 ---
 
