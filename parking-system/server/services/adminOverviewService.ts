@@ -24,10 +24,16 @@ export async function getWeekOverview(
 
   // No weekly_events row yet: the ensure-weekly-event job hasn't created it. A
   // legitimate "nothing scheduled" state, not an error.
-  if (!row) return { sunday, stage: 'no_event', capacity: null }
+  if (!row) return { sunday, stage: 'no_event', capacity: null, demand: null }
 
   const allocationRan = await repo.hasFridayAllocationRun(row.id)
-  const promised = await repo.countPromisedReservations(row.id)
+  // One reservations read feeds promised + pending + waiting (#32). This is NOT a
+  // transactional snapshot of the whole card — the weekly_events row and the allocation
+  // flag are their own queries — but the three reservation-derived numbers now come from
+  // one result set scoped to the one weekly_event_id resolved above, so the card cannot
+  // contradict itself about this week's reservations. Making all five atomic would mean
+  // an RPC, which this metric does not warrant.
+  const counts = await repo.countWeekReservations(row.id)
 
   return {
     sunday,
@@ -35,7 +41,8 @@ export async function getWeekOverview(
     capacity: {
       allocatable: computeCapacity(row, row.active_full_time_staff_reserved),
       blocked: row.blocked_spaces,
-      promised,
+      promised: counts.promised,
     },
+    demand: { pending: counts.pending, waiting: counts.waiting },
   }
 }

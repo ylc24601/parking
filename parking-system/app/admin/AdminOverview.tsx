@@ -5,6 +5,7 @@ import Link from 'next/link'
 import type { WeekOverview } from '@/lib/adminTodoTypes'
 import { buildAdminTodoRows } from '@/lib/adminTodoRows'
 import { fmtTaipeiTime } from '@/lib/taipeiDate'
+import { pendingNeedsAttention, type DemandCounts } from '@/lib/weekDemand'
 import { WEEK_STAGE_LABEL, type WeekStage } from '@/lib/weekStage'
 import Badge, { type BadgeTone } from '../ui/Badge'
 import { useAdminTodos } from './AdminTodoProvider'
@@ -22,13 +23,44 @@ const STAGE_TONE: Record<WeekStage, BadgeTone> = {
   closed: 'neutral',
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+// A metric. `sub` carries the 優先/一般 split under 申請中; `tone="warning"` recolours the
+// number — never on its own, always alongside wording in `sub` that says what is off
+// (design-spec §1.6: colour is not the only carrier of meaning).
+function Stat({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string
+  value: number
+  sub?: string
+  tone?: 'warning'
+}) {
+  const accent = tone === 'warning' ? 'text-warning-fg' : ''
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-xs text-muted">{label}</span>
-      <span className="text-2xl font-bold tabular-nums text-ink">{value}</span>
+      <span className={`text-2xl font-bold tabular-nums ${accent || 'text-ink'}`}>{value}</span>
+      {sub && <span className={`text-xs ${accent || 'text-muted'}`}>{sub}</span>}
     </div>
   )
+}
+
+// 供給 / 需求 group heading — design-spec §1.2 micro-label (11px/700, tracked, muted).
+// No uppercase: the labels are CJK, where it does nothing.
+const GROUP_LABEL = 'text-[11px] font-bold tracking-[0.1em] text-muted'
+
+// The 優先/一般 split, plus — when the number is highlighted — wording for why. Says what the
+// state IS ("still pending"), not what the operator did wrong: a running allocation job
+// legitimately shows pending rows (see lib/weekDemand.ts).
+//
+// Zero gets no sub-line: 「優先 0 ／ 一般 0」 restates the 0 above it, and a normal post-
+// allocation week would carry that noise permanently.
+function pendingSub(pending: DemandCounts, needsAttention: boolean): string | undefined {
+  if (pending.total === 0) return undefined
+  const split = `優先 ${pending.priority} ／ 一般 ${pending.general}`
+  return needsAttention ? `${split} · 分配後仍有申請中` : split
 }
 
 // A count-less row (a clerk's notification verdict, #17 C) carries its severity in the
@@ -73,6 +105,7 @@ export default function AdminOverview({ overview }: { overview: WeekOverview }) 
   // backlog still produces its own "通知待送" row, so their 🎉 is genuine; a clerk's plain
   // verdict has no backlog to surface, so a draining queue correctly shows no row.
   const todos = counts ? buildAdminTodoRows(counts) : []
+  const pendingAttention = pendingNeedsAttention(overview.stage, overview.demand?.pending.total ?? 0)
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col gap-6 bg-page px-6 py-8 text-ink">
@@ -85,11 +118,34 @@ export default function AdminOverview({ overview }: { overview: WeekOverview }) 
           <span className="font-semibold tabular-nums text-ink">{overview.sunday}</span>
           <Badge tone={STAGE_TONE[overview.stage]}>{WEEK_STAGE_LABEL[overview.stage]}</Badge>
         </div>
-        {overview.capacity ? (
-          <div className="flex flex-wrap gap-8 pt-1">
-            <Stat label="可分配總數" value={overview.capacity.allocatable} />
-            <Stat label="保留·停用" value={overview.capacity.blocked} />
-            <Stat label="已核准" value={overview.capacity.promised} />
+        {overview.capacity && overview.demand ? (
+          <div className="grid gap-5 pt-1 sm:grid-cols-2">
+            <div role="group" aria-labelledby="week-supply" className="flex flex-col gap-3">
+              <h2 id="week-supply" className={GROUP_LABEL}>供給</h2>
+              <div className="flex flex-wrap gap-8">
+                <Stat label="可分配總數" value={overview.capacity.allocatable} />
+                <Stat label="保留·停用" value={overview.capacity.blocked} />
+                <Stat label="已核准" value={overview.capacity.promised} />
+              </div>
+            </div>
+            {/* Hairline divider (design-spec §2.3: no shadows) — above the group on a
+                narrow screen, beside it once the two columns sit side by side. */}
+            <div
+              role="group"
+              aria-labelledby="week-demand"
+              className="flex flex-col gap-3 border-t border-border pt-5 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0"
+            >
+              <h2 id="week-demand" className={GROUP_LABEL}>需求</h2>
+              <div className="flex flex-wrap gap-8">
+                <Stat
+                  label="申請中"
+                  value={overview.demand.pending.total}
+                  sub={pendingSub(overview.demand.pending, pendingAttention)}
+                  tone={pendingAttention ? 'warning' : undefined}
+                />
+                <Stat label="候補" value={overview.demand.waiting.total} />
+              </div>
+            </div>
           </div>
         ) : (
           <p className="text-sm text-muted">尚未建立本週場次，車位資料待排定後顯示。</p>

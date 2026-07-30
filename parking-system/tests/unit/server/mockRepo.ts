@@ -30,6 +30,13 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
       active_full_time_staff_reserved: 1,
     })),
     countPromisedReservations: vi.fn(async () => 0),
+    // Wave 3 3e (#32) — overview supply + demand in one read. All-zero default: an empty
+    // week is the graceful case, so tests that don't care stay unaffected.
+    countWeekReservations: vi.fn(async () => ({
+      promised: 0,
+      pending: { total: 0, priority: 0, general: 0 },
+      waiting: { total: 0, priority: 0, general: 0 },
+    })),
     setWeeklyCapacity: vi.fn(async () => ({
       ok: true, noop: false, effective_capacity: 19, promised_count: 0, capacity_version: 1,
     })),

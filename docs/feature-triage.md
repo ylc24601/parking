@@ -1,6 +1,6 @@
 # Feature Triage — 功能決策索引
 
-> 最後檢視：2026-07-29
+> 最後檢視：2026-07-30
 
 ## 本檔回答什麼
 
@@ -96,8 +96,8 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 
 | Work | Status | Delivery | Why now |
 |---|---|---|---|
-| #32 概覽補申請狀況 | `Ready` | `Pre-delivery` | `application_open` 那幾天首頁等於空白，是同工每週最常看的時段 |
-| #33a 眷屬年齡＋學齡前 badge | `Ready` | `Pre-delivery` | 與 #32 同批 app-only、零新增揭露 |
+| #33a 眷屬年齡＋學齡前 badge | `Ready` | `Pre-delivery` | 交付前唯一剩項；app-only、零新增揭露 |
+| #35 本週申請清單 | `Ready` | `Pre-pilot` | 試營運除錯：今天**沒有任何一頁**看得到 pending／waiting 是誰，只能下 SQL |
 | 34-0 Import integrity | `Ready` | `Pre-pilot` | 下一輪正式資料導入前的營運風險 |
 | 34-0b-A Import auditability | `Ready` | `Pre-pilot` | 影響最大的批次寫入是唯一沒有 audit 的路徑 |
 | 34a Profile completeness | **`Blocked`** | `Pre-pilot` | 仍是 pilot gate，但**先定 `profile_confirmed_at` 語意**再開工 |
@@ -148,10 +148,11 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | #29 | member 顯示候補序號 | app/member | Do | Done | — | S | App-only | 1 | 動態序號非固定號碼 |
 | #30 | 取消加「不計違規」reassurance | app/member CancelButton | Do | Done | — | S | App-only | 1 | 讓會友安心取消 |
 | #31 | 一位會友同時符合多種 P2 事由 | DB `users`＋import＋#10 覆核 | Do | Blocked | Post-delivery | M–L | Migration + App | — | 風險在效期不在優先序；眷屬 model 與撤銷語意未定 |
-| #32 | 本週概覽沒有目前申請狀況 | admin/page | Do | **Ready** | **Pre-delivery** | S | App-only | 3e | 補 `pending`／`waiting` 兩數字，同一支 `getWeekOverview` |
+| #32 | 本週概覽沒有目前申請狀況 | admin/page | Do | Done | — | S | App-only | 3e | 補 `pending`／`waiting` 兩數字＋優先·一般拆解，同一支 `getWeekOverview`（PR #59） |
 | #33a | 眷屬顯示年齡＋幼兒學齡前 badge | admin/members/[id] | Do | **Ready** | **Pre-delivery** | S | App-only | 3e | 標籤定義只能是 `childCompanionValidUntil`，不得新寫規則 |
 | #33b | 覆核佇列帶眷屬衍生 enum | admin/eligibility | Reject | Closed | — | S | None | — | 不為此放寬該頁隱私姿態（使用者 2026-07-28 定） |
 | #34 | **Member Data Lifecycle**（Epic） | 匯入 UI／member LIFF／#10／綁定 | Do | **Ready** | **Pre-pilot** | L | TBD | — | 子刀狀態見 #34 Work items 表 |
+| #35 | 本週申請清單（點數字看名單） | admin/week（新頁） | Do | **Ready** | **Pre-pilot** | S–M | App-only | 3f | #32 的下游；pending／waiting 目前無任何 UI 可見 |
 
 ---
 
@@ -412,31 +413,49 @@ Wave 5；地基已由 Tier 0-2（`0038`）交付。
 
 ### #32 首頁「本週概覽」沒有目前申請狀況
 
-**Decision:** Do ｜ **Status:** **Ready** ｜ **Delivery:** **Pre-delivery**
+**Decision:** Do ｜ **Status:** **Done**（PR #59）｜ **Delivery:** —
 **Size:** S ｜ **Deployment:** App-only ｜ **Depends on:** — ｜ **Migration:** No
 
 #### Problem
 **（2026-07-28 使用者回報）**：[/admin 首頁](../parking-system/app/admin/AdminOverview.tsx#L88-L96) 上指標只有**車位供給**三個數字——「可分配總數／保留·停用／已核准」（`promised` ＝ `approved`＋`temp_approved`，見 [parkingRepository.ts:2153](../parking-system/server/repositories/parkingRepository.ts#L2153)）。**申請端的需求量完全看不到**：週三～週五 `application_open` 階段，申請都還是 `pending`、分配尚未跑，於是「已核准」恆為 0 ⇒ 幹事**在最需要判斷供需的那幾天，首頁是空的**，只能改去別頁翻。
 
 #### Decision
-**要補的兩個數字**：`pending`（申請中）與 `waiting`（候補）。
+**要補的兩個數字**：`pending`（申請中）與 `waiting`（候補），且 **`pending` 再拆「優先／一般」**（2026-07-30 使用者提出）。
+
+**為什麼拆得起**：`reservations.effective_priority`（smallint `check in (1,2,3)`，[0002:42](../parking-system/supabase/migrations/0002_events_reservations.sql#L42)）在**申請當下就凍結在該筆預約上** ⇒ 原本那一次 `select('status')` 改成 `select('status, effective_priority')`、在 app 端做二維計數即可。**不新增資料源、不 join `users`、不開 RPC、無 migration**，規模仍是 `S`。
 
 #### Constraints
 - 已核准已有、不重複；`attended`/`no_show`/`cancelled_*`/`walk_in` 等**終局狀態屬事後分析（#16），v1 不放**——概覽是「現在要不要處理」不是報表。
 - ① 與容量同一支 `getWeekOverview`、同一個 `weekly_event_id`，**不得另開資料源**（否則首頁自己跟自己不一致）。
-- ② PostgREST 無 group-by，別為此開 RPC／也別打三次 head-count——**一次 `select('status')` 取本週 reservations 在 app 端計數**即可（本週量級數十筆），或併進既有 `countPromisedReservations` 改成回三態 counts。
-- ③ **標籤隨階段變**：分配前 `pending` ＝「申請中」，分配後理應為 0（分配會轉成 approved/waiting），若非 0 代表有漏勾——因此**分配後仍顯示且非 0 時上 warning tone**，不要無條件隱藏。
+- ② PostgREST 無 group-by，別為此開 RPC／也別打三次 head-count——**一次 `select('status, effective_priority')` 取本週 reservations 在 app 端計數**即可（本週量級數十筆）。**`countPromisedReservations` 保留不動**（它仍是 `/admin/capacity` 的 promised read path，改簽名會外溢到那一頁）；概覽的 `promised` 改由同一次 select 供給，讓三個 reservation-derived 指標同源。
+- ③ **標籤隨階段變**：分配前 `pending` ＝「申請中」；**分配開始後理應趨向 0**（分配會轉成 approved/waiting），仍非 0 時上 warning tone、**不要無條件隱藏**。⚠️ **warning ＝「需要注意」，不等於「有漏勾」**：`hasFridayAllocationRun` 把 `job_runs` 的 `running` 也算已分配（[parkingRepository.ts:2755](../parking-system/server/repositories/parkingRepository.ts#L2755)），而 Friday job 是**先 claim 成 running、才讀 pending 去分配** ⇒ 分配執行中的短暫窗口會**合法**出現這個組合。可能是分配仍在執行、卡住、或有殘留資料，UI 文案不得斷言人為疏漏。
 - ④ 供需一眼可讀＝把「申請中」排在「可分配總數」旁。
 - ⑤ 純計數、無個資，幹事/系統管理員同視野，**不需 #19 capability 判斷**。
+- ⑥ **⚠️ 顯示的是凍結值，且不得改成即時重算**。「優先」的定義是：**週五分配器依凍結的 `effective_priority` 排在一般車之前的 reservation（目前即 `<= 2`）**——不是「P2」。兩者今天數字相同，但定義不同：P1 若存在也屬「優先」（見 Acceptance）。分配器排序讀的就是這個凍結欄位（[sort.ts:15-17](../parking-system/lib/allocation/sort.ts#L15-L17)）⇒ 概覽的「優先 N 位」＝**分配時真的會排在前面的那 N 位**。
+  - 凍結值的典型例子：某人申請後 P2 資格才被撤銷，這裡仍計為優先，**與分配結果一致**。任何「順手修正成 join `users` 依今日資格重算」都會造出「概覽說 4 位、分配器算 3 位」的第二真相 ⇒ 明令禁止。
+  - 眷屬型 P2（長者／幼兒同行）需當週宣告才是 2，`computeApplyPriority` 申請當下已結算，**不在此重判**。
+- ⑦ **不要留一個永遠 0 的 P1 欄**：P1 不走申請流程（全職同工位在 `weekly_staff_allocations`，見 [priority.ts:6-7](../parking-system/lib/allocation/priority.ts#L6-L7)），現場登記固定寫 3（[parkingRepository.ts:1220](../parking-system/server/repositories/parkingRepository.ts#L1220)）⇒ 畫面上只有「優先／一般」兩個數字。「本週同工佔幾位」是另一個資料源，屬 #13。**但 P1 若真出現在 reservation 上，歸入「優先」而非報錯**（見 Acceptance 與 History）。
+- ⑧ **service 一律回完整 breakdown、UI v1 只在「申請中」顯示拆解**（使用者 2026-07-30 定）：候補的優先序影響的是遞補順序而非本週供需判斷；日後要顯示不必再改 service。
 
 #### Acceptance
-`application_open` 階段首頁可看到 `pending`／`waiting`；分配後 `pending` 正常為 0、非 0 時呈 warning tone；`WeekOverview` type 加欄＋既有測試補 case。
+- `application_open` 階段首頁可看到 `pending`／`waiting`；分配後 `pending` 正常為 0、非 0 時呈 warning tone。
+- `pending` 顯示「優先／一般」拆解（例「申請中 12（優先 3／一般 9）」），數字取自凍結的 `effective_priority`、**未經任何即時資格重算**；測試需涵蓋「申請後 P2 資格被撤銷、仍計為優先」這一 case（frozen-value 的代表例）。
+- **恆等式：優先 ＋ 一般 ＝ 申請中總數**（恆成立，不靠例外維持）。DTO 欄位命名為 **`priority`／`general`**（對齊畫面文案「優先／一般」）而非 `p2`／`p3`：判定為 `effective_priority <= 2` ／ `=== 3`。**P1 計入「優先」、不 fail loud**——理由見下方 History 的 2026-07-30 註記。
+- `WeekOverview` type 加欄（含 `waiting` 的 breakdown，即使 UI v1 不顯示）＋既有測試補 case。
 
 #### Implementation notes
-**規模 S**：app-only、**無 migration**、無新頁面。預計改動 `AdminOverview`／`adminOverviewService`／`WeekOverview` type。
+**規模 S**：app-only、**無 migration**、無新頁面。預計改動 `AdminOverview`／`adminOverviewService`／`WeekOverview` type。**下游**：兩個數字是 #35 名單頁的入口連結。
 
 #### History
 2026-07-28 依使用者實際操作回報加入 triage（Wave 3 3e）。技術上非阻擋（不做也能運作），但它補的是 #8 在 `application_open` 階段**首頁等於空白**的缺口——正是同工交付後每週最常看的那幾天 ⇒ **建議併進交付前收尾**。
+
+**2026-07-30 命名與 P1 處置改判**（推翻同日稍早的 `p2 === 2` ＋ fail-loud 決定）：外部審查正確指出「叫 `p2` 卻用 `<= 2` 等於把 P1＋P2 改名」，但**修正方向選錯了一邊**。改用審查自己提出的另一條路——**欄位改名 `priority`／`general`**，命名與畫面文案一致，`<= 2` 就完全合理。
+
+**不 fail loud 的理由**：分配器**明確支援並有測試釘住 P1 reservation**（[sort.ts:4](../parking-system/lib/allocation/sort.ts#L4)；[allocate.test.ts:127](../parking-system/tests/unit/allocation/allocate.test.ts#L127) `'P1 always ranks before P3'`）⇒ P1 列並非「模型不接受」，只是今天沒有寫入路徑。若因此 throw，未來任何一刀（如 #13）寫出 P1 列時，**第一個爆的是每位管理員每次登入必看的 `/admin` 首頁**——用不相干功能的落地炸掉 dashboard，而「優先」本來就是它正確的歸屬。只保留 DB CHECK 擋得住的範圍外值（`0002:42` 限定 1/2/3）會 throw，以確保恆等式不會靜靜失效。
+
+**背景（使用者 2026-07-30 提供）**：教會另有 **6 個由教會自行控管的全職同工車位，完全不在本系統的容量之內**（位置在深處易被擋，同工早進晚出故影響不大）——那 6 格本週停了幾台**都不進任何公式**。系統管理的是另一個池：23 格 ＝ 保留·停用 ＋ 本週需要佔用系統車位的 P1 ＋ P2/P3 會友。
+
+⇒ `computeCapacity` 的公式 **`23 − 保留·停用 − 本週佔用系統車位的 P1` 是正確的，不需修改**；`active_full_time_staff_reserved` 的正確語意是「**本週有幾位 P1 需要佔用這 23 格中的一格**」（例：某週 2 位同工要提早離開、不停教會自管區 ⇒ `reserved = 2` ⇒ 可分配 `23−3−2 = 18`），**不是**「六位同工本週有幾位來教會」。⚠️ [admin-operations-guide.md](admin-operations-guide.md) 對該欄的**解釋**目前寫成後者（「P1 名單裡扣掉本週標記不停車的人」），照那個語意填會平白吃掉會友的車位 ⇒ 另立待辦釘正語意，**公式與程式碼不動**。
 
 ---
 
@@ -648,17 +667,50 @@ getMemberCompleteness(profile) → { complete: boolean, missing: [...] }
 
 ---
 
+### #35 本週申請清單（點數字看名單）
+
+**Decision:** Do ｜ **Status:** **Ready** ｜ **Delivery:** **Pre-pilot**
+**Size:** S–M ｜ **Deployment:** App-only ｜ **Migration:** No ｜ **Depends on:** #32（入口連結）
+
+#### Problem
+**（2026-07-30 使用者提出：試營運除錯特別需要）** 後台**沒有任何一頁看得到 pending／waiting 是誰**——`/admin/print` 讀的是 Staff-safe 投影 `staff_checkin_view`，且[明確排除](../parking-system/server/repositories/parkingRepository.ts#L1191-L1194) `waiting`／`pending`（"not actionable at the entrance"）；`/admin/members` 是名冊、不分週；`/admin/eligibility` 只管 P2 資格。⇒ 同工問「他說他申請了，系統有收到嗎？」，今天只能下 SQL。
+
+#### Decision
+概覽（#32）的數字做成連結 → **新頁 `/admin/week`**，以 query param 篩選（`?status=pending`、`?priority=2`）。
+
+**⛔ 不做成首頁 inline 展開**：`/admin` 首頁目前是零 PII 的 dashboard，而 [members/[id]](../parking-system/app/admin/members/[id]/page.tsx#L21-L25) 之所以掛 `force-dynamic`＋`revalidate = 0` 正是因為它 render PII。inline 展開等於把「每次登入必看到的那一頁」整體降級成 PII surface，違反 #12 姿態。
+
+#### Constraints
+- **欄位最小集**：姓名／車牌／狀態／優先·一般／申請時間／候補序位。**不放電話、不放 P2 事由**——要看事由點進 `members/[id]`（該頁已有 #12 橫幅）。與 `/admin/eligibility` 刻意不帶眷屬資料同一條線。
+- **⛔ 不重用、也不放寬 `staff_checkin_view`**：它刻意只給 `is_priority` 布林而藏 raw priority，又刻意排除 pending／waiting——那是**現場 PIN 讀得到的東西**。本頁走 admin repo 直讀 `reservations` join `users`/`vehicles`，staff／admin 兩條投影保持分離。
+- **排序**：候補**必須照 `allocation_order`**（那就是真正的遞補順序）。⚠️ pending 階段 `allocation_order` 為 null，**不得在本頁用 `sort.ts` 預覽「將來會排第幾」**——那是分配結果的第二實作，與週五實際結果一有出入就會在除錯時誤導人。v1 照申請時間排，畫面明寫「實際順序於週五分配時產生」。
+- **PII posture**：沿用 `members/[id]` 的 `dynamic = 'force-dynamic'`＋`revalidate = 0`＋`no-store`。
+- **Role（使用者 2026-07-30 定）：幹事可看、不新增 capability。** 幹事今天已能開 `/admin/members` 看全名冊、開 `/admin/print` 看全部車牌（[adminNav.ts](../parking-system/lib/adminNav.ts) 兩項皆無 capability gate）⇒ 本頁不構成新的揭露等級。
+- **不寫 audit**：唯讀畫面，依 #15 既有姿態（#5B-a 匯出寫 audit 是因為它產生**可攜檔案**，兩者不同）。
+
+#### Acceptance
+- `/admin/week` 列出本週全部 `pending`／`waiting`，含姓名、車牌、狀態、優先·一般、申請時間；候補列另顯序位。
+- 候補依 `allocation_order` 遞增排序；pending 依申請時間排序且畫面明示順序尚未產生。
+- 頁面不出現電話與 P2 事由；不新增 capability，幹事登入即可開啟。
+- 概覽（#32）的「申請中／候補」數字可點擊，帶對應 filter 進入本頁。
+- 資料不取自 `staff_checkin_view`。
+
+#### History
+2026-07-30 由 #32 的討論衍生（「能否點選人數看到名單」）。獨立成條而非併入 #32：#32 零 PII 可立即上線，本頁需定 role 邊界與欄位集，值得獨立 review ⇒ 兩刀分開（使用者已定）。Wave 3 3f。
+
+---
+
 ## 交付分級
 
 > **compatibility view。** 依 `Delivery` token 分組投影 `Feature inventory`；狀態權威仍在 inventory，本節不建立新語意。
 > 舊版「交付前必修／強烈建議交付前／可交付後迭代」的敘述已完成其任務，移入 Archive 保存。
 
-- **`Pre-delivery`（交付前）**：#32、#33a
-- **`Pre-pilot`（pilot 前）**：34-0、34-0b-A、34a
+- **`Pre-delivery`（交付前）**：#33a
+- **`Pre-pilot`（pilot 前）**：34-0、34-0b-A、34a、#35
 - **`Pilot-early`（pilot 初期）**：34b、#11
 - **`Post-delivery`（交付後）**：#3、#4、#5B（5B-b／5B-c）、#6A、#6B、#7、#10（2B-2c）、#16、#26、#28、#31、34-0b-B、34c
 - **No delivery target（`Blocked`，等產品決策）**：#13、#14B
-- **`Done`**：#1、#5A、#8、#9、#12、#14A、#15、#17、#18、#19、#20、#21、#22、#23、#24、#25、#27、#29、#30
+- **`Done`**：#1、#5A、#8、#9、#12、#14A、#15、#17、#18、#19、#20、#21、#22、#23、#24、#25、#27、#29、#30、#32
 - **`Closed`**：#2、#33b
 
 ---
@@ -821,7 +873,7 @@ scrypt 單向、明碼不落地；換人本就該撤舊碼。
 **Wave 2A：寫入治理地基** — #15 Audit substrate ✅ **全部完成**。**拆三刀：2A-1 substrate ✅（PR #38 / `8513912`）／2A-2 read-only viewer ✅（PR #39 / `d2e6890`，app-only 無 migration）／2A-3 retention ✅（PR #43 / `5db33bc`，migration `0034`）**
 **Wave 2B：關鍵 Admin 寫入**（需 #15、不需 #19）— **2B-1 #14A 車位容量 ✅（PR #40 / `8de24a0`，migration `0031`）／#10 P2 覆核：2B-2a 模型 ✅（PR #41 / `155c7f7`，migration `0032`）、2B-2b 寫入 RPC＋UI ✅（PR #42 / `c536b01`，migration `0033`）⇒ Wave 2B 交付阻擋全部解除／2B-2c 佇列列內操作（非阻擋，可留交付後）**
 **Wave 2C：角色地基 ✅ 全部完成** — #19 Admin roles＋session 撤銷＋role matrix。**2C-1 兩層角色（系統管理員／幹事）✅（PR #45 `76e93f8`，migration `0035`）／2C-2 帳號管理 UI＋create/role/revoke RPC ✅（PR #46 `ca9de80`，migration `0036`）**
-**Wave 3：其餘管理功能** — **3a #8 概覽＋#9 徽章 ✅ 完成**；**3b #17 通知系統狀態 B＋C ✅ 完成**；**3c #18 側欄兩區 ✅ 完成**；**3d #5B-a 名冊匯出 ✅ 完成**；**3e #32 概覽補申請狀況＋#33a 眷屬年齡/學齡前（皆 S、app-only、無 migration；使用者已定「等交付收尾一起排」；#33b 覆核佇列 ❌ 不做）**；剩 **#14B override**（規則未定、需先產品決策）。#5B-b 顯示分級／#5B-c 批次 → post-delivery deferred
+**Wave 3：其餘管理功能** — **3a #8 概覽＋#9 徽章 ✅ 完成**；**3b #17 通知系統狀態 B＋C ✅ 完成**；**3c #18 側欄兩區 ✅ 完成**；**3d #5B-a 名冊匯出 ✅ 完成**；**3e #32 概覽補申請狀況 ✅ 完成（PR #59）＋#33a 眷屬年齡/學齡前（尚待完成；皆 S、app-only、無 migration；#33b 覆核佇列 ❌ 不做）**；**3f #35 本週申請清單（`Pre-pilot`，#32 的下游）**；剩 **#14B override**（規則未定、需先產品決策）。#5B-b 顯示分級／#5B-c 批次 → post-delivery deferred
 **Wave 4：通知便利性** — 通用 destination model→#7→#6A（#6B 後續）→#3（最後，語意最敏感）→#4／#26
 **Wave 5：會員自助與分析** — ⚠️ **#34 已改版為 Member Data Lifecycle：34-0／34-0b-A／34a 拉到 pilot 前，不屬本 wave**（見專節）。本 wave 剩：**34b 會友自助維護**（車輛可本人直接改；**手機不可 direct edit**；P2 走 #10）＋**#11 P2 自助申請**（pilot 初期、合併規劃）→#28→**34c 新會友 self-onboarding**（系統穩定後）→#16／#13
 **Deferred/不做**：#2 ❌
