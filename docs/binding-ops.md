@@ -15,8 +15,10 @@
 - **主要：Admin UI `/admin/bindings`**（handoff §6.27）——per-admin 帳號登入（`admin:create` 開帳號），
   待審列表（遮罩）→ 預覽 → 核准/退回；核准者記入 `pending_binding.decided_by_admin_id` 供稽核。
   預覽→核准帶版本防偷換（申請被重送會回「請重新預覽」）。
-- **Fallback：下方 CLI**（`binding:pending/approve/reject`）；CLI 決行的 `decided_by_admin_id`
-  為 null（「CLI／未具名」）。發碼 `binding:issue` 目前仍 CLI-only（發碼 UI 排在會友管理 slice）。
+- **主要：發碼走 Admin UI `/admin/members`**（Phase 8 Slice 2，見下方「1. 發碼」）——`binding:issue`
+  僅為 CLI fallback。
+- **Fallback：下方 CLI**（`binding:pending/approve/reject`/`issue`）；CLI 決行的 `decided_by_admin_id`
+  為 null（「CLI／未具名」）。
 
 > ⚠️ **CLI 目前無法用 `npm run` 直接啟動（2026-07-30 起）**
 >
@@ -24,9 +26,15 @@
 > 該套件只有在 `react-server` export condition 下才是 no-op——Next.js 會設，**`tsx` 不會** ⇒ 本文所有
 > `npm run binding:*` / `job:*` 指令一啟動就 throw。
 >
-> **繞行方式**（已實測可用）：把 `npm run <script>` 換成
-> `npx tsx --conditions=react-server scripts/run-<script>.ts`，其餘參數不變。例：
-> `npx tsx --conditions=react-server scripts/run-binding-pending.ts -- --limit 50`
+> **繞行方式**（已實測可用）：到 `package.json` 找該 npm script 實際執行的 `.ts` 路徑，
+> 在 `tsx` 後加上 `--conditions=react-server` 直接跑，參數不變。**script 名稱與檔名不是機械對應**
+> （例如 `staff:set-pin` → `scripts/set-staff-pin.ts`，沒有 `run-` 前綴），務必以 `package.json` 為準：
+>
+> ```bash
+> npx tsx --conditions=react-server scripts/run-binding-pending.ts -- --limit 50
+> npx tsx --conditions=react-server scripts/run-binding-approve.ts -- --pending-id <uuid>
+> npx tsx --conditions=react-server scripts/run-outbox-status.ts
+> ```
 >
 > **不受影響**：`/admin/bindings` 這條**主要**路徑跑在 Next 裡面，完全正常；prod 的排程也正常
 > （cron 打的是 `/api/jobs/*` route）。壞的只有本機 CLI。修復已排入待辦，屆時本註記即可移除。
