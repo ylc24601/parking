@@ -49,9 +49,13 @@ insert into weekly_events (id, sunday_date, total_capacity, blocked_spaces, admi
   ('e0000000-0000-0000-0000-000000000001', '2026-06-21', 23, 3, 0, 'open');
 
 -- ── P1 weekly state: A reserved, B skipped → active_full_time_staff_reserved = 1 ─
+-- The question is "does this staff member need one of the system-managed 23 spaces this
+-- week?", not "are they at church?" — staff normally use the church-managed area, which is
+-- outside this system and never counted. So A (has to leave early, so that area does not
+-- work this week) holds one of the 23, while B attends but parks there and holds none.
 insert into weekly_staff_allocations (weekly_event_id, user_id, status, skip_reason) values
   ('e0000000-0000-0000-0000-000000000001', '33333333-3333-3333-3333-333333333333', 'reserved', null),
-  ('e0000000-0000-0000-0000-000000000001', '44444444-4444-4444-4444-444444444444', 'skipped',  '外教會服事');
+  ('e0000000-0000-0000-0000-000000000001', '44444444-4444-4444-4444-444444444444', 'skipped',  '停教會自管停車區');
 
 -- ── Reservations: P2/P3 mix (pending) + one walk-in ──────────────────────────
 insert into reservations

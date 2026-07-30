@@ -11,7 +11,9 @@ import { makeReservation, makeStaffAllocation, T } from './helpers'
 // allocation_order snapshot together end to end.
 describe('scenario: full-week allocation', () => {
   // ── Setup ────────────────────────────────────────────────────────────────
-  // 23 total − 1 blocked − 2 guest_reserved − 2 active P1 (3 staff, 1 skipped) = 18
+  // 23 total − 1 blocked − 2 guest_reserved − 2 P1 needing a system space = 18
+  // (3 staff on the weekly list: 2 need one of the 23 this week, 1 uses the
+  //  church-managed area and therefore consumes nothing here)
   const event = {
     total_capacity: DEFAULT_TOTAL_CAPACITY,  // 23
     blocked_spaces: 1,
@@ -20,7 +22,7 @@ describe('scenario: full-week allocation', () => {
   const staff = [
     makeStaffAllocation({ status: 'reserved' }),
     makeStaffAllocation({ status: 'reserved' }),
-    makeStaffAllocation({ status: 'skipped', skip_reason: '外教會服事' }),
+    makeStaffAllocation({ status: 'skipped', skip_reason: '停教會自管停車區' }),
   ]
 
   // 20 public applicants: 5 P2 (declared companion) + 15 P3, each a distinct
@@ -40,7 +42,7 @@ describe('scenario: full-week allocation', () => {
   const approved = result.filter(r => r.status === 'approved')
   const waiting = result.filter(r => r.status === 'waiting')
 
-  it('active P1 reserved is 2 (3 staff minus 1 skipped)', () => {
+  it('active P1 reserved is 2 (of 3 on the list, 2 need a system-managed space)', () => {
     expect(countActiveFullTimeStaffReserved(staff)).toBe(2)
   })
 

@@ -104,7 +104,7 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | 34b 會友自助維護 | `Deferred` | `Pilot-early` | 接 `0038` 已備妥的 vehicle lifecycle |
 | #11 P2 自助申請 | `Deferred` | `Pilot-early` | 與 34b 合併規劃，治理仍留 admin |
 
-**其餘 `Blocked`（不在近期視野）**：#13 auto-release 業務規則未定／#14B override 與時間視窗互動規則未定／#28「至少留一台或允許零台」未定／#31 眷屬 model 與撤銷語意未定。
+**其餘 `Blocked`（不在近期視野）**：#13 P1 每週狀態生命週期未定／#14B override 與時間視窗互動規則未定／#28「至少留一台或允許零台」未定／#31 眷屬 model 與撤銷語意未定。
 
 ---
 
@@ -128,7 +128,7 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | #10 | P2 寫入型覆核 | admin/members/[id]＋eligibility inline | Do | Deferred | Post-delivery | M | Migration + App | 2B-2 | 2B-2a／2B-2b 已完成（`0032`/`0033`）；剩 2B-2c 佇列列內操作 |
 | #11 | P2 會友自助申請＋待審 inbox | member＋eligibility | Do | Deferred | Pilot-early | L | TBD | 5 | #10 的完整五態 enum 在此補齊 |
 | #12 | 資料最小化橫幅 | eligibility, members/[id] | Do | Done | — | S | App-only | 1 | 明示不索取／不顯示診斷證明 |
-| #13 | P1 同工名單＋「本週不停」自動釋出 | admin | Do | Blocked | — | M–L | TBD | — | auto-release 業務規則未定 |
+| #13 | P1 同工名單＋本週是否需要系統車位 | admin | Do | Blocked | — | M–L | TBD | — | 每週狀態生命週期未定（初始化／標記責任／鎖定時點）；UI 須問「是否需要系統車位」而非「有沒有來」 |
 | #14A | 車位容量設定 | admin＋weekly_events | Do | Done | — | M | Migration + App | 2B-1 | 幹事不用 SQL 改容量；DB RPC 在 txn 內守 capacity（`0031`） |
 | #14B | 申請開放 override | admin＋weekly_events | Do | Blocked | — | M | TBD | 3 | `application_override` enum；與時間視窗互動規則未定 |
 | #15 | 稽核記錄（Audit Log）— 地基 | 橫切＋唯讀頁 | Do | Done | — | L | Migration + App | 2A | substrate／viewer／retention 三刀全完成（`0030`/`0034`） |
@@ -314,13 +314,28 @@ Wave 4，排在 destination model 之後、#6A 之前。
 
 ---
 
-### #13 P1 同工名單＋「本週不停」自動釋出
+### #13 P1 同工名單＋本週是否需要系統車位
 
 **Decision:** Do ｜ **Status:** **Blocked** ｜ **Delivery:** —
 **Size:** M–L ｜ **Deployment:** TBD
 
 #### Unresolved decision（Blocked 原因）
-auto-release 業務規則未定。
+**每週 P1 狀態的生命週期未定**：① 每週的 P1 列如何初始化（誰建、何時建、預設值是什麼）② 由誰負責標記「本週需要系統車位」（同工自己？幹事代填？）③ 何時鎖定／截止後是否還能改。
+
+> 舊敘述為「auto-release 業務規則未定」——那個詞本身就是舊模型的殘留：新語意下沒有「預設保留六格、在外服事再自動 release」這回事，同工平時本來就停自管區、不占系統車位。
+
+#### Constraints（2026-07-30 語意釘正，實作時必須遵守）
+- ⚠️ **不得依賴 DB 的 historical `default 'reserved'`**（[0002:23](../parking-system/supabase/migrations/0002_events_reservations.sql#L23)）。那個預設值在**舊模型**下合理（每位 P1 預設占一格、沒來才 skipped），在新語意下卻危險：**建立 weekly P1 列時若沒顯式寫 status，DB 會自動判定「這位同工需要占用 23 格中的一格」**，靜靜吃掉會友的車位。⇒ **writer 必須顯式寫入狀態；未經本週明確判定「需要系統車位」者，不得消耗容量。** 今天沒有任何 writer，所以不是 production bug，但這正是 #13 最容易重新踩回舊模型的地方。
+- **UI 要問的是「本週是否需要占用系統管理的車位」，不可問「本週有沒有來／要不要停車」。** 教會另有自行控管的停車區供全職同工使用，**完全不在本系統容量內**；**會來教會但停自管區的人不占系統車位**，兩種問法會得到不同答案。建議形式：
+
+  ```
+  王同工   ○ 使用教會自管停車區    ● 本週需保留系統車位
+  ```
+
+  而非 `☐ 本週不停車`。
+- `active_full_time_staff_reserved` ＝ `COUNT(status='reserved')` ＝ **本週需要占用 23 格中一格的同工數**。`computeCapacity` 的減項因此是正確的、**不需修改**——要守住的是填入這個欄位的語意。
+- 舊文件曾把它記成「名單人數 − 本週標記不停車的人數」（＝在數出席）。照那個語意填，同工都來、都停自管區時會算成滿員，**平白吃掉會友的車位**。該敘述已於本刀在 PRD／development_plan／operations guide／`lib/types.ts`／`lib/allocation/allocate.ts`／seed fixture 六處更正。
+- **不必改 member apply flow**：全職同工被 `staff_use_p1` 擋在會友申請之外是**設計正確**——P1 要用系統車位不應與 P2/P3 搶排序，而是由本功能標記 `reserved`、讓容量先扣一格。缺的只是操作介面。
 
 ---
 
