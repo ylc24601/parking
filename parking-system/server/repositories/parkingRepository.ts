@@ -819,6 +819,11 @@ export interface ParkingRepository {
   // and the alternatives are worse — an RPC for two numbers, or three head-counts that can
   // disagree with each other. Volume is this week's reservations (dozens).
   //
+  // Bound worth knowing: rows, not an exact count, so PostgREST's max_rows (1000, see
+  // supabase/config.toml) caps it — unlike the head-count above. One week would need 1000
+  // live reservations against ~20 seats to reach that, so it is recorded rather than
+  // guarded; a slice that ever makes it plausible has to revisit this.
+  //
   // Deliberately NOT folded into countPromisedReservations: that one is still the capacity
   // page's promised read path (capacityAdminService), and widening its return type would
   // push this change into a page this slice does not touch.

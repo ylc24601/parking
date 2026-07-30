@@ -5,7 +5,7 @@ import Link from 'next/link'
 import type { WeekOverview } from '@/lib/adminTodoTypes'
 import { buildAdminTodoRows } from '@/lib/adminTodoRows'
 import { fmtTaipeiTime } from '@/lib/taipeiDate'
-import { pendingNeedsAttention, type PriorityCounts } from '@/lib/weekDemand'
+import { pendingNeedsAttention, type DemandCounts } from '@/lib/weekDemand'
 import { WEEK_STAGE_LABEL, type WeekStage } from '@/lib/weekStage'
 import Badge, { type BadgeTone } from '../ui/Badge'
 import { useAdminTodos } from './AdminTodoProvider'
@@ -23,7 +23,7 @@ const STAGE_TONE: Record<WeekStage, BadgeTone> = {
   closed: 'neutral',
 }
 
-// A metric. `sub` carries the P2/P3 split under 申請中; `tone="warning"` recolours the
+// A metric. `sub` carries the 優先/一般 split under 申請中; `tone="warning"` recolours the
 // number — never on its own, always alongside wording in `sub` that says what is off
 // (design-spec §1.6: colour is not the only carrier of meaning).
 function Stat({
@@ -51,11 +51,11 @@ function Stat({
 // No uppercase: the labels are CJK, where it does nothing.
 const GROUP_LABEL = 'text-[11px] font-bold tracking-[0.1em] text-muted'
 
-// The P2/P3 split, plus — when the number is highlighted — wording for why. Says what the
+// The 優先/一般 split, plus — when the number is highlighted — wording for why. Says what the
 // state IS ("still pending"), not what the operator did wrong: a running allocation job
 // legitimately shows pending rows (see lib/weekDemand.ts).
-function pendingSub(pending: PriorityCounts, needsAttention: boolean): string {
-  const split = `優先 ${pending.p2} ／ 一般 ${pending.p3}`
+function pendingSub(pending: DemandCounts, needsAttention: boolean): string {
+  const split = `優先 ${pending.priority} ／ 一般 ${pending.general}`
   return needsAttention ? `${split} · 分配後仍有申請中` : split
 }
 
@@ -117,7 +117,7 @@ export default function AdminOverview({ overview }: { overview: WeekOverview }) 
         {overview.capacity && overview.demand ? (
           <div className="grid gap-5 pt-1 sm:grid-cols-2">
             <div role="group" aria-labelledby="week-supply" className="flex flex-col gap-3">
-              <h3 id="week-supply" className={GROUP_LABEL}>供給</h3>
+              <h2 id="week-supply" className={GROUP_LABEL}>供給</h2>
               <div className="flex flex-wrap gap-8">
                 <Stat label="可分配總數" value={overview.capacity.allocatable} />
                 <Stat label="保留·停用" value={overview.capacity.blocked} />
@@ -131,7 +131,7 @@ export default function AdminOverview({ overview }: { overview: WeekOverview }) 
               aria-labelledby="week-demand"
               className="flex flex-col gap-3 border-t border-border pt-5 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0"
             >
-              <h3 id="week-demand" className={GROUP_LABEL}>需求</h3>
+              <h2 id="week-demand" className={GROUP_LABEL}>需求</h2>
               <div className="flex flex-wrap gap-8">
                 <Stat
                   label="申請中"

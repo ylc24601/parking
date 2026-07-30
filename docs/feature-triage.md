@@ -433,13 +433,13 @@ Wave 5；地基已由 Tier 0-2（`0038`）交付。
 - ④ 供需一眼可讀＝把「申請中」排在「可分配總數」旁。
 - ⑤ 純計數、無個資，幹事/系統管理員同視野，**不需 #19 capability 判斷**。
 - ⑥ **⚠️ 顯示的是凍結值，且不得改成即時重算**：週五分配器排序讀的就是這個凍結欄位（[sort.ts:15-17](../parking-system/lib/allocation/sort.ts#L15-L17)）⇒ 概覽的「優先 N 位」＝**分配時真的會被當 P2 的那 N 位**。某人申請後 P2 資格才被撤銷，這裡仍算他 P2，**與分配結果一致**。任何「順手修正成 join `users` 依今日資格重算」都會造出「概覽說 4 位、分配器算 3 位」的第二真相 ⇒ 明令禁止。眷屬型 P2（長者／幼兒同行）需當週宣告才是 2，`computeApplyPriority` 申請當下已結算，**不在此重判**。
-- ⑦ **不要留一個永遠 0 的 P1 欄**：P1 不走申請流程（全職同工位在 `weekly_staff_allocations`，見 [priority.ts:6-7](../parking-system/lib/allocation/priority.ts#L6-L7)），現場登記固定寫 3（[parkingRepository.ts:1220](../parking-system/server/repositories/parkingRepository.ts#L1220)）⇒ 此處實際只有 P2／P3。「本週同工佔幾位」是另一個資料源，屬 #13。
+- ⑦ **不要留一個永遠 0 的 P1 欄**：P1 不走申請流程（全職同工位在 `weekly_staff_allocations`，見 [priority.ts:6-7](../parking-system/lib/allocation/priority.ts#L6-L7)），現場登記固定寫 3（[parkingRepository.ts:1220](../parking-system/server/repositories/parkingRepository.ts#L1220)）⇒ 畫面上只有「優先／一般」兩個數字。「本週同工佔幾位」是另一個資料源，屬 #13。**但 P1 若真出現在 reservation 上，歸入「優先」而非報錯**（見 Acceptance 與 History）。
 - ⑧ **service 一律回完整 breakdown、UI v1 只在「申請中」顯示拆解**（使用者 2026-07-30 定）：候補的優先序影響的是遞補順序而非本週供需判斷；日後要顯示不必再改 service。
 
 #### Acceptance
 - `application_open` 階段首頁可看到 `pending`／`waiting`；分配後 `pending` 正常為 0、非 0 時呈 warning tone。
 - `pending` 顯示 P2／P3 拆解（例「申請中 12（優先 3／一般 9）」），數字取自 `effective_priority`、**未經任何即時資格重算**；測試需涵蓋「申請後資格被撤銷仍計為 P2」這一 case。
-- **恆等式：優先 ＋ 一般 ＝ 申請中總數**。⇒ `p2` 必須是 `effective_priority === 2` 的**精確比對**，不可用 `<= 2`（那是 `staff_checkin_view` 的 `is_priority` 語意＝P1＋P2，與此處 DTO 命名不符）；`effective_priority === 1` 依現行業務規則屬 invariant violation，**fail loud 而非歸進 P2**。
+- **恆等式：優先 ＋ 一般 ＝ 申請中總數**（恆成立，不靠例外維持）。DTO 欄位命名為 **`priority`／`general`**（對齊畫面文案「優先／一般」）而非 `p2`／`p3`：判定為 `effective_priority <= 2` ／ `=== 3`。**P1 計入「優先」、不 fail loud**——理由見下方 History 的 2026-07-30 註記。
 - `WeekOverview` type 加欄（含 `waiting` 的 breakdown，即使 UI v1 不顯示）＋既有測試補 case。
 
 #### Implementation notes
@@ -447,6 +447,12 @@ Wave 5；地基已由 Tier 0-2（`0038`）交付。
 
 #### History
 2026-07-28 依使用者實際操作回報加入 triage（Wave 3 3e）。技術上非阻擋（不做也能運作），但它補的是 #8 在 `application_open` 階段**首頁等於空白**的缺口——正是同工交付後每週最常看的那幾天 ⇒ **建議併進交付前收尾**。
+
+**2026-07-30 命名與 P1 處置改判**（推翻同日稍早的 `p2 === 2` ＋ fail-loud 決定）：外部審查正確指出「叫 `p2` 卻用 `<= 2` 等於把 P1＋P2 改名」，但**修正方向選錯了一邊**。改用審查自己提出的另一條路——**欄位改名 `priority`／`general`**，命名與畫面文案一致，`<= 2` 就完全合理。
+
+**不 fail loud 的理由**：分配器**明確支援並有測試釘住 P1 reservation**（[sort.ts:4](../parking-system/lib/allocation/sort.ts#L4)；[allocate.test.ts:127](../parking-system/tests/unit/allocation/allocate.test.ts#L127) `'P1 always ranks before P3'`）⇒ P1 列並非「模型不接受」，只是今天沒有寫入路徑。若因此 throw，未來任何一刀（如 #13）寫出 P1 列時，**第一個爆的是每位管理員每次登入必看的 `/admin` 首頁**——用不相干功能的落地炸掉 dashboard，而「優先」本來就是它正確的歸屬。只保留 DB CHECK 擋得住的範圍外值（`0002:42` 限定 1/2/3）會 throw，以確保恆等式不會靜靜失效。
+
+**背景（使用者 2026-07-30 提供）**：教會另有 **6 個全職同工 P1 車位，不在 23 個一般車位之內**（位置在深處易被擋，同工早進晚出故影響不大）⇒ P1 與這份供需統計是兩個獨立的池子。⚠️ 這也暴露出既有的 `computeCapacity` 與 [admin-operations-guide.md:20](admin-operations-guide.md#L20) 記錄了**相反的假設**（P1 從 23 裡扣除），另立待辦處理，不在本刀範圍。
 
 ---
 

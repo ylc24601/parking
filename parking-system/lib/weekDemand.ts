@@ -26,40 +26,47 @@ export interface WeekReservationRow {
   effective_priority: number
 }
 
-export interface PriorityCounts {
+// Named for what the dashboard says — 「優先」/「一般」 — not for a priority band, because
+// the band and the label are not the same question. staff_checkin_view answers the same
+// one with `is_priority` (P1 OR P2, reason hidden); a field called `p2` that also counted
+// P1 would be renaming data rather than reporting it, so the field is called `priority`
+// and genuinely means "gets priority treatment in the Friday sort".
+export interface DemandCounts {
   total: number
-  p2: number   // effective_priority === 2, exactly
-  p3: number   // effective_priority === 3, exactly
+  priority: number   // effective_priority <= 2 — P2 today; a P1 row would belong here too
+  general: number    // effective_priority === 3
 }
 
 export interface WeekReservationCounts {
   promised: number          // approved + temp_approved — same set as countPromisedReservations
-  pending: PriorityCounts
-  waiting: PriorityCounts
+  pending: DemandCounts
+  waiting: DemandCounts
 }
 
-const emptyCounts = (): PriorityCounts => ({ total: 0, p2: 0, p3: 0 })
+const emptyCounts = (): DemandCounts => ({ total: 0, priority: 0, general: 0 })
 
-// p2 is EXACTLY 2 — never `<= 2`. staff_checkin_view exposes `is_priority` (P1 OR P2,
-// reason hidden) and that is a different question: a field named p2 that also counts P1
-// would be renaming bad data rather than reporting it. P1 cannot reach a reservation
-// through any current path (full-time staff seats live in weekly_staff_allocations, see
-// lib/allocation/priority.ts; walk-ins are hard-coded to 3), so a P1 row here is an
-// invariant violation and fails loudly. Consequence, accepted deliberately: it takes the
-// /admin overview down rather than quietly under-reporting — the same posture the rest of
-// this metric already has (a repo read failure throws too). The message carries no row data.
-function bump(counts: PriorityCounts, priority: number): void {
+// P1 is counted as 優先 rather than rejected. It cannot arrive through any current path
+// (full-time staff hold six spots that sit OUTSIDE total_capacity and outside this system
+// entirely — they are also refused by the member apply flow, memberReservationService's
+// staff_use_p1), but the allocator does contemplate P1 reservations and sorts them first
+// (lib/allocation/sort.ts, and 'P1 always ranks before P3' in allocate.test.ts). Throwing
+// on one would take the /admin landing page down for every admin the moment some future
+// slice writes such a row — a large blast radius bought for no benefit, since 優先 is the
+// correct bucket for it anyway. Only a value the DB CHECK could not have stored throws.
+function bump(counts: DemandCounts, priority: number): void {
   counts.total += 1
-  if (priority === 2) {
-    counts.p2 += 1
+  if (priority <= 2) {
+    counts.priority += 1
     return
   }
   if (priority === 3) {
-    counts.p3 += 1
+    counts.general += 1
     return
   }
+  // Unreachable: reservations.effective_priority is CHECK-constrained to (1, 2, 3)
+  // (0002:42). Kept so priority + general === total can never quietly stop holding.
   throw new Error(
-    `summarizeWeekReservations: unexpected effective_priority ${priority} on an application reservation`,
+    `summarizeWeekReservations: unexpected effective_priority ${priority} on a reservation`,
   )
 }
 

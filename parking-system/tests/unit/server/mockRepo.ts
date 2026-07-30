@@ -34,8 +34,8 @@ export function makeMockRepo(overrides: Partial<MockRepo> = {}): MockRepo {
     // week is the graceful case, so tests that don't care stay unaffected.
     countWeekReservations: vi.fn(async () => ({
       promised: 0,
-      pending: { total: 0, p2: 0, p3: 0 },
-      waiting: { total: 0, p2: 0, p3: 0 },
+      pending: { total: 0, priority: 0, general: 0 },
+      waiting: { total: 0, priority: 0, general: 0 },
     })),
     setWeeklyCapacity: vi.fn(async () => ({
       ok: true, noop: false, effective_capacity: 19, promised_count: 0, capacity_version: 1,

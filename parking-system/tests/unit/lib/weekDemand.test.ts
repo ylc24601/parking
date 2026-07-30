@@ -21,8 +21,8 @@ describe('summarizeWeekReservations', () => {
       row('waiting', 2),
       row('waiting', 3),
     ])
-    expect(counts.pending).toEqual({ total: 3, p2: 1, p3: 2 })
-    expect(counts.waiting).toEqual({ total: 2, p2: 1, p3: 1 })
+    expect(counts.pending).toEqual({ total: 3, priority: 1, general: 2 })
+    expect(counts.waiting).toEqual({ total: 2, priority: 1, general: 1 })
   })
 
   it('counts approved + temp_approved as promised (temp_approved is a held seat)', () => {
@@ -40,12 +40,12 @@ describe('summarizeWeekReservations', () => {
   // eligibility was revoked AFTER applying still counts as P2, because that is what the
   // Friday allocator will sort on. This function takes nothing but reservation rows —
   // there is no eligibility input it COULD consult — which is the property being pinned.
-  it('counts a pending row as P2 from the frozen value alone, with no eligibility input', () => {
+  it('counts a pending row as 優先 from the frozen value alone, with no eligibility input', () => {
     const counts = summarizeWeekReservations([row('pending', 2)])
-    expect(counts.pending).toEqual({ total: 1, p2: 1, p3: 0 })
+    expect(counts.pending).toEqual({ total: 1, priority: 1, general: 0 })
   })
 
-  it('keeps p2 + p3 === total', () => {
+  it('keeps priority + general === total', () => {
     const counts = summarizeWeekReservations([
       row('pending', 2),
       row('pending', 2),
@@ -53,7 +53,7 @@ describe('summarizeWeekReservations', () => {
       row('waiting', 3),
     ])
     for (const bucket of [counts.pending, counts.waiting]) {
-      expect(bucket.p2 + bucket.p3).toBe(bucket.total)
+      expect(bucket.priority + bucket.general).toBe(bucket.total)
     }
   })
 
@@ -70,19 +70,21 @@ describe('summarizeWeekReservations', () => {
     ])
     expect(counts).toEqual({
       promised: 0,
-      pending: { total: 1, p2: 1, p3: 0 },
-      waiting: { total: 0, p2: 0, p3: 0 },
+      pending: { total: 1, priority: 1, general: 0 },
+      waiting: { total: 0, priority: 0, general: 0 },
     })
   })
 
-  // P1 never reaches a reservation through any current path (staff seats live in
-  // weekly_staff_allocations; walk-ins are hard-coded to 3), so it is an invariant
-  // violation — not something to quietly fold into "優先".
-  it('throws on a P1 application row rather than counting it as P2', () => {
-    expect(() => summarizeWeekReservations([row('pending', 1)])).toThrow(/effective_priority 1/)
+  // No current path produces one (the six full-time-staff spots sit outside total_capacity
+  // and outside this system; the member apply flow refuses full_time_staff outright), but
+  // the allocator does sort P1 first, so 優先 is where such a row belongs. Throwing would
+  // only take the admin dashboard down over data that is already being handled correctly.
+  it('counts a P1 row as 優先 rather than throwing', () => {
+    const counts = summarizeWeekReservations([row('pending', 1), row('pending', 3)])
+    expect(counts.pending).toEqual({ total: 2, priority: 1, general: 1 })
   })
 
-  it('throws on an out-of-range priority', () => {
+  it('throws on a value the DB CHECK could not have stored', () => {
     expect(() => summarizeWeekReservations([row('waiting', 4)])).toThrow(/effective_priority 4/)
   })
 

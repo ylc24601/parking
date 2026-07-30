@@ -19,7 +19,7 @@ const capRow = (over: Partial<WeeklyCapacityAdminRow>): WeeklyCapacityAdminRow =
   ...over,
 })
 
-const noDemand = { total: 0, p2: 0, p3: 0 }
+const noDemand = { total: 0, priority: 0, general: 0 }
 
 describe('getWeekOverview', () => {
   it('no weekly_events row → stage no_event, capacity + demand null (not an error)', async () => {
@@ -35,8 +35,8 @@ describe('getWeekOverview', () => {
       hasFridayAllocationRun: vi.fn(async () => false),
       countWeekReservations: vi.fn(async () => ({
         promised: 8,
-        pending: { total: 12, p2: 3, p3: 9 },
-        waiting: { total: 5, p2: 1, p3: 4 },
+        pending: { total: 12, priority: 3, general: 9 },
+        waiting: { total: 5, priority: 1, general: 4 },
       })),
     })
     const res = await getWeekOverview({ now: NOW }, asRepo(repo))
@@ -69,14 +69,14 @@ describe('getWeekOverview', () => {
       hasFridayAllocationRun: vi.fn(async () => false),
       countWeekReservations: vi.fn(async () => ({
         promised: 0,
-        pending: { total: 5, p2: 2, p3: 3 },
-        waiting: { total: 3, p2: 0, p3: 3 },
+        pending: { total: 5, priority: 2, general: 3 },
+        waiting: { total: 3, priority: 0, general: 3 },
       })),
     })
     const res = await getWeekOverview({ now: NOW }, asRepo(repo))
     expect(res.demand).toEqual({
-      pending: { total: 5, p2: 2, p3: 3 },
-      waiting: { total: 3, p2: 0, p3: 3 },
+      pending: { total: 5, priority: 2, general: 3 },
+      waiting: { total: 3, priority: 0, general: 3 },
     })
   })
 

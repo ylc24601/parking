@@ -1,5 +1,5 @@
 import type { WeekStage } from '@/lib/weekStage'
-import type { PriorityCounts } from '@/lib/weekDemand'
+import type { DemandCounts } from '@/lib/weekDemand'
 
 // Client-safe admin overview / todo DTOs (Wave 3 / #8 + #9). No I/O, no server
 // imports — AdminSidebar and AdminTodoProvider are client components that consume
@@ -51,15 +51,15 @@ export interface WeekOverview {
   } | null               // null = no weekly_events row yet (stage 'no_event')
   // The demand half (#32). Capacity alone leaves the dashboard blank during
   // application_open — everything is still `pending`, so 已核准 sits at 0 exactly when a
-  // clerk most needs to judge supply against demand. p2/p3 come from the reservation's
-  // FROZEN effective_priority (see lib/weekDemand.ts); they are never recomputed from
-  // today's eligibility.
+  // clerk most needs to judge supply against demand. The priority/general split comes from
+  // the reservation's FROZEN effective_priority (see lib/weekDemand.ts); it is never
+  // recomputed from today's eligibility.
   //
-  // waiting carries its p2/p3 split even though the v1 UI only breaks down pending —
-  // the split costs nothing here, and putting it in the DTO now means surfacing it later
-  // is a UI change instead of a service change.
+  // waiting carries its split even though the v1 UI only breaks down pending — the split
+  // costs nothing here, and putting it in the DTO now means surfacing it later is a UI
+  // change instead of a service change.
   demand: {
-    pending: PriorityCounts
-    waiting: PriorityCounts
+    pending: DemandCounts
+    waiting: DemandCounts
   } | null               // null ⟺ capacity is null (no weekly_events row)
 }
