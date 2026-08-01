@@ -13,6 +13,14 @@
 # typescript build info
 *.tsbuildinfo
 
+# Review packs (scripts/review/make-review-pack.sh). These are evidence bundles for a
+# reviewer, not source: they carry a full diff and raw verification logs, and they are
+# regenerated from the commit they describe. Ignoring them is also the last line of defence
+# behind the script's own secret scan — a pack can never be committed by accident.
+.review/
+.review.tmp.*/
+.review-FAILED-*/
+
 # stray phone photos at repo root (not source)
 /*.heic
 /*.jpeg

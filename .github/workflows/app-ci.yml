@@ -67,3 +67,26 @@ jobs:
       - run: npm ci
 
       - run: npm run verify
+
+  # The review-pack script is the thing that decides whether an evidence bundle is allowed to
+  # exist — it refuses a dirty tree, a failed verification, a leaked secret. A guard nobody
+  # runs is a comment, so its own failure-path tests are enforced here rather than left to
+  # whoever remembers. Same arrangement backup-ci.yml uses for the backup scripts.
+  #
+  # No Node setup: the tests stub `npm` with a fake on PATH, so they need neither a real
+  # install nor the network.
+  review-pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck --version
+          shellcheck scripts/review/*.sh
+
+      - name: Failure-path tests (fake npm, throwaway git repos)
+        run: bash scripts/review/test-review-pack.sh
