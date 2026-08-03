@@ -201,9 +201,45 @@ if grep -q 'stacked review.*foo"bar' <<<"$OUT"; then
 
 R="$(newpacked)"
 printf 'not json at all\n' > "$R/.review/manifest.json"
-OUT="$(run_check "$R")"; RC=$?
-if [[ $RC -eq 1 ]] && grep -E 'manifest is parseable +VOID' <<<"$OUT" >/dev/null; then
-  ok "an unparseable manifest voids"; else bad "an unparseable manifest voids (rc=$RC)"; fi
+assert_void "an unparseable manifest" "$R" "manifest schema is valid"
+
+echo "check-review-workspace.sh — a broken manifest voids, it does not degrade to WARN"
+# The WARN for a missing checksum exists for packs built before checksums did. A complete
+# schema-2 pack that has LOST them is a corrupted integrity record, and letting it take the same
+# path would turn the strongest check in the script into an advisory note.
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifact_sha256 = {};'
+assert_void "a complete schema-2 pack with no checksums" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifact_sha256[m.artifacts[0]] = null;'
+assert_void "a null checksum" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifact_sha256[m.artifacts[0]] = 0;'
+assert_void "a numeric checksum" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifact_sha256[m.artifacts[0]] = "deadbeef";'
+assert_void "a checksum that is not 64 hex digits" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifacts.push({ path: "sneaky" });'
+assert_void "a non-string artifact entry" "$R" "manifest schema is valid"
+
+# A tab in a value would split a TSV row and shift every field after it. The emitter refuses
+# rather than assuming the generator never writes one.
+R="$(newpacked)"
+edit_manifest "$R" 'm.repo.base_ref = "main" + String.fromCharCode(9) + "extra";'
+assert_void "a control character in a value" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.invocation.allow_pattern_file_change = null;'
+assert_void "a non-boolean waiver flag" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifacts = "DIFF.patch";'
+assert_void "artifacts that is not an array" "$R" "manifest schema is valid"
 
 echo "check-review-workspace.sh — argument handling"
 R="$(newpacked)"

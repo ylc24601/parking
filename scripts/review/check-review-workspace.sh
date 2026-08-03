@@ -91,8 +91,9 @@ fi
 # first JSON escape (a branch may legally be named `foo"bar`). A checker whose output decides
 # whether a review counts must not have inputs it quietly gets wrong.
 #
-# One node call, emitting TSV. No value can contain a tab or a newline: git refs forbid control
-# characters, and the artifact names come from a fixed list in the generator.
+# One node call, emitting TSV. The framing is safe because the emitter REJECTS any value holding
+# a control character rather than assuming none can appear — "the generator only writes tame
+# strings" is an assumption about the very input this check exists to distrust.
 if ! command -v node >/dev/null; then
   void "manifest is parseable" "node not found — this pack cannot be verified here"
   echo "RESULT: VOID"
@@ -101,27 +102,96 @@ fi
 
 MANIFEST_TSV="$(node -e '
 const fs = require("fs");
+// Nothing is printed until every field has been validated, so a rejection is one line and the
+// caller can never act on a half-emitted record.
+const die = (why) => { console.log("invalid\t" + why); process.exit(4); };
+
 let m;
-try { m = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch (e) { process.exit(3); }
-if (m === null || typeof m !== "object") process.exit(3);
-const repo = m.repo || {}, inv = m.invocation || {}, hashes = m.artifact_sha256 || {};
-const p = (k, v) => console.log(k + "\t" + (v === undefined || v === null ? "" : String(v)));
-p("status", m.status);
-p("schema_version", m.schema_version);
-p("head_sha", repo.head_sha);
-p("base_sha", repo.base_sha);
-p("base_ref", repo.base_ref);
-p("merge_base_sha", repo.merge_base_sha);
+try { m = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch (e) { die("not valid JSON"); }
+if (m === null || typeof m !== "object" || Array.isArray(m)) die("top level is not an object");
+
+// Parsing is not validating. JSON.parse happily returns null, 0 or an object where a checksum
+// belongs, and every one of those would have read downstream as "no checksum recorded" — which
+// is the WARN path meant for genuinely old packs. A corrupted integrity record must not be able
+// to present itself as a merely incomplete one.
+const CTRL = /[\u0000-\u001f\u007f]/;                 // also guards the TSV framing below
+const obj = (v, what) => {
+  if (v === undefined || v === null) return {};
+  if (typeof v !== "object" || Array.isArray(v)) die(what + " is not an object");
+  return v;
+};
+const text = (v, what) => {
+  if (v === undefined || v === null) return "";
+  if (typeof v !== "string") die(what + " is not a string");
+  if (CTRL.test(v)) die(what + " contains a control character");
+  return v;
+};
+
+const schemaRaw = m.schema_version;
+if (schemaRaw !== undefined && !Number.isInteger(schemaRaw)) die("schema_version is not an integer");
+const schema = Number.isInteger(schemaRaw) ? schemaRaw : 0;
+const status = text(m.status, "status");
+const repo = obj(m.repo, "repo");
+
+const inv = obj(m.invocation, "invocation");
+let waiver = "unknown";
+if ("allow_pattern_file_change" in inv) {
+  if (typeof inv.allow_pattern_file_change !== "boolean") die("allow_pattern_file_change is not a boolean");
+  waiver = String(inv.allow_pattern_file_change);
+}
+
+const artifacts = m.artifacts === undefined ? [] : m.artifacts;
+if (!Array.isArray(artifacts)) die("artifacts is not an array");
+artifacts.forEach((a, i) => {
+  if (typeof a !== "string" || a === "") die("artifacts[" + i + "] is not a non-empty string");
+  if (CTRL.test(a)) die("artifacts[" + i + "] contains a control character");
+});
+
+const hashes = m.artifact_sha256 === undefined ? null : obj(m.artifact_sha256, "artifact_sha256");
+const HEX = /^[0-9a-f]{64}$/;
+const rows = artifacts.map((a) => {
+  if (hashes === null || !(a in hashes)) return [a, ""];
+  const h = hashes[a];
+  if (typeof h !== "string" || !HEX.test(h)) die("artifact_sha256[" + a + "] is not a sha256 hex string");
+  return [a, h];
+});
+
+// A pack that is old enough to predate checksums may go without them; one that claims to carry
+// them may not. Otherwise stripping artifact_sha256 from a complete pack would turn a VOID into
+// a WARN and hand the reviewer a pack whose evidence cannot be tied to anything.
+if (schema >= 2 && status === "complete") {
+  for (const [a, h] of rows) if (h === "") die("schema " + schema + " complete pack has no checksum for " + a);
+}
+
+// Resolved before anything is printed. Validating inside the print calls below would emit the
+// first few rows and only then reject, leaving the caller a truncated record with the rejection
+// buried in the middle of it — which is what the comment at the top of this program promises
+// does not happen.
+const headSha = text(repo.head_sha, "repo.head_sha");
+const baseSha = text(repo.base_sha, "repo.base_sha");
+const baseRef = text(repo.base_ref, "repo.base_ref");
+const mergeBaseSha = text(repo.merge_base_sha, "repo.merge_base_sha");
+
+const p = (k, v) => console.log(k + "\t" + v);
+p("status", status);
+p("schema_version", String(schema));
+p("head_sha", headSha);
+p("base_sha", baseSha);
+p("base_ref", baseRef);
+p("merge_base_sha", mergeBaseSha);
 // Absent is not the same as false. A pack built before the waiver was recorded cannot tell us
 // either way, and saying "unknown" is the whole point of this line.
-p("waiver", "allow_pattern_file_change" in inv ? inv.allow_pattern_file_change : "unknown");
-for (const a of (Array.isArray(m.artifacts) ? m.artifacts : [])) {
-  console.log("artifact\t" + a + "\t" + (hashes[a] || ""));
-}
+p("waiver", waiver);
+for (const [a, h] of rows) console.log("artifact\t" + a + "\t" + h);
 ' "$MANIFEST" 2>/dev/null)"
 
 if [[ -z "$MANIFEST_TSV" ]]; then
-  void "manifest is parseable" "not valid JSON, or not a review manifest"
+  void "manifest is parseable" "node could not read $MANIFEST"
+  echo "RESULT: VOID"
+  exit 1
+fi
+if [[ "$MANIFEST_TSV" == "invalid"$'\t'* ]]; then
+  void "manifest schema is valid" "${MANIFEST_TSV#invalid$'\t'}"
   echo "RESULT: VOID"
   exit 1
 fi
@@ -174,8 +244,9 @@ else
 fi
 
 # ── artifact checksums ──────────────────────────────────────────────────────────
-# Graded on what the manifest actually carries rather than on its schema number: an artifact
-# with no recorded hash is unverifiable whatever version the pack calls itself.
+# Reaching a missing hash here means a legacy pack: the emitter above already refuses a
+# schema >= 2 complete pack that has lost its checksums, so that case voids and never arrives
+# as a WARN the reviewer could read past.
 bad_files=""
 checked=0
 unhashed=0
@@ -193,7 +264,7 @@ if [[ $checked -eq 0 ]]; then
 elif [[ -n "$bad_files" ]]; then
   void "artifact checksums verified" "mismatch:$bad_files"
 elif [[ $unhashed -gt 0 ]]; then
-  warn "artifact checksums verified" "$unhashed of $checked carry no hash (schema ${SCHEMA:-?} predates them) — cannot verify"
+  warn "artifact checksums verified" "$unhashed of $checked carry no hash — legacy pack (schema ${SCHEMA:-?}); rebuild it to get evidence"
 else
   pass "artifact checksums verified" "$checked/$checked"
 fi

@@ -50,6 +50,8 @@
 
 ## 4. 每次審查的固定動作
 
+前置需求：reviewer 的機器要有 `git`、`bash` 與 **`node`**（`check-review-workspace.sh` 用它讀 manifest，不需要 `node_modules`）。
+
 ```bash
 # 1. 在 review worktree
 scripts/review/check-review-workspace.sh --phase pre     # 輸出整段留著
@@ -116,5 +118,6 @@ gitignored，**不會被 commit**——它是關於某個 commit 的對話，不
 - **checksum 防的是誤改，不是偽造。** 能改 artifact 的人也能改 manifest。要防後者需要簽章（signing），那是另一個威脅模型，目前刻意不做。
 - **checksum 只存在於 `status: complete` 的 pack。** 失敗的 pack 不寫——對半寫完的 artifact 算雜湊，會把截斷的內容包裝成「已驗證」。所以欄位缺少不代表解析出錯。失敗的 pack 本來也不是證據（checker 一律 VOID）。
 - **`schema_version: 1` 的舊 pack 同時缺兩樣東西**：artifact checksum，以及 `--allow-pattern-file-change` 有沒有被用過的紀錄。checker 對後者報 `UNKNOWN` 而不是 PASS——對無從得知的事情給肯定答案，正是這套流程要抓的錯誤型態。要完整證據就重產一次 pack。
-- **`check-review-workspace.sh` 需要 `node`**（只用來 `JSON.parse` manifest，不需要 `node_modules`）。找不到 `node` 就 VOID，不會退回文字解析——退回去正是誤讀的來源。反正產得出 pack 的機器一定有 node。
+- **`check-review-workspace.sh` 需要 `node`**（只用來讀 manifest，不需要 `node_modules`）。這是 **reviewer 端的前置需求**，不是「反正產 pack 的機器有」——protocol 本來就要求審查在另一個工作區、可能是另一台機器上進行，那台機器上有什麼不能靠推論。找不到 `node` 就 VOID：不退回文字解析，也不加 `jq`／`python` 的備援路徑，因為多條路徑就要有多份同樣嚴格的 schema 驗證，而那必然會分岔。
+- **checker 驗的是 manifest 的形狀，不是它的真偽。** 它會拒絕：非 JSON、`artifacts` 不是字串陣列、雜湊不是 64 位 hex、`allow_pattern_file_change` 不是 boolean、任何值含控制字元（那會破壞內部的 TSV 傳遞）。宣稱 `schema_version >= 2` 且 `complete` 的 pack 若缺任何一個雜湊，一律 **VOID**——只有真正的舊 pack 才走 WARN。但這些都不能證明 manifest 沒被人改過，見上一條。
 - **秘密掃描認得的是已知形狀，不是 PII。** 沒有任何 regex 認得出一個真實會友的名字。真正的控制是建構式的：packet 只包含腳本自己產生的內容。
