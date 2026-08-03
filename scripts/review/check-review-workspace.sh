@@ -136,10 +136,25 @@ const text = (v, what) => {
 // An unknown FUTURE version is refused for the mirror-image reason: this checker does not know
 // what rules that version promises. Raising the schema in the generator therefore requires
 // touching this list too, which is the intended coupling.
+// `hasOwnProperty` rather than `in`, so an inherited name like "toString" is never mistaken for
+// a field the manifest actually carries.
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
 const schemaRaw = m.schema_version;
 if (!Number.isInteger(schemaRaw)) die("schema_version is missing or not an integer");
 const schema = schemaRaw;
 if (schema < 1 || schema > 2) die("schema_version " + schema + " is not one this checker understands (1 or 2)");
+
+// The version has to constrain the SHAPE, not just be a number in the allowed range. Checking
+// only the number let a schema-2 manifest be relabelled 1 while keeping its checksums and its
+// invocation record — and it then scored better than a real schema-1 pack, because the missing
+// evidence a legacy pack is warned about was present. A version that does not say what the
+// document contains is decoration.
+if (schema === 1) {
+  if (own(m, "artifact_sha256")) die("schema 1 manifest carries artifact_sha256, which only schema 2 records");
+  if (own(m, "invocation")) die("schema 1 manifest carries invocation, which only schema 2 records");
+}
+
 const status = text(m.status, "status");
 const repo = obj(m.repo, "repo");
 
@@ -152,23 +167,25 @@ if ("allow_pattern_file_change" in inv) {
 
 const artifacts = m.artifacts === undefined ? [] : m.artifacts;
 if (!Array.isArray(artifacts)) die("artifacts is not an array");
+const listed = new Set();
 artifacts.forEach((a, i) => {
   if (typeof a !== "string" || a === "") die("artifacts[" + i + "] is not a non-empty string");
   if (CTRL.test(a)) die("artifacts[" + i + "] contains a control character");
+  // A repeat is never meaningful, and it inflated the reported count: the same file hashed twice
+  // read as "8/8 verified" over seven artifacts. A number that overstates the evidence is the
+  // wrong kind of wrong for a line a reviewer pastes as proof.
+  if (listed.has(a)) die("artifacts lists " + a + " more than once");
+  listed.add(a);
 });
 
 // Every entry is validated, not only the ones `artifacts` asks about. Walking the artifact list
 // and looking each name up left the rest of the map unexamined, so a manifest could carry junk
 // keys with null or object values and still be called valid — while the docs claimed every hash
-// was checked. The key set must match `artifacts` exactly: an entry for a file the pack does not
-// list describes evidence nobody will read, and there is no reason to allow it.
-// `hasOwnProperty` rather than `in`, so an inherited name like "toString" is not mistaken for a
-// recorded hash.
-const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+// was checked. No extra keys here, no missing ones below: together that is the set equality the
+// protocol promises.
 const hashes = m.artifact_sha256 === undefined ? null : obj(m.artifact_sha256, "artifact_sha256");
 const HEX = /^[0-9a-f]{64}$/;
 if (hashes !== null) {
-  const listed = new Set(artifacts);
   for (const k of Object.keys(hashes)) {
     if (k === "" || CTRL.test(k)) die("artifact_sha256 has a malformed key");
     if (!listed.has(k)) die("artifact_sha256 has an entry not listed in artifacts: " + k);
@@ -182,8 +199,9 @@ const rows = artifacts.map((a) =>
 // A pack that is old enough to predate checksums may go without them; one that claims to carry
 // them may not. Otherwise stripping artifact_sha256 from a complete pack would turn a VOID into
 // a WARN and hand the reviewer a pack whose evidence cannot be tied to anything.
-if (schema >= 2 && status === "complete") {
-  for (const [a, h] of rows) if (h === "") die("schema " + schema + " complete pack has no checksum for " + a);
+if (schema === 2 && status === "complete") {
+  if (hashes === null) die("schema 2 complete pack has no artifact_sha256");
+  for (const [a, h] of rows) if (h === "") die("schema 2 complete pack has no checksum for " + a);
 }
 
 // Resolved before anything is printed. Validating inside the print calls below would emit the

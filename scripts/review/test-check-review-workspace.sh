@@ -270,6 +270,29 @@ R="$(newpacked)"
 edit_manifest "$R" 'm.status = "partial";'
 assert_void "schema 2 with a status other than complete" "$R" "pack status is complete"
 
+echo "check-review-workspace.sh — the version must constrain the shape, not just be in range"
+# Relabelling a schema-2 manifest as 1 while keeping its checksums and invocation used to score
+# BETTER than a real legacy pack: the evidence a legacy pack is warned about was present, so
+# nothing warned. A version that does not say what the document contains is decoration.
+R="$(newpacked)"
+edit_manifest "$R" 'm.schema_version = 1;'
+assert_void "schema 1 still carrying checksums" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.schema_version = 1; delete m.artifact_sha256;'
+assert_void "schema 1 still carrying invocation" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.schema_version = 2; m.status = "complete"; delete m.artifact_sha256;'
+assert_void "schema 2 complete with no checksum map at all" "$R" "manifest schema is valid"
+
+echo "check-review-workspace.sh — a repeated artifact does not inflate the count"
+# The count is pasted into findings as proof of how much was verified, so overstating it is the
+# wrong kind of wrong: 8/8 over seven distinct files reads as more evidence than exists.
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifacts.push(m.artifacts[0]);'
+assert_void "the same artifact listed twice" "$R" "manifest schema is valid"
+
 echo "check-review-workspace.sh — argument handling"
 R="$(newpacked)"
 OUT="$(run_check "$R" --phase sideways)"; RC=$?
