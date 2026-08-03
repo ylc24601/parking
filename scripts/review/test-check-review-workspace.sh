@@ -231,7 +231,7 @@ assert_void "a non-string artifact entry" "$R" "manifest schema is valid"
 # rather than assuming the generator never writes one.
 R="$(newpacked)"
 edit_manifest "$R" 'm.repo.base_ref = "main" + String.fromCharCode(9) + "extra";'
-assert_void "a control character in a value" "$R" "manifest schema is valid"
+assert_void "a control character in a value the checker forwards" "$R" "manifest schema is valid"
 
 R="$(newpacked)"
 edit_manifest "$R" 'm.invocation.allow_pattern_file_change = null;'
@@ -240,6 +240,35 @@ assert_void "a non-boolean waiver flag" "$R" "manifest schema is valid"
 R="$(newpacked)"
 edit_manifest "$R" 'm.artifacts = "DIFF.patch";'
 assert_void "artifacts that is not an array" "$R" "manifest schema is valid"
+
+echo "check-review-workspace.sh — an unrecognised manifest version is not a permissive default"
+# Absent used to mean 0, i.e. "older than checksums", i.e. the most forgiving grade available.
+# No generator has ever written a manifest without schema_version, so absent does not mean old.
+R="$(newpacked)"
+edit_manifest "$R" 'delete m.schema_version;'
+assert_void "a manifest with no schema_version" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.schema_version = 3;'
+assert_void "a manifest newer than this checker" "$R" "manifest schema is valid"
+
+echo "check-review-workspace.sh — every checksum entry is validated, not just the listed ones"
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifact_sha256["not-an-artifact"] = null;'
+assert_void "a checksum entry for a file the pack does not list" "$R" "manifest schema is valid"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifact_sha256[m.artifacts[0] + String.fromCharCode(9)] = "0".repeat(64);'
+assert_void "a checksum key holding a control character" "$R" "manifest schema is valid"
+
+echo "check-review-workspace.sh — regressions the previous round left untested"
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifacts = []; m.artifact_sha256 = {};'
+assert_void "a pack listing no artifacts at all" "$R" "artifact checksums verified"
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.status = "partial";'
+assert_void "schema 2 with a status other than complete" "$R" "pack status is complete"
 
 echo "check-review-workspace.sh — argument handling"
 R="$(newpacked)"

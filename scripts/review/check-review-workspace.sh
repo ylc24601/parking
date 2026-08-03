@@ -100,6 +100,9 @@ if ! command -v node >/dev/null; then
   exit 1
 fi
 
+# The node program is single-quoted deliberately — bash must not expand anything inside it. The
+# only $ it contains is the end anchor of the sha256 regex.
+# shellcheck disable=SC2016
 MANIFEST_TSV="$(node -e '
 const fs = require("fs");
 // Nothing is printed until every field has been validated, so a rejection is one line and the
@@ -127,9 +130,16 @@ const text = (v, what) => {
   return v;
 };
 
+// An absent version used to default to 0, which read as "older than checksums" — the most
+// permissive answer available. But no version of the generator has ever written a manifest
+// without schema_version, so absent does not mean old, it means this did not come from here.
+// An unknown FUTURE version is refused for the mirror-image reason: this checker does not know
+// what rules that version promises. Raising the schema in the generator therefore requires
+// touching this list too, which is the intended coupling.
 const schemaRaw = m.schema_version;
-if (schemaRaw !== undefined && !Number.isInteger(schemaRaw)) die("schema_version is not an integer");
-const schema = Number.isInteger(schemaRaw) ? schemaRaw : 0;
+if (!Number.isInteger(schemaRaw)) die("schema_version is missing or not an integer");
+const schema = schemaRaw;
+if (schema < 1 || schema > 2) die("schema_version " + schema + " is not one this checker understands (1 or 2)");
 const status = text(m.status, "status");
 const repo = obj(m.repo, "repo");
 
@@ -147,14 +157,27 @@ artifacts.forEach((a, i) => {
   if (CTRL.test(a)) die("artifacts[" + i + "] contains a control character");
 });
 
+// Every entry is validated, not only the ones `artifacts` asks about. Walking the artifact list
+// and looking each name up left the rest of the map unexamined, so a manifest could carry junk
+// keys with null or object values and still be called valid — while the docs claimed every hash
+// was checked. The key set must match `artifacts` exactly: an entry for a file the pack does not
+// list describes evidence nobody will read, and there is no reason to allow it.
+// `hasOwnProperty` rather than `in`, so an inherited name like "toString" is not mistaken for a
+// recorded hash.
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const hashes = m.artifact_sha256 === undefined ? null : obj(m.artifact_sha256, "artifact_sha256");
 const HEX = /^[0-9a-f]{64}$/;
-const rows = artifacts.map((a) => {
-  if (hashes === null || !(a in hashes)) return [a, ""];
-  const h = hashes[a];
-  if (typeof h !== "string" || !HEX.test(h)) die("artifact_sha256[" + a + "] is not a sha256 hex string");
-  return [a, h];
-});
+if (hashes !== null) {
+  const listed = new Set(artifacts);
+  for (const k of Object.keys(hashes)) {
+    if (k === "" || CTRL.test(k)) die("artifact_sha256 has a malformed key");
+    if (!listed.has(k)) die("artifact_sha256 has an entry not listed in artifacts: " + k);
+    const h = hashes[k];
+    if (typeof h !== "string" || !HEX.test(h)) die("artifact_sha256[" + k + "] is not a sha256 hex string");
+  }
+}
+const rows = artifacts.map((a) =>
+  (hashes !== null && own(hashes, a)) ? [a, hashes[a]] : [a, ""]);
 
 // A pack that is old enough to predate checksums may go without them; one that claims to carry
 // them may not. Otherwise stripping artifact_sha256 from a complete pack would turn a VOID into

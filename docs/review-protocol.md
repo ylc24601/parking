@@ -119,5 +119,7 @@ gitignored，**不會被 commit**——它是關於某個 commit 的對話，不
 - **checksum 只存在於 `status: complete` 的 pack。** 失敗的 pack 不寫——對半寫完的 artifact 算雜湊，會把截斷的內容包裝成「已驗證」。所以欄位缺少不代表解析出錯。失敗的 pack 本來也不是證據（checker 一律 VOID）。
 - **`schema_version: 1` 的舊 pack 同時缺兩樣東西**：artifact checksum，以及 `--allow-pattern-file-change` 有沒有被用過的紀錄。checker 對後者報 `UNKNOWN` 而不是 PASS——對無從得知的事情給肯定答案，正是這套流程要抓的錯誤型態。要完整證據就重產一次 pack。
 - **`check-review-workspace.sh` 需要 `node`**（只用來讀 manifest，不需要 `node_modules`）。這是 **reviewer 端的前置需求**，不是「反正產 pack 的機器有」——protocol 本來就要求審查在另一個工作區、可能是另一台機器上進行，那台機器上有什麼不能靠推論。找不到 `node` 就 VOID：不退回文字解析，也不加 `jq`／`python` 的備援路徑，因為多條路徑就要有多份同樣嚴格的 schema 驗證，而那必然會分岔。
-- **checker 驗的是 manifest 的形狀，不是它的真偽。** 它會拒絕：非 JSON、`artifacts` 不是字串陣列、雜湊不是 64 位 hex、`allow_pattern_file_change` 不是 boolean、任何值含控制字元（那會破壞內部的 TSV 傳遞）。宣稱 `schema_version >= 2` 且 `complete` 的 pack 若缺任何一個雜湊，一律 **VOID**——只有真正的舊 pack 才走 WARN。但這些都不能證明 manifest 沒被人改過，見上一條。
+- **checker 驗的是 manifest 的形狀，不是它的真偽。** 拒絕（VOID）的條件：非 JSON；`schema_version` 不是 `1` 或 `2`（**缺值也拒絕**——沒有任何一版 generator 寫過沒有版號的 manifest，所以「缺值」不等於「舊」）；`artifacts` 不是非空字串陣列；`artifact_sha256` 的 key 集合不等於 `artifacts`；任一雜湊不是 64 位 hex；`allow_pattern_file_change` 存在但不是 boolean；**checker 會讀進來的那些值**（`status`、四個 `repo.*`、artifact 名稱、checksum key）含控制字元。宣稱 `schema_version 2` 且 `complete` 的 pack 缺任何一個雜湊也一律 VOID——只有 schema 1 才走 WARN。
+- **checker 不驗它不讀的欄位**：`created_at`、`invocation.argv`、`tree`、`toolchain`、`verify` 的內容不做型別或字元檢查。這些是給人讀的證據，不參與判定。上一條的控制字元規則只涵蓋會進入 checker 內部傳遞的值，不是整份 manifest。
+- **generator 的 schema 升到 3 時，checker 也要一起改。** 版號白名單是刻意的耦合：checker 不知道新版承諾了什麼，就不該給它通過。
 - **秘密掃描認得的是已知形狀，不是 PII。** 沒有任何 regex 認得出一個真實會友的名字。真正的控制是建構式的：packet 只包含腳本自己產生的內容。
