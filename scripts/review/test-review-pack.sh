@@ -32,7 +32,9 @@ trap 'rm -rf "$TMP" "$FAKEBIN"' EXIT
 cat >"$FAKEBIN/npm" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
-  --version) echo "0.0.0-fake"; exit 0 ;;
+  # The suffix seam exists so the suite can feed a control character in through a real external
+  # command's output — the path that made "nothing else can reach json_escape" untrue.
+  --version) echo "0.0.0-fake${FAKE_NPM_VERSION_SUFFIX:-}"; exit 0 ;;
   ci)
     echo "fake npm ci"
     exit "${FAKE_NPM_CI_EXIT:-0}" ;;
@@ -230,7 +232,7 @@ commit_file "$R" "parking-system/lib/n.ts" "export const n = 1"
 run_pack "$R" >/dev/null 2>&1
 cp "$R/.review/manifest.json" "$TMP/keep.json"
 commit_file "$R" "parking-system/lib/o.ts" "export const o = 1"
-OUT="$(cd "$R" && REVIEW_PACK_SIMULATE_PUBLISH_FAILURE=1 bash "$SCRIPT" --base main 2>&1)"; RC=$?
+OUT="$(cd "$R" && REVIEW_PACK_SIMULATE_PUBLISH_FAILURE=simulate-publish-failure bash "$SCRIPT" --base main 2>&1)"; RC=$?
 if [[ $RC -ne 0 ]]; then ok "a failed publish fails the run"; else bad "a failed publish fails the run (got 0)"; fi
 if cmp -s "$TMP/keep.json" "$R/.review/manifest.json"; then
   ok "the previous pack is restored, not lost"; else bad "the previous pack is restored, not lost"; fi
@@ -304,6 +306,26 @@ if grep -q '"failed_stage": "scan"' "$FDIR/manifest.json" 2>/dev/null; then
   ok "FAILED manifest names the scan stage"; else bad "FAILED manifest names the scan stage"; fi
 if ! grep -qF -- "$FAKE_ECHO_PROBE" "$FDIR/manifest.json" 2>/dev/null; then
   ok "the matched value never reaches the manifest either"; else bad "the matched value never reaches the manifest either"; fi
+
+echo "make-review-pack.sh — control characters from external commands cannot break the manifest"
+# `node --version`, `npm --version` and `uname -sr` are command OUTPUT, not text this script
+# composed, and --base is whatever the caller typed. A wrapper that emits an escape sequence
+# would put a raw C0 byte in the manifest; JSON requires everything below U+0020 to be escaped
+# whether or not it has a short form. The seam feeds VT, ESC, BS and FF in through npm.
+R="$(newrepo)"
+commit_file "$R" "parking-system/lib/r.ts" "export const r = 1"
+OUT="$(cd "$R" && FAKE_NPM_VERSION_SUFFIX=$'\x0b\x1b\x08\x0c' bash "$SCRIPT" --base main 2>&1)"; RC=$?
+if [[ $RC -eq 0 ]]; then ok "a control character in npm --version does not fail the run"
+  else bad "a control character in npm --version does not fail the run (got $RC)"; fi
+if valid_json "$R/.review/manifest.json"; then
+  ok "the manifest is still valid JSON"; else bad "the manifest is still valid JSON"; fi
+if grep -qF -- '\u000b' "$R/.review/manifest.json" 2>/dev/null \
+   && grep -qF -- '\u001b' "$R/.review/manifest.json" 2>/dev/null; then
+  ok "control characters with no short form become \\u00XX"; else bad "control characters with no short form become \\u00XX"; fi
+if grep -qF -- '\b\f' "$R/.review/manifest.json" 2>/dev/null; then
+  ok "backspace and form feed keep their short forms"; else bad "backspace and form feed keep their short forms"; fi
+if ! LC_ALL=C grep -q '[[:cntrl:]]' <(tr -d '\n' < "$R/.review/manifest.json") 2>/dev/null; then
+  ok "no raw control byte survives into the manifest"; else bad "no raw control byte survives into the manifest"; fi
 
 echo "make-review-pack.sh — editing the pattern file trips its own scanner"
 R="$(newrepo)"

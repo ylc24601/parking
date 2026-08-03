@@ -117,16 +117,33 @@ trap on_exit EXIT
 # FAILED manifest's `failed_reason`. A line-oriented `sed` never sees those newlines, so the
 # manifest for the most safety-relevant failure path was the one that came out unparseable.
 # Done with parameter expansion rather than a pipeline so the substitution is not itself
-# line-oriented. Other C0 control characters cannot reach here (every caller passes git refs,
-# paths, or text this script composed), and are deliberately not handled — a half-measure that
-# looks total is what this whole script exists to avoid.
+# line-oriented.
+#
+# Escaping is total, not "the characters we expect". An earlier version stopped at the five
+# with short forms and justified it by claiming nothing else could reach the function — untrue:
+# NODE_V, NPM_V and `uname -sr` are external command output, and BASE_REF is whatever came in
+# on --base. JSON requires every character below U+0020 to be escaped, so the ones without a
+# short form go out as \u00XX. (U+0000 is unreachable: a bash string cannot hold a NUL.)
 json_escape() {
   local s="${1:-}"
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
+  s="${s//$'\b'/\\b}"
+  s="${s//$'\f'/\\f}"
   s="${s//$'\t'/\\t}"
   s="${s//$'\r'/\\r}"
   s="${s//$'\n'/\\n}"
+  # The glob keeps the per-character loop off the normal path: it runs only for a string that
+  # still holds a control character after the five short forms above.
+  if [[ "$s" == *[[:cntrl:]]* ]]; then
+    local out="" i c
+    for (( i = 0; i < ${#s}; i++ )); do
+      c="${s:i:1}"
+      if [[ "$c" == [[:cntrl:]] ]]; then printf -v c '\\u%04x' "'$c"; fi
+      out+="$c"
+    done
+    s="$out"
+  fi
   printf '%s' "$s"
 }
 
@@ -360,7 +377,9 @@ fi
 # The rollback below only runs when the filesystem misbehaves, which is to say: never, during
 # development. An untested guard is a comment — the reason this script's failure paths are
 # tested at all — so there is one seam for the suite to pull. Set by test-review-pack.sh only.
-if [[ -n "${REVIEW_PACK_SIMULATE_PUBLISH_FAILURE:-}" ]] || ! mv "$PACK" "$OUT"; then
+# Matched against an exact sentinel, not tested for non-emptiness: an inherited
+# REVIEW_PACK_SIMULATE_PUBLISH_FAILURE=0 meaning "off" would otherwise fail every run.
+if [[ "${REVIEW_PACK_SIMULATE_PUBLISH_FAILURE:-}" == "simulate-publish-failure" ]] || ! mv "$PACK" "$OUT"; then
   if [[ -n "$PREV" ]] && mv "$PREV" "$OUT" 2>/dev/null; then PREV=""; fi
   fail "could not publish the pack to $OUT/${PREV:+ — WARNING: the previous pack is still in $PREV, move it back by hand}"
 fi
