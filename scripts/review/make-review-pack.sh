@@ -21,9 +21,14 @@
 #      (MERGE_BASE_SHA..HEAD_SHA), resolved once at the start and then used as a literal.
 #      The tracked working tree must equal HEAD before, and HEAD must be unmoved after —
 #      this repo is shared by concurrent sessions, so that is not a theoretical race.
-#   2. A FAILED RUN NEVER LOOKS FINISHED. The pack is built in a temp dir and only becomes
-#      .review/ by an atomic rename after everything passed. On any failure the evidence is
-#      renamed to .review-FAILED-* instead, and an existing .review/ is left untouched.
+#   2. A FAILED RUN NEVER LOOKS FINISHED. The pack is built in a temp dir and only replaces
+#      .review/ after everything passed. On any failure the evidence is renamed to
+#      .review-FAILED-* instead, and an existing .review/ is left untouched.
+#      This is NOT an atomic rename, and it cannot be: rename(2) refuses to replace a
+#      non-empty directory, so swapping a directory is necessarily more than one step. What
+#      the publish step does guarantee is that a COMPLETE pack is on disk at every instant —
+#      the previous pack is moved aside rather than deleted, and is dropped only once the new
+#      one is in place. An interrupt leaves .review/ or .review.prev.*, never neither.
 #   3. REAL EXIT CODES. `npm run verify` is redirected to a log, never piped into tee —
 #      a pipeline can report tee's 0 while the command failed. Its status is captured
 #      explicitly and recorded in the manifest.
@@ -107,7 +112,23 @@ on_exit() {
 }
 trap on_exit EXIT
 
-json_escape() { printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# Newlines are the ones that matter here, not an edge case: the secret-scan failure reason is
+# built as a MULTI-LINE list (one line per matching pattern) and is embedded verbatim in the
+# FAILED manifest's `failed_reason`. A line-oriented `sed` never sees those newlines, so the
+# manifest for the most safety-relevant failure path was the one that came out unparseable.
+# Done with parameter expansion rather than a pipeline so the substitution is not itself
+# line-oriented. Other C0 control characters cannot reach here (every caller passes git refs,
+# paths, or text this script composed), and are deliberately not handled — a half-measure that
+# looks total is what this whole script exists to avoid.
+json_escape() {
+  local s="${1:-}"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\t'/\\t}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\n'/\\n}"
+  printf '%s' "$s"
+}
 
 write_manifest() {
   local status="${1:-failed}" extra=""
@@ -188,6 +209,11 @@ MERGE_BASE_SHA="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
 NODE_V="$(node --version 2>/dev/null || echo unknown)"
 NPM_V="$(npm --version 2>/dev/null || echo unknown)"
 
+# Counted before the temp pack dir exists, or the pack counts itself. (In this repo .review*
+# is gitignored so it would not show; in a repo without that rule it would — and a number that
+# depends on the reader's .gitignore is not evidence.)
+UNTRACKED_COUNT="$(git ls-files --others --exclude-standard | wc -l | tr -d ' ')"
+
 PACK="$(mktemp -d "$REPO_ROOT/.review.tmp.XXXXXX")"
 mkdir -p "$PACK/logs"
 
@@ -203,8 +229,13 @@ git log --oneline "$MERGE_BASE_SHA..$HEAD_SHA"       > "$PACK/COMMITS.txt"
   echo "head_sha        $HEAD_SHA"
   echo "merge_base_sha  $MERGE_BASE_SHA"
   echo
-  echo "git status --short (untracked/ignored entries are informational only):"
-  git status --short
+  # Deliberately a count, not a listing. The tracked tree is verified equal to HEAD above, so
+  # `git status --short` here would contain nothing BUT untracked filenames — and a filename
+  # is user content, not something this script generated. That made it the one place where
+  # unvetted input entered the pack, and the deny-pattern scan does not cover it (it reads the
+  # added lines of DIFF.patch). A stray `王小明名單.csv` in the working directory is exactly
+  # the shape of thing this pack must never carry, and no regex would have caught it.
+  echo "untracked files: $UNTRACKED_COUNT (names omitted on purpose — see the comment in $PROG)"
 } > "$PACK/STATUS.txt"
 
 # ── scan ────────────────────────────────────────────────────────────────────────
@@ -304,7 +335,7 @@ STAGE="review-md"
   sed 's#](\.\./#](#g' "$TEMPLATE"
 } > "$PACK/REVIEW.md"
 
-# ── publish (atomic) ────────────────────────────────────────────────────────────
+# ── publish ─────────────────────────────────────────────────────────────────────
 STAGE="publish"
 NOW_HEAD="$(git rev-parse HEAD)"
 [[ "$NOW_HEAD" == "$HEAD_SHA" ]] \
@@ -314,9 +345,31 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 
 write_manifest complete
-rm -rf "$OUT"
-mv "$PACK" "$OUT"
+
+# The old pack is moved aside, NOT deleted first. `rm -rf "$OUT" && mv "$PACK" "$OUT"` reads
+# as one step but is two, and an interrupt between them leaves no pack at all — the previous
+# evidence destroyed to make room for evidence that never arrived.
+PREV=""
+if [[ -e "$OUT" ]]; then
+  PREV="$OUT.prev.$$"
+  rm -rf "$PREV"
+  mv "$OUT" "$PREV" \
+    || fail "could not move the existing $OUT/ aside — nothing published, the previous pack is untouched"
+fi
+
+# The rollback below only runs when the filesystem misbehaves, which is to say: never, during
+# development. An untested guard is a comment — the reason this script's failure paths are
+# tested at all — so there is one seam for the suite to pull. Set by test-review-pack.sh only.
+if [[ -n "${REVIEW_PACK_SIMULATE_PUBLISH_FAILURE:-}" ]] || ! mv "$PACK" "$OUT"; then
+  if [[ -n "$PREV" ]] && mv "$PREV" "$OUT" 2>/dev/null; then PREV=""; fi
+  fail "could not publish the pack to $OUT/${PREV:+ — WARNING: the previous pack is still in $PREV, move it back by hand}"
+fi
 PACK=""
+
+# Only now is the old pack redundant. A .review.prev.* left by an earlier crash is deliberately
+# NOT swept up here: it may be the only complete pack on disk, and deleting it would be exactly
+# the failure this sequence exists to prevent. Remove it by hand once you have looked at it.
+if [[ -n "$PREV" ]]; then rm -rf "$PREV"; fi
 
 echo "$PROG: wrote $OUT/ — $BASE_REF..$BRANCH @ $(printf '%s' "$HEAD_SHA" | cut -c1-7)"
 echo "  $(wc -l < "$OUT/COMMITS.txt" | tr -d ' ') commit(s), $(grep -c '' "$OUT/FILES.txt" | tr -d ' ') file(s) changed, verify exit $VERIFY_EXIT"

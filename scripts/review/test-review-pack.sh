@@ -148,6 +148,19 @@ if ! grep -q '](\.\./' "$R/.review/REVIEW.md" 2>/dev/null; then
 if grep -q 'head_sha' "$R/.review/REVIEW.md" 2>/dev/null; then
   ok "prefixes an evidence header"; else bad "prefixes an evidence header"; fi
 
+echo "make-review-pack.sh — STATUS.txt carries no untracked filename"
+# A filename is user content. With the tracked tree forced equal to HEAD, a `git status`
+# listing here would be nothing BUT untracked names, and the deny-pattern scan does not reach
+# STATUS.txt — so a stray working file named after a member would have ridden into the pack.
+R="$(newrepo)"
+commit_file "$R" "parking-system/lib/m.ts" "export const m = 1"
+printf 'x\n' > "$R/should-not-appear-in-status.csv"
+run_pack "$R" >/dev/null 2>&1
+if ! grep -q 'should-not-appear-in-status' "$R/.review/STATUS.txt" 2>/dev/null; then
+  ok "an untracked filename does not reach STATUS.txt"; else bad "an untracked filename does not reach STATUS.txt"; fi
+if grep -q 'untracked files: 1' "$R/.review/STATUS.txt" 2>/dev/null; then
+  ok "STATUS.txt reports the untracked count instead"; else bad "STATUS.txt reports the untracked count instead"; fi
+
 echo "make-review-pack.sh — the tree that is verified must be the tree that is packed"
 R="$(newrepo)"
 commit_file "$R" "parking-system/lib/a.ts" "export const a = 1"
@@ -207,6 +220,34 @@ commit_file "$R" "parking-system/lib/g.ts" "export const g = 1"
 if cmp -s "$TMP/before.json" "$R/.review/manifest.json"; then
   ok ".review/ is left untouched by a failed run"; else bad ".review/ is left untouched by a failed run"; fi
 
+echo "make-review-pack.sh — publishing never destroys the pack it is replacing"
+# Publishing a directory cannot be one atomic step, so the question is what survives an
+# interrupt between the steps. `rm -rf .review && mv` answers "nothing": the old evidence is
+# destroyed to make room for evidence that never arrives. The seam below is the only way to
+# exercise the rollback without a misbehaving filesystem.
+R="$(newrepo)"
+commit_file "$R" "parking-system/lib/n.ts" "export const n = 1"
+run_pack "$R" >/dev/null 2>&1
+cp "$R/.review/manifest.json" "$TMP/keep.json"
+commit_file "$R" "parking-system/lib/o.ts" "export const o = 1"
+OUT="$(cd "$R" && REVIEW_PACK_SIMULATE_PUBLISH_FAILURE=1 bash "$SCRIPT" --base main 2>&1)"; RC=$?
+if [[ $RC -ne 0 ]]; then ok "a failed publish fails the run"; else bad "a failed publish fails the run (got 0)"; fi
+if cmp -s "$TMP/keep.json" "$R/.review/manifest.json"; then
+  ok "the previous pack is restored, not lost"; else bad "the previous pack is restored, not lost"; fi
+if ! compgen -G "$R/.review.prev.*" >/dev/null 2>&1; then
+  ok "rollback leaves no .review.prev.*"; else bad "rollback leaves no .review.prev.*"; fi
+if has_failed "$R"; then ok "the failed attempt is still kept as .review-FAILED-*"; else bad "the failed attempt is still kept as .review-FAILED-*"; fi
+
+R="$(newrepo)"
+commit_file "$R" "parking-system/lib/p.ts" "export const p = 1"
+run_pack "$R" >/dev/null 2>&1
+commit_file "$R" "parking-system/lib/q.ts" "export const q = 1"
+run_pack "$R" >/dev/null 2>&1
+if grep -q 'lib/q.ts' "$R/.review/FILES.txt" 2>/dev/null; then
+  ok "a successful re-publish replaces the old pack"; else bad "a successful re-publish replaces the old pack"; fi
+if ! compgen -G "$R/.review.prev.*" >/dev/null 2>&1; then
+  ok "a successful re-publish leaves no .review.prev.*"; else bad "a successful re-publish leaves no .review.prev.*"; fi
+
 echo "make-review-pack.sh — secret / PII scan"
 
 # The planted values are assembled at runtime, so no line of THIS file matches
@@ -251,6 +292,18 @@ commit_file "$R" "parking-system/lib/i.ts" "const k = '$FAKE_ECHO_PROBE'"
 OUT="$(run_pack "$R")"
 if ! grep -qF -- "$FAKE_ECHO_PROBE" <<<"$OUT"; then
   ok "the matched line is never echoed"; else bad "the matched line is never echoed"; fi
+
+# The scan reason is the only multi-line failure reason the script produces (one line per
+# matching pattern, plus a leading newline), so it is the one that broke a line-oriented
+# escaper. The pack for the most safety-relevant failure was the one with an unparseable
+# manifest — and the earlier JSON check only ever ran on a single-line verify failure.
+FDIR="$(compgen -G "$R/.review-FAILED-*" | head -1)"
+if [[ -n "$FDIR" ]] && valid_json "$FDIR/manifest.json"; then
+  ok "a multi-line scan reason still yields valid JSON"; else bad "a multi-line scan reason still yields valid JSON"; fi
+if grep -q '"failed_stage": "scan"' "$FDIR/manifest.json" 2>/dev/null; then
+  ok "FAILED manifest names the scan stage"; else bad "FAILED manifest names the scan stage"; fi
+if ! grep -qF -- "$FAKE_ECHO_PROBE" "$FDIR/manifest.json" 2>/dev/null; then
+  ok "the matched value never reaches the manifest either"; else bad "the matched value never reaches the manifest either"; fi
 
 echo "make-review-pack.sh — editing the pattern file trips its own scanner"
 R="$(newrepo)"

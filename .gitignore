@@ -20,6 +20,9 @@
 .review/
 .review.tmp.*/
 .review-FAILED-*/
+# The pack being replaced, kept until the new one is in place. Normally exists for
+# milliseconds; after a crash it may be the only complete pack left, so nothing sweeps it up.
+.review.prev.*/
 
 # stray phone photos at repo root (not source)
 /*.heic
