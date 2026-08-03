@@ -61,6 +61,19 @@ newpacked() {
 # run_check <repo> [args...] -> prints output, returns exit code
 run_check() { local d="$1"; shift; ( cd "$d" && bash "$CHECK" "$@" ) 2>&1; }
 
+# edit_manifest <repo> <js statements over `m`>
+# Rewrites through JSON.parse/stringify, so the result is pretty-printed with the artifacts array
+# spread over several lines. That is deliberate: it is also valid JSON, and every case below now
+# runs against a manifest whose formatting differs from the generator's.
+edit_manifest() {
+  node -e '
+    const fs = require("fs"), p = process.argv[1];
+    const m = JSON.parse(fs.readFileSync(p, "utf8"));
+    (new Function("m", process.argv[2]))(m);
+    fs.writeFileSync(p, JSON.stringify(m, null, 2));
+  ' "$1/.review/manifest.json" "$2"
+}
+
 # assert_void <desc> <repo> <line-fragment>
 assert_void() {
   local desc="$1" d="$2" frag="$3"
@@ -107,8 +120,7 @@ printf 'x' >> "$R/.review/DIFF.patch"
 assert_void "a tampered artifact" "$R" "artifact checksums verified"
 
 R="$(newpacked)"
-sed 's/"status": "complete"/"status": "failed"/' "$R/.review/manifest.json" > "$R/.review/m.tmp" \
-  && mv "$R/.review/m.tmp" "$R/.review/manifest.json"
+edit_manifest "$R" 'm.status = "failed";'
 assert_void "a pack that is not complete" "$R" "pack status is complete"
 
 # An orphan commit is a base that cannot be an ancestor of HEAD — the shape a history rewrite
@@ -116,8 +128,7 @@ assert_void "a pack that is not complete" "$R" "pack status is complete"
 # not self-checksummed, and pretending otherwise is what §9 of the protocol says out loud.
 R="$(newpacked)"
 ORPHAN="$( cd "$R" && git commit-tree "$(git rev-parse 'HEAD^{tree}')" -m orphan </dev/null )"
-sed "s/\"base_sha\": \"[0-9a-f]*\"/\"base_sha\": \"$ORPHAN\"/" "$R/.review/manifest.json" > "$R/.review/m.tmp" \
-  && mv "$R/.review/m.tmp" "$R/.review/manifest.json"
+edit_manifest "$R" "m.repo.base_sha = '$ORPHAN';"
 assert_void "a base that is no longer an ancestor" "$R" "still an ancestor"
 
 R="$(newpacked)"
@@ -146,27 +157,53 @@ if grep -q 'RESULT: WARN' <<<"$OUT"; then ok "a moved base_ref warns"; else bad 
 if grep -E 'base_ref unmoved since the pack +WARN' <<<"$OUT" >/dev/null; then
   ok "the warning names base_ref"; else bad "the warning names base_ref"; fi
 
+# A real schema-1 manifest, not a schema-2 one with the number changed: it has neither the
+# checksums nor the invocation record. Both absences have to surface, and neither may be read as
+# reassurance. An earlier version of this test only edited the version number, which is why the
+# waiver line went on claiming PASS for a pack that could not possibly know.
 R="$(newpacked)"
-sed 's/"schema_version": 2/"schema_version": 1/' "$R/.review/manifest.json" > "$R/.review/m.tmp" \
-  && mv "$R/.review/m.tmp" "$R/.review/manifest.json"
+edit_manifest "$R" 'm.schema_version = 1; delete m.artifact_sha256; delete m.invocation;'
 OUT="$(run_check "$R")"; RC=$?
 if [[ $RC -eq 0 ]] && grep -E 'artifact checksums verified +WARN' <<<"$OUT" >/dev/null; then
   ok "a pack predating checksums warns instead of voiding"; else bad "a pack predating checksums warns (rc=$RC)"; fi
+if grep -E 'secret scan fully applied +WARN +UNKNOWN' <<<"$OUT" >/dev/null; then
+  ok "an unrecorded waiver reports UNKNOWN, never PASS"; else bad "an unrecorded waiver reports UNKNOWN, never PASS"; fi
+if grep -q 'RESULT: WARN' <<<"$OUT"; then
+  ok "a schema-1 pack lands on WARN overall"; else bad "a schema-1 pack lands on WARN overall"; fi
 
 R="$(newpacked)"
-sed 's/"allow_pattern_file_change": false/"allow_pattern_file_change": true/' "$R/.review/manifest.json" > "$R/.review/m.tmp" \
-  && mv "$R/.review/m.tmp" "$R/.review/manifest.json"
+edit_manifest "$R" 'm.invocation.allow_pattern_file_change = true;'
 OUT="$(run_check "$R")"; RC=$?
 if [[ $RC -eq 0 ]] && grep -E 'secret scan fully applied +WARN' <<<"$OUT" >/dev/null; then
   ok "a waived pattern-file scan is surfaced as a warning"; else bad "a waived pattern-file scan is surfaced (rc=$RC)"; fi
 
 echo "check-review-workspace.sh — stacked base is stated, not assumed"
 R="$(newpacked)"
-sed 's/"base_ref": "main"/"base_ref": "chore\/parent-slice"/' "$R/.review/manifest.json" > "$R/.review/m.tmp" \
-  && mv "$R/.review/m.tmp" "$R/.review/manifest.json"
+edit_manifest "$R" 'm.repo.base_ref = "chore/parent-slice";'
 OUT="$(run_check "$R")"
 if grep -q 'stacked review.*chore/parent-slice.*NOT main' <<<"$OUT"; then
   ok "a non-main base is called out"; else bad "a non-main base is called out"; fi
+
+echo "check-review-workspace.sh — the manifest is read as JSON, not as text"
+# The parser used to be grep and awk, which coupled the check to the generator's line breaks and
+# truncated any value at the first JSON escape. These are the shapes that silently misread.
+R="$(newpacked)"
+edit_manifest "$R" 'm.artifacts = m.artifacts.slice();'   # re-emitted multi-line by JSON.stringify
+OUT="$(run_check "$R")"; RC=$?
+if [[ $RC -eq 0 ]] && grep -E 'artifact checksums verified +PASS +7/7' <<<"$OUT" >/dev/null; then
+  ok "a multi-line artifacts array is still read"; else bad "a multi-line artifacts array is still read (rc=$RC)"; fi
+
+R="$(newpacked)"
+edit_manifest "$R" 'm.repo.base_ref = String.fromCharCode(102,111,111,34,98,97,114);'
+OUT="$(run_check "$R")"
+if grep -q 'stacked review.*foo"bar' <<<"$OUT"; then
+  ok "a base_ref containing a quote survives the round trip"; else bad "a base_ref containing a quote survives the round trip"; fi
+
+R="$(newpacked)"
+printf 'not json at all\n' > "$R/.review/manifest.json"
+OUT="$(run_check "$R")"; RC=$?
+if [[ $RC -eq 1 ]] && grep -E 'manifest is parseable +VOID' <<<"$OUT" >/dev/null; then
+  ok "an unparseable manifest voids"; else bad "an unparseable manifest voids (rc=$RC)"; fi
 
 echo "check-review-workspace.sh — argument handling"
 R="$(newpacked)"

@@ -73,7 +73,7 @@ scripts/review/check-review-workspace.sh --phase post     # 輸出貼進 finding
 | 結果 | 意思 |
 |---|---|
 | `VOID` | 這次審查不算數：HEAD 不符、工作樹不乾淨、artifact checksum 不符、ancestry 被改寫、工作區有 secret env 檔、pack 不是 complete |
-| `WARN` | 可以審，但要把警告帶進 findings：`base_ref` 移動過、pack 是舊 schema 沒有 checksum、pack 用了 `--allow-pattern-file-change`（部分掃描被放行） |
+| `WARN` | 可以審，但要把警告帶進 findings：`base_ref` 移動過、artifact 沒有 checksum（舊 pack）、pack 用了 `--allow-pattern-file-change`（部分掃描被放行）、**或無從得知有沒有用**（舊 pack 沒有記 invocation——這時報 `UNKNOWN`，不會報 PASS） |
 | `OK` | 沒有明顯問題——不等於沒有問題，見第 2 節 |
 
 ## 5. base 一律從 manifest 讀
@@ -114,4 +114,7 @@ gitignored，**不會被 commit**——它是關於某個 commit 的對話，不
 - **`--allow-pattern-file-change` 會放行部分秘密掃描。** manifest 的 `invocation` 有記，`check-review-workspace.sh` 會給 WARN，`REVIEW.md` 表格也會顯示。用了就要在 findings 講明白。
 - **`npm run verify` 不涵蓋 `scripts/review/` 的 shell 測試與 ShellCheck。** 那兩項只在 `app-ci.yml` 的 `review-pack` job 跑，而該 job 在 GitHub 帳號恢復前一次都沒執行過。packet 不含它們的結果，要另外本機跑並寫進 findings。
 - **checksum 防的是誤改，不是偽造。** 能改 artifact 的人也能改 manifest。要防後者需要簽章（signing），那是另一個威脅模型，目前刻意不做。
+- **checksum 只存在於 `status: complete` 的 pack。** 失敗的 pack 不寫——對半寫完的 artifact 算雜湊，會把截斷的內容包裝成「已驗證」。所以欄位缺少不代表解析出錯。失敗的 pack 本來也不是證據（checker 一律 VOID）。
+- **`schema_version: 1` 的舊 pack 同時缺兩樣東西**：artifact checksum，以及 `--allow-pattern-file-change` 有沒有被用過的紀錄。checker 對後者報 `UNKNOWN` 而不是 PASS——對無從得知的事情給肯定答案，正是這套流程要抓的錯誤型態。要完整證據就重產一次 pack。
+- **`check-review-workspace.sh` 需要 `node`**（只用來 `JSON.parse` manifest，不需要 `node_modules`）。找不到 `node` 就 VOID，不會退回文字解析——退回去正是誤讀的來源。反正產得出 pack 的機器一定有 node。
 - **秘密掃描認得的是已知形狀，不是 PII。** 沒有任何 regex 認得出一個真實會友的名字。真正的控制是建構式的：packet 只包含腳本自己產生的內容。

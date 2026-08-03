@@ -78,26 +78,66 @@ cd "$REPO_ROOT" || { echo "RESULT: VOID"; exit 1; }
 
 MANIFEST=".review/manifest.json"
 
-# The manifest is written by the sibling script with fixed formatting, so it is read with grep
-# and awk rather than jq or python. A reviewer must be able to run this on whatever machine they
-# have; adding a dependency to the one script whose job is to be runnable is the wrong trade.
-m_str()  { grep -o "\"$1\": *\"[^\"]*\"" "$MANIFEST" 2>/dev/null | head -1 | sed 's/.*: *"//; s/"$//'; }
-m_raw()  { grep -o "\"$1\": *[a-z0-9]*" "$MANIFEST" 2>/dev/null | head -1 | awk '{print $2}'; }
-m_hash() { awk -v k="\"$1\":" '$1 == k { gsub(/[",]/, "", $2); print $2; exit }' "$MANIFEST" 2>/dev/null; }
-
 if [[ ! -r "$MANIFEST" ]]; then
   void "pack manifest is readable" "$MANIFEST missing — nothing to review against"
   echo "RESULT: VOID"
   exit 1
 fi
 
-STATUS="$(m_str status)"
-SCHEMA="$(m_raw schema_version)"
-HEAD_SHA="$(m_str head_sha)"
-BASE_SHA="$(m_str base_sha)"
-BASE_REF="$(m_str base_ref)"
-MERGE_BASE_SHA="$(m_str merge_base_sha)"
-WAIVED="$(m_raw allow_pattern_file_change)"
+# The manifest is JSON, so it is parsed as JSON. An earlier version read it with grep and awk to
+# keep the script dependency-free; that bought nothing real — `node` is already required to build
+# a pack — and it cost a class of silent misreads: the parse was coupled to the generator's line
+# breaks, it mangled any artifact name containing a space, and it truncated a base_ref at the
+# first JSON escape (a branch may legally be named `foo"bar`). A checker whose output decides
+# whether a review counts must not have inputs it quietly gets wrong.
+#
+# One node call, emitting TSV. No value can contain a tab or a newline: git refs forbid control
+# characters, and the artifact names come from a fixed list in the generator.
+if ! command -v node >/dev/null; then
+  void "manifest is parseable" "node not found — this pack cannot be verified here"
+  echo "RESULT: VOID"
+  exit 1
+fi
+
+MANIFEST_TSV="$(node -e '
+const fs = require("fs");
+let m;
+try { m = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch (e) { process.exit(3); }
+if (m === null || typeof m !== "object") process.exit(3);
+const repo = m.repo || {}, inv = m.invocation || {}, hashes = m.artifact_sha256 || {};
+const p = (k, v) => console.log(k + "\t" + (v === undefined || v === null ? "" : String(v)));
+p("status", m.status);
+p("schema_version", m.schema_version);
+p("head_sha", repo.head_sha);
+p("base_sha", repo.base_sha);
+p("base_ref", repo.base_ref);
+p("merge_base_sha", repo.merge_base_sha);
+// Absent is not the same as false. A pack built before the waiver was recorded cannot tell us
+// either way, and saying "unknown" is the whole point of this line.
+p("waiver", "allow_pattern_file_change" in inv ? inv.allow_pattern_file_change : "unknown");
+for (const a of (Array.isArray(m.artifacts) ? m.artifacts : [])) {
+  console.log("artifact\t" + a + "\t" + (hashes[a] || ""));
+}
+' "$MANIFEST" 2>/dev/null)"
+
+if [[ -z "$MANIFEST_TSV" ]]; then
+  void "manifest is parseable" "not valid JSON, or not a review manifest"
+  echo "RESULT: VOID"
+  exit 1
+fi
+
+STATUS=""; SCHEMA=""; HEAD_SHA=""; BASE_SHA=""; BASE_REF=""; MERGE_BASE_SHA=""; WAIVED=""
+while IFS=$'\t' read -r key val _rest; do
+  case "$key" in
+    status)         STATUS="$val" ;;
+    schema_version) SCHEMA="$val" ;;
+    head_sha)       HEAD_SHA="$val" ;;
+    base_sha)       BASE_SHA="$val" ;;
+    base_ref)       BASE_REF="$val" ;;
+    merge_base_sha) MERGE_BASE_SHA="$val" ;;
+    waiver)         WAIVED="$val" ;;
+  esac
+done <<< "$MANIFEST_TSV"
 
 MANIFEST_SHA="$(if command -v sha256sum >/dev/null; then sha256sum "$MANIFEST"; else shasum -a 256 "$MANIFEST"; fi | awk '{print $1}')"
 
@@ -134,26 +174,28 @@ else
 fi
 
 # ── artifact checksums ──────────────────────────────────────────────────────────
-if [[ ! "$SCHEMA" =~ ^[0-9]+$ || "$SCHEMA" -lt 2 ]]; then
-  warn "artifact checksums verified" "pack is schema_version ${SCHEMA:-?}, predates checksums — cannot verify"
+# Graded on what the manifest actually carries rather than on its schema number: an artifact
+# with no recorded hash is unverifiable whatever version the pack calls itself.
+bad_files=""
+checked=0
+unhashed=0
+while IFS=$'\t' read -r key name want; do
+  [[ "$key" == "artifact" ]] || continue
+  checked=$((checked+1))
+  if [[ -z "$want" ]]; then unhashed=$((unhashed+1)); continue; fi
+  if [[ ! -r ".review/$name" ]]; then bad_files="$bad_files $name(missing)"; continue; fi
+  got="$(if command -v sha256sum >/dev/null; then sha256sum ".review/$name"; else shasum -a 256 ".review/$name"; fi | awk '{print $1}')"
+  [[ "$want" == "$got" ]] || bad_files="$bad_files $name"
+done <<< "$MANIFEST_TSV"
+
+if [[ $checked -eq 0 ]]; then
+  void "artifact checksums verified" "no artifacts listed in the manifest"
+elif [[ -n "$bad_files" ]]; then
+  void "artifact checksums verified" "mismatch:$bad_files"
+elif [[ $unhashed -gt 0 ]]; then
+  warn "artifact checksums verified" "$unhashed of $checked carry no hash (schema ${SCHEMA:-?} predates them) — cannot verify"
 else
-  bad_files=""
-  checked=0
-  while IFS= read -r a; do
-    [[ -n "$a" ]] || continue
-    checked=$((checked+1))
-    want="$(m_hash "$a")"
-    if [[ ! -r ".review/$a" ]]; then bad_files="$bad_files $a(missing)"; continue; fi
-    got="$(if command -v sha256sum >/dev/null; then sha256sum ".review/$a"; else shasum -a 256 ".review/$a"; fi | awk '{print $1}')"
-    [[ "$want" == "$got" ]] || bad_files="$bad_files $a"
-  done < <(grep -o '"artifacts": \[[^]]*\]' "$MANIFEST" | sed 's/.*\[//; s/\]//' | tr ',' '\n' | tr -d ' "')
-  if [[ $checked -eq 0 ]]; then
-    void "artifact checksums verified" "no artifacts listed in the manifest"
-  elif [[ -z "$bad_files" ]]; then
-    pass "artifact checksums verified" "$checked/$checked"
-  else
-    void "artifact checksums verified" "mismatch:$bad_files"
-  fi
+  pass "artifact checksums verified" "$checked/$checked"
 fi
 
 # ── confidentiality (narrow: see the header) ────────────────────────────────────
@@ -179,11 +221,14 @@ if [[ -n "$BASE_REF" ]]; then
   fi
 fi
 
-if [[ "$WAIVED" == "true" ]]; then
-  warn "secret scan fully applied" "built with --allow-pattern-file-change — part of the scan was waived"
-else
-  pass "secret scan fully applied"
-fi
+# "Absent" gets its own answer. A pack built before the waiver was recorded cannot show whether
+# --allow-pattern-file-change was used, and reporting PASS there would be an affirmative claim
+# about something unknowable — the exact failure mode this protocol exists to catch elsewhere.
+case "$WAIVED" in
+  true)  warn "secret scan fully applied" "built with --allow-pattern-file-change — part of the scan was waived" ;;
+  false) pass "secret scan fully applied" ;;
+  *)     warn "secret scan fully applied" "UNKNOWN — pack predates waiver recording (schema ${SCHEMA:-?}); the waiver cannot be ruled out" ;;
+esac
 
 if [[ -n "$BASE_REF" && "$BASE_REF" != "main" ]]; then
   info "stacked review" "base is $BASE_REF @ ${BASE_SHA:0:12} — NOT main"
