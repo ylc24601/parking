@@ -140,6 +140,24 @@ if [[ "$(grep -o '"merge_base_sha": "[0-9a-f]*"' "$R/.review/manifest.json" | cu
 # Temp dirs must not survive a successful run.
 if ! compgen -G "$R/.review.tmp.*" >/dev/null 2>&1; then ok "no leftover .review.tmp.*"; else bad "no leftover .review.tmp.*"; fi
 
+echo "make-review-pack.sh — the manifest is checkable after the fact"
+# Naming the artifacts proved only that files with those names existed. A reviewer needs to be
+# able to show that the DIFF.patch in front of them is the one that was verified.
+if grep -q '"schema_version": 2' "$R/.review/manifest.json" 2>/dev/null; then
+  ok "manifest is schema_version 2"; else bad "manifest is schema_version 2"; fi
+if command -v sha256sum >/dev/null; then D_SHA="$(sha256sum "$R/.review/DIFF.patch" | awk '{print $1}')"
+else D_SHA="$(shasum -a 256 "$R/.review/DIFF.patch" | awk '{print $1}')"; fi
+if grep -qF "\"DIFF.patch\": \"$D_SHA\"" "$R/.review/manifest.json" 2>/dev/null; then
+  ok "artifact_sha256 matches the file on disk"; else bad "artifact_sha256 matches the file on disk"; fi
+if [[ "$(grep -c '": "[0-9a-f]\{64\}"' "$R/.review/manifest.json")" -eq 7 ]]; then
+  ok "every artifact is checksummed"; else bad "every artifact is checksummed"; fi
+# --allow-pattern-file-change waives part of the secret scan. A reviewer who cannot see that in
+# the evidence is reading a pack whose guarantees are weaker than the header claims.
+if grep -q '"allow_pattern_file_change": false' "$R/.review/manifest.json" 2>/dev/null; then
+  ok "manifest records that the scan was not waived"; else bad "manifest records that the scan was not waived"; fi
+if grep -qF '"argv": ["--base", "main"]' "$R/.review/manifest.json" 2>/dev/null; then
+  ok "manifest records how the pack was asked for"; else bad "manifest records how the pack was asked for"; fi
+
 echo "make-review-pack.sh — REVIEW.md comes from the one canonical template"
 if grep -q 'A — old app + new DB' "$R/.review/REVIEW.md" 2>/dev/null; then
   ok "carries the A/B/R section verbatim"; else bad "carries the A/B/R section verbatim"; fi
@@ -202,6 +220,9 @@ if valid_json "$FDIR/manifest.json"; then
 if grep -q '"failed_stage": "verify"' "$FDIR/manifest.json" 2>/dev/null; then
   ok "FAILED manifest names the stage"; else bad "FAILED manifest names the stage"; fi
 if [[ -s "$FDIR/logs/verify.log" ]]; then ok "FAILED pack still carries the verify log"; else bad "FAILED pack still carries the verify log"; fi
+# A checksum over a half-written artifact would look like verification and certify the truncation.
+if ! grep -q 'artifact_sha256' "$FDIR/manifest.json" 2>/dev/null; then
+  ok "FAILED manifest carries no artifact checksums"; else bad "FAILED manifest carries no artifact checksums"; fi
 
 R="$(newrepo)"
 commit_file "$R" "parking-system/lib/e.ts" "export const e = 1"
@@ -334,6 +355,10 @@ printf '\n# added by test\nTOTALLY_FAKE_TOKEN=[a-z]+\n' >> "$R/scripts/review/de
 assert_fail "pattern-file change needs the explicit flag" "$R" "--allow-pattern-file-change"
 OUT="$(run_pack "$R" --allow-pattern-file-change)"; RC=$?
 if [[ $RC -eq 0 ]]; then ok "the flag lets a deliberate pattern edit through"; else bad "the flag lets a deliberate pattern edit through (got $RC: $(tail -2 <<<"$OUT" | tr '\n' ' '))"; fi
+if grep -q '"allow_pattern_file_change": true' "$R/.review/manifest.json" 2>/dev/null; then
+  ok "the waiver is recorded in the manifest"; else bad "the waiver is recorded in the manifest"; fi
+if grep -q 'part of the secret scan was skipped' "$R/.review/REVIEW.md" 2>/dev/null; then
+  ok "the waiver is visible in REVIEW.md too"; else bad "the waiver is visible in REVIEW.md too"; fi
 
 echo "make-review-pack.sh — argument and precondition handling"
 R="$(newrepo)"

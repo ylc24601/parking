@@ -90,3 +90,10 @@ jobs:
 
       - name: Failure-path tests (fake npm, throwaway git repos)
         run: bash scripts/review/test-review-pack.sh
+
+      # The workspace check is what makes a review verdict admissible (docs/review-protocol.md),
+      # so the grading it applies has to hold: an integrity failure must void, and a rebased base
+      # branch must NOT. Getting that backwards in either direction breaks the protocol — one
+      # way accepts reviews of the wrong commit, the other makes routine stacking void them.
+      - name: Workspace-check tests
+        run: bash scripts/review/test-check-review-workspace.sh
