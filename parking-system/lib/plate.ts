@@ -6,3 +6,39 @@
 export function normalizePlate(plate: string): string {
   return plate.toUpperCase().replace(/[^A-Z0-9]/g, '')
 }
+
+export interface PlateMatch {
+  before: string
+  match: string
+  after: string
+}
+
+// Highlight the substring of a RAW plate (e.g. 'ABC-1234') that matched a query under
+// normalizePlate() semantics. Cannot index into the raw string using normalized offsets —
+// stripped characters (like '-') shift every position after them. Instead this walks the
+// raw string once, records where each surviving (normalized) character came from, and maps
+// the normalized match window back through that record. Match test stays single-source:
+// normalizePlate(plate).includes(normalizePlate(query)) is the only definition of "matches".
+export function highlightPlateMatch(rawPlate: string, query: string): PlateMatch {
+  const normalizedPlate = normalizePlate(rawPlate)
+  const normalizedQuery = normalizePlate(query)
+  if (!normalizedQuery) return { before: rawPlate, match: '', after: '' }
+
+  const start = normalizedPlate.indexOf(normalizedQuery)
+  if (start === -1) return { before: rawPlate, match: '', after: '' }
+  const end = start + normalizedQuery.length // exclusive, in normalized-index space
+
+  // rawIndexOfNormalizedIndex[i] = index in rawPlate of the i-th surviving character.
+  const rawIndexOfNormalizedIndex: number[] = []
+  for (let i = 0; i < rawPlate.length; i++) {
+    if (/[A-Z0-9]/.test(rawPlate[i].toUpperCase())) rawIndexOfNormalizedIndex.push(i)
+  }
+
+  const rawStart = rawIndexOfNormalizedIndex[start]
+  const rawEnd = rawIndexOfNormalizedIndex[end - 1] + 1 // exclusive, in raw-index space
+  return {
+    before: rawPlate.slice(0, rawStart),
+    match: rawPlate.slice(rawStart, rawEnd),
+    after: rawPlate.slice(rawEnd),
+  }
+}

@@ -59,7 +59,7 @@
 - 形狀隨端別 treatment（§2）：Member/Staff 填色 pill、Admin outline——但**tone→顏色對映與雙編碼規則固定**。
 
 ### 1.5 Buttons
-- primary＝實色 `--color-primary` 白字；info＝blue（遞補確認/點名）；warn＝amber（補點名）；danger＝red 或 red-outline（取消/結束點名/移車警示）；ghost＝surface＋border。
+- primary＝實色 `--color-primary` 白字（主要動作，含遞補確認/點名）；warn＝amber（補點名）；danger＝red 或 red-outline（取消/結束點名/移車警示）；ghost＝surface＋border。**info 藍只用於狀態 Badge，不再作為任何端別的動作色**（2026-08-04 修訂，#39——原規則讓同一色同時代表狀態與動作，兩義不分）。
 - 高度 ≥44px、weight 700–800、圓角依端別；**focus 可見**（2px `--color-primary` outline offset 2px）；`prefers-reduced-motion` 尊重。
 
 ### 1.6 Accessibility（quality floor，三端同守）
@@ -92,7 +92,7 @@
   - walk-in → info 藍
   - priority（⭐）→ priority 紫
   - approved/未到 → neutral 灰
-- 大鈕：點名 info 藍、補點名 warn 琥珀、＋現場散客 info、結束點名 danger、請移車 priority 紫框。bottom-sheet（walk-in/settle/move-car）淺色化；PIN pad 淺色＋綠 accent。
+- 大鈕（2026-08-04 修訂，#37/#39/38a——見 `staff-action-color-and-settle.html`／`staff-move-car-entry.html`）：點名 primary 綠、＋現場散客 primary 綠、補點名維持 warning 琥珀、結束點名維持 danger（appbar 文字按鈕，非 overflow menu）、通知移車維持 priority 紫框（**已移至 footer 統一入口**，逐列按鈕已移除）。bottom-sheet（walk-in/settle/move-car/通知移車搜尋）淺色化；PIN pad 淺色＋綠 accent。
 - 保留：offline banner／undo toast／finalized 唯讀／cache／所有 fetch 邏輯。
 - 元件：`StaffCheckIn`、`StaffLogin`、`staff/print/*`。
 - **排除**：靜態「10:30/10:45 釋出」時間提示條（操作規則文案、無服務端來源）。

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { normalizePlate } from '@/lib/plate'
+import { normalizePlate, highlightPlateMatch } from '@/lib/plate'
 import { saveStaffCache, loadStaffCache, clearStaffCache, isCacheCurrent } from '@/lib/staffCache'
 import {
   type StaffRow,
@@ -94,9 +94,10 @@ export default function StaffCheckIn({
   const [walkInBusy, setWalkInBusy] = useState(false)
   const [settleOpen, setSettleOpen] = useState(false)
   const [settleBusy, setSettleBusy] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
   const [moveCarRow, setMoveCarRow] = useState<StaffRow | null>(null)
   const [moveCarBusy, setMoveCarBusy] = useState(false)
+  const [moveSearchOpen, setMoveSearchOpen] = useState(false)
+  const [moveSearchQuery, setMoveSearchQuery] = useState('')
 
   // Undo-window state lives in refs so the setTimeout never reads stale state.
   const pendingRef = useRef<{
@@ -105,9 +106,6 @@ export default function StaffCheckIn({
     prevAttendedAt: string | null
   } | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Header overflow menu (#24): the trigger keeps focus ownership so closing returns to it.
-  const menuRef = useRef<HTMLDivElement | null>(null)
-  const menuTriggerRef = useRef<HTMLButtonElement | null>(null)
   // When the shown list was last confirmed (server fetch or cache). Rendered in the
   // offline banner → must be state. Initialized from props (only read post-mount).
   const [lastUpdated, setLastUpdated] = useState<string | null>(() =>
@@ -277,26 +275,6 @@ export default function StaffCheckIn({
       ),
     )
   }
-
-  // Header menu dismissal (#24). Closing is ALWAYS just closing — neither Escape nor an
-  // outside click may run the settlement; only the menu item itself opens the confirm sheet.
-  useEffect(() => {
-    if (!menuOpen) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      setMenuOpen(false)
-      menuTriggerRef.current?.focus()
-    }
-    const onPointer = (e: PointerEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('keydown', onKey)
-    document.addEventListener('pointerdown', onPointer)
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      document.removeEventListener('pointerdown', onPointer)
-    }
-  }, [menuOpen])
 
   // "Latest callback" refs so the timer / window listeners use current state.
   const commitRef = useRef(commitPending)
@@ -486,6 +464,39 @@ export default function StaffCheckIn({
     setMoveCarRow(r)
   }
 
+  // 通知移車 unified entry (38a). Only ever reaches vehicles already on this week's list —
+  // it is NOT a cross-week vehicle lookup (that's #38b, gated on #6A, still Deferred).
+  function openMoveSearch() {
+    if (settleBusy || finalized) return
+    setMoveSearchQuery('')
+    setMoveSearchOpen(true)
+  }
+
+  // At most one bottom sheet is ever open: every transition out of the search sheet closes
+  // it (and clears the query, so reopening always starts blank) BEFORE opening the next one.
+  function closeMoveSearch() {
+    setMoveSearchOpen(false)
+    setMoveSearchQuery('')
+  }
+
+  function selectMoveCandidate(r: StaffRow) {
+    if (!r.owner_notifiable) return
+    closeMoveSearch() // close this sheet first — openMoveCar() opens the next one
+    openMoveCar(r)
+  }
+
+  function moveSearchToWalkIn() {
+    const plate = moveSearchQuery // capture before closeMoveSearch() clears it
+    closeMoveSearch()
+    openWalkIn(plate)
+  }
+
+  const moveCandidates = useMemo(() => {
+    const q = normalizePlate(moveSearchQuery)
+    if (!q) return []
+    return rows.filter(r => normalizePlate(rowPlate(r)).includes(q))
+  }, [rows, moveSearchQuery])
+
   async function submitMoveCar() {
     const r = moveCarRow
     if (!r || moveCarBusy || settleBusy || finalized) return
@@ -551,41 +562,17 @@ export default function StaffCheckIn({
             >
               🔄
             </button>
-            {/* Overflow menu (#24): holds the irreversible end-of-service settlement, away from
-                the thumb zone. The item is a real <button disabled> — when disabled it cannot open
-                the confirm sheet at all, not merely look inactive. */}
-            <div ref={menuRef} className="relative">
-              <button
-                ref={menuTriggerRef}
-                type="button"
-                onClick={() => setMenuOpen(o => !o)}
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                aria-label="更多操作"
-                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-lg text-white/90 transition-colors active:bg-black/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary-deep"
-              >
-                ⋯
-              </button>
-              {menuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-full z-20 mt-1 w-52 overflow-hidden rounded-xl border border-border bg-surface py-1 shadow-lg"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={!event || finalized || settleBusy || offline}
-                    onClick={() => {
-                      setMenuOpen(false) // close first, then hand over to the existing confirm sheet
-                      setSettleOpen(true)
-                    }}
-                    className="flex min-h-11 w-full items-center px-4 text-left text-sm font-medium text-danger-fg transition-colors active:bg-danger-bg disabled:cursor-not-allowed disabled:text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-                  >
-                    ✔ 結束當週點名
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* Irreversible end-of-service settlement (#37): a labelled button, not hidden behind
+                an overflow menu — it sits in the top-right corner, away from the thumb zone where
+                footer taps happen, so #24's anti-mis-tap intent holds without needing a menu. */}
+            <button
+              type="button"
+              disabled={!event || finalized || settleBusy || offline}
+              onClick={() => setSettleOpen(true)}
+              className="inline-flex min-h-11 items-center rounded-lg border border-white/55 px-2.5 text-sm font-semibold text-white transition-colors active:bg-black/15 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-primary-deep"
+            >
+              結束點名
+            </button>
             <button
               type="button"
               onClick={logout}
@@ -608,7 +595,7 @@ export default function StaffCheckIn({
           inputMode="numeric"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="🔍 輸入車牌後四碼…"
+          placeholder="🔍 輸入車牌任意數字…"
           className="mt-3 h-12 w-full rounded-xl bg-white px-4 text-base text-ink placeholder:text-muted outline-none focus:ring-2 focus:ring-primary"
         />
 
@@ -660,7 +647,7 @@ export default function StaffCheckIn({
                 <button
                   type="button"
                   onClick={() => openWalkIn(query)}
-                  className="mt-4 h-12 rounded-xl bg-info-fg px-5 text-base font-semibold text-white transition-colors active:bg-info-fg/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                  className="mt-4 h-12 rounded-xl bg-primary px-5 text-base font-semibold text-white transition-colors active:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 >
                   ＋ 登記為現場車輛
                 </button>
@@ -704,22 +691,12 @@ export default function StaffCheckIn({
                         onClick={() => tapCheckIn(r)}
                         disabled={finalized}
                         className={`h-12 rounded-xl px-5 text-base font-semibold text-white transition-colors disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
-                          released ? 'bg-warning-fg active:bg-warning-fg/90' : 'bg-info-fg active:bg-info-fg/90'
+                          released ? 'bg-warning-fg active:bg-warning-fg/90' : 'bg-primary active:bg-primary/90'
                         }`}
                       >
                         {released ? '補點名' : '點名'}
                       </button>
                     )}
-                    {/* 請車主移車 — OA push. Disabled for walk-ins / owners without a LINE binding. */}
-                    <button
-                      type="button"
-                      onClick={() => openMoveCar(r)}
-                      disabled={finalized || settleBusy || !r.owner_notifiable}
-                      title={r.owner_notifiable ? undefined : '此車主未綁定 LINE，無法通知'}
-                      className="inline-flex min-h-11 items-center rounded-lg border border-priority-fg/40 px-3 text-sm font-medium text-priority-fg transition-colors active:bg-priority-bg disabled:opacity-30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-                    >
-                      請移車
-                    </button>
                   </div>
                 </li>
               )
@@ -728,18 +705,30 @@ export default function StaffCheckIn({
         )}
       </section>
 
-      {/* Thumb zone holds ONLY the high-frequency action. Printing moved to /admin/print (#23);
-          the irreversible end-of-service settlement moved to the header menu (#24) so it can't be
-          hit by mistake while reaching for 登記現場車輛. */}
+      {/* Thumb zone holds ONLY the two high-frequency actions. Printing moved to /admin/print
+          (#23); the irreversible end-of-service settlement moved to an appbar button (#37) so
+          it can't be hit by mistake while reaching for either of these. */}
       <footer className="border-t border-border bg-surface px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
-        <button
-          type="button"
-          onClick={() => openWalkIn()}
-          disabled={finalized}
-          className="h-12 w-full rounded-xl bg-info-fg text-base font-semibold text-white transition-colors active:bg-info-fg/90 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-        >
-          ＋ 登記現場車輛
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => openWalkIn()}
+            disabled={finalized}
+            className="h-12 flex-1 rounded-xl bg-primary text-base font-semibold text-white transition-colors active:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
+            ＋ 登記現場車輛
+          </button>
+          {/* 通知移車 (38a): unified entry point — plate search over the on-site list, replacing
+              the old per-row button. Only reaches vehicles already on this week's list. */}
+          <button
+            type="button"
+            onClick={openMoveSearch}
+            disabled={finalized || settleBusy}
+            className="h-12 shrink-0 rounded-xl border border-priority-fg/40 px-4 text-base font-semibold text-priority-fg transition-colors active:bg-priority-bg disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          >
+            🚗 通知移車
+          </button>
+        </div>
       </footer>
 
       {walkInOpen && (
@@ -823,6 +812,93 @@ export default function StaffCheckIn({
                 className="h-12 flex-1 rounded-xl bg-danger-fg text-base font-semibold text-white transition-colors active:bg-danger-fg/90 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 {settleBusy ? '結算中…' : '確認結束'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 通知移車 search sheet (38a). Mutually exclusive with moveCarRow/walkInOpen — every
+          transition below closes this sheet before opening the next one (see
+          selectMoveCandidate / moveSearchToWalkIn), so at most one bottom sheet is ever up. */}
+      {moveSearchOpen && (
+        <div className="fixed inset-0 z-20 flex flex-col justify-end bg-black/50">
+          <button
+            type="button"
+            aria-label="關閉"
+            className="flex-1"
+            onClick={closeMoveSearch}
+          />
+          <div className="mx-auto flex max-h-[calc(100dvh-env(safe-area-inset-top))] w-full max-w-md flex-col overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-surface px-4 pt-4 pb-[calc(env(safe-area-inset-bottom)+1.5rem)]">
+            <h2 className="text-lg font-bold">通知移車</h2>
+            <input
+              autoFocus
+              inputMode="numeric"
+              value={moveSearchQuery}
+              onChange={e => setMoveSearchQuery(e.target.value)}
+              placeholder="輸入車牌任意數字…"
+              className="mt-3 h-12 w-full rounded-xl border border-border bg-surface px-4 font-mono text-lg tracking-wide text-ink placeholder:font-sans placeholder:text-base placeholder:tracking-normal placeholder:text-muted outline-none focus:border-primary focus:ring-2 focus:ring-primary/30"
+            />
+
+            {moveSearchQuery.trim() === '' ? null : moveCandidates.length === 0 ? (
+              <div className="mt-4 rounded-xl border border-dashed border-border p-3 text-center">
+                <p className="text-sm font-semibold">本週清單中沒有含「{moveSearchQuery}」的車牌</p>
+                <p className="mt-1.5 text-xs text-muted">
+                  這裡只找得到本週已核准與已登記的現場車輛。若是訪客或沒登記就開進來的車，目前無法從系統查到車主。
+                </p>
+                <button
+                  type="button"
+                  onClick={moveSearchToWalkIn}
+                  className="mt-3 h-11 rounded-lg bg-primary px-4 text-sm font-semibold text-white transition-colors active:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                >
+                  ＋ 登記為現場車輛
+                </button>
+              </div>
+            ) : (
+              <ul className="mt-3 flex flex-col gap-2">
+                {moveCandidates.map(r => {
+                  const { before, match, after } = highlightPlateMatch(rowPlate(r), moveSearchQuery)
+                  return (
+                    <li
+                      key={r.reservation_id}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-border p-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-mono text-base tracking-wide">
+                          {before}
+                          <mark className="rounded-sm bg-warning-bg text-warning-fg">{match}</mark>
+                          {after}
+                        </p>
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          {r.is_priority && <Badge tone="priority">⭐ 優先</Badge>}
+                          {isWalkIn(r) && <Badge tone="info">現場</Badge>}
+                          <span className="truncate text-sm font-medium">{rowName(r)}</span>
+                        </div>
+                      </div>
+                      {r.owner_notifiable ? (
+                        <button
+                          type="button"
+                          onClick={() => selectMoveCandidate(r)}
+                          className="inline-flex min-h-11 shrink-0 items-center rounded-lg border border-priority-fg/40 px-3 text-sm font-medium text-priority-fg transition-colors active:bg-priority-bg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                        >
+                          通知移車
+                        </button>
+                      ) : (
+                        <span className="shrink-0 text-xs text-muted">無法通知</span>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+
+            <div className="mt-5">
+              <button
+                type="button"
+                onClick={closeMoveSearch}
+                className="h-12 w-full rounded-xl border border-border bg-surface text-base text-ink transition-colors active:bg-border-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+              >
+                取消
               </button>
             </div>
           </div>
