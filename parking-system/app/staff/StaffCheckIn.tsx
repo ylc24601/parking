@@ -768,7 +768,7 @@ export default function StaffCheckIn({
                 type="button"
                 onClick={() => void submitWalkIn()}
                 disabled={walkInBusy || walkInPlate.trim() === ''}
-                className="h-12 flex-1 rounded-xl bg-info-fg text-base font-semibold text-white transition-colors active:bg-info-fg/90 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+                className="h-12 flex-1 rounded-xl bg-primary text-base font-semibold text-white transition-colors active:bg-primary/90 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 確認登記
               </button>

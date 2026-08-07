@@ -34,6 +34,20 @@ export function highlightPlateMatch(rawPlate: string, query: string): PlateMatch
     if (/[A-Z0-9]/.test(rawPlate[i].toUpperCase())) rawIndexOfNormalizedIndex.push(i)
   }
 
+  // The loop above is a SECOND implementation of "which characters survive
+  // normalization" — normalizePlate() uppercases the whole string, this uppercases one
+  // character at a time. They disagree wherever toUpperCase() is one-to-many:
+  // 'ß' → 'SS' contributes two characters to normalizedPlate but one index here, and
+  // every index after it is then off by one. Without this guard the caller renders
+  // `${before}${match}${after}` from a NaN slice and the plate visibly changes
+  // ('ß-1234' searched for '1234' rendered as 'ß-1ß-1234').
+  //
+  // Taiwanese plates are [A-Z0-9-], so this is unreachable with real data — but the
+  // failure is silent, so it fails closed instead: no highlight, plate intact.
+  if (rawIndexOfNormalizedIndex.length !== normalizedPlate.length) {
+    return { before: rawPlate, match: '', after: '' }
+  }
+
   const rawStart = rawIndexOfNormalizedIndex[start]
   const rawEnd = rawIndexOfNormalizedIndex[end - 1] + 1 // exclusive, in raw-index space
   return {

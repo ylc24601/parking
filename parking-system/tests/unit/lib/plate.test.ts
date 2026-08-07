@@ -61,6 +61,17 @@ describe('highlightPlateMatch', () => {
     })
   })
 
+  // Regression: normalizePlate() uppercases the whole string, the index map inside
+  // highlightPlateMatch uppercases one character at a time, and 'ß'.toUpperCase() is 'SS'.
+  // Before the length guard this rendered `${before}${match}${after}` as 'ß-1ß-1234' —
+  // the plate itself changed on screen. Unreachable with [A-Z0-9-] plates, but silent,
+  // so it must fail closed rather than corrupt.
+  it('falls back to no highlight when a character normalizes to more than one', () => {
+    const result = highlightPlateMatch('ß-1234', '1234')
+    expect(result).toEqual({ before: 'ß-1234', match: '', after: '' })
+    expect(result.before + result.match + result.after).toBe('ß-1234')
+  })
+
   it('returns no match for an empty query', () => {
     expect(highlightPlateMatch('ABC-1234', '')).toEqual({
       before: 'ABC-1234',
