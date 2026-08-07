@@ -13,6 +13,24 @@
 # typescript build info
 *.tsbuildinfo
 
+# Review packs (scripts/review/make-review-pack.sh). These are evidence bundles for a
+# reviewer, not source: they carry a full diff and raw verification logs, and they are
+# regenerated from the commit they describe. Ignoring them is also the last line of defence
+# behind the script's own secret scan — a pack can never be committed by accident.
+.review/
+.review.tmp.*/
+.review-FAILED-*/
+# The pack being replaced, kept until the new one is in place. Normally exists for
+# milliseconds; after a crash it may be the only complete pack left, so nothing sweeps it up.
+.review.prev.*/
+
+# Reviewer output (docs/review-protocol.md): findings and the implementer's responses to them.
+# Deliberately NOT inside .review/ — publishing a pack replaces that directory wholesale, so
+# notes kept there would be destroyed by the next run and a delta review would lose the baseline
+# it is measured against. Ignored rather than tracked because these are a conversation about a
+# commit, not part of it; take the directory with you before deleting a review worktree.
+.review-notes/
+
 # stray phone photos at repo root (not source)
 /*.heic
 /*.jpeg
