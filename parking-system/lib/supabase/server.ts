@@ -11,6 +11,19 @@
 // is about which code is allowed to run where, not about that substitution.
 //
 // Every service/repository path reaches this file, so this one line guards the whole graph.
+//
+// COST OF THAT REACH: every environment that loads a server module has to satisfy the
+// package's "react-server" export condition, or it throws on import. There are three,
+// and each needs its own arrangement:
+//
+//   Next.js   sets the condition itself when building Server Components — nothing to do.
+//   Vitest    vitest.config.ts aliases this ONE package to its empty.js no-op.
+//   tsx CLI   the 19 `tsx` scripts in package.json pass --conditions=react-server.
+//
+// The third was missed when this guard landed (#54) and broke every `npm run job:*` /
+// `binding:*` until it was fixed. tests/unit/scripts/cliServerBoundary.test.ts now fails
+// if a tsx script is added without the flag, and tests/unit/server/serverOnlyBoundary.test.ts
+// fails if this import is removed. Before touching this line, read both.
 import 'server-only'
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'

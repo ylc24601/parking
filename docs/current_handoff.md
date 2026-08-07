@@ -1269,6 +1269,28 @@ pre-pilot maintenance closure 的第一刀。**零 migration、無 schema／RPC 
 
 **驗證（本刀實跑）**：`npx tsc --noEmit` ✅／`npx eslint .` ✅／`npm run build` ✅／`npm test` **1432 passed・306 skipped**（+6）。**負向測試**（手動、已還原）：把 client component 的 `import type` 改成 value import ⇒ build 失敗，訊息 `'server-only' cannot be imported from a Client Component module`，import trace 指回 `lib/supabase/server.ts` ⇒ 保護確實生效，不只是加了一行 import。
 
+**2026-07-30 follow-up — 第三個執行環境（CLI）**
+
+上面兩個判斷只涵蓋 **Next ＋ Vitest**。實際上凡是會載入 server 模組的環境都得各自滿足 `react-server` condition，而本專案有**三個**：
+
+| 環境 | 怎麼滿足 |
+|---|---|
+| Next.js（`dev`／`build`／prod route） | 自己會設，不必處理 |
+| Vitest | `vitest.config.ts` 單套件 alias 到 `empty.js` |
+| **tsx CLI（19 支）** | **#54 當時沒處理** → 本次補 `--conditions=react-server` |
+
+⇒ `package.json` 全部 19 支 `tsx` 腳本（12 `job:*`、4 `binding:*`、`members:import`／`staff:set-pin`／`admin:create`）自 #54 起**一啟動就 throw**，所有 runbook 的 CLI fallback 全壞了三天。prod 不受影響（cron 打 `/api/jobs/*`，跑在 Next 裡）。
+
+**為什麼上面那行「驗證（本刀實跑）」抓不到**：`tsc --noEmit`／`eslint`／`next build`／`npm test` **沒有任何一項會執行 `scripts/`**。四項全綠與「CLI 能不能啟動」根本不相交——這是本次最該記住的一點，不是那 19 行 flag。
+
+**兩處刻意採不同修法**（不是前後矛盾）：上面拒絕全域 condition 的理由是「會連 react／next 一起翻到 react-server build」。那個 blast radius 對 Vitest 成立；對 CLI 實測只有 4 個宣告該 condition 的套件（`server-only`／`client-only`／`react`／`react-dom`），腳本可達圖中只碰到 `react`，且僅為 `adminTodoService` 的 `import { cache } from 'react'`——那本來就是 RSC API，翻過去反而更貼近它在 Next 裡的真實執行環境。
+
+**回歸防護**（`tests/unit/scripts/cliServerBoundary.test.ts`，4 條）：① 靜態——package.json 中任何 `tsx ` 開頭的 script 都必須帶該 flag（擋「第 20 支又忘了」）；② 非空集合防呆，避免重構後靜態測試在空清單上假通過；③ 正向——**用 package.json 裡讀到的 flag** spawn 一支探針（`tests/fixtures/serverOnlyProbe.ts`，只 import `lib/supabase/server`、不呼叫 lazy 的 `getServiceClient()` ⇒ 不連 DB、不需 env），硬契約＝exit 0 ＋ stdout 出現 marker；④ **負向控制**——不帶 flag 必須失敗，讓這道防護在前提消失時自我失效（`server-only` 哪天被移除，這條會紅，告訴你 19 個 flag 可以清掉），否則 flag 會變成沒人敢動的 cargo cult。錯誤字串**不當硬契約**：plain tsx 的訊息是 `This module cannot be imported from a Client Component module.`（`server-only/index.js`），與上面記載的 next build 訊息 `'server-only' cannot be imported from…` 不同，只斷言兩者共有的片段且僅作輔助。
+
+與 `tests/unit/server/serverOnlyBoundary.test.ts` 分工明確：那支證明 **guard 還在**，這支證明 **CLI 能合法跨過 guard**。
+
+**驗證（本刀實跑）**：`npx tsc --noEmit` ✅／`npm run lint` ✅／`npm run build` ✅／`npm test` **1506 passed・323 skipped**（+4）。唯讀 CLI 實跑（對本機 Supabase）：`npm run job:outbox-status` 印出 JSON ✅、`npm run binding:pending` 回「目前無待審申請」✅；argv 傳遞雙向驗證——`-- --now 2099-06-01T03:00:00Z` 正常、`-- --now not-a-date` 正確報 `invalid --now` ⇒ flag 沒有吃掉參數。**刻意不用** `job:release`／`settle`／`dispatch` 的副作用去證明模組載入，探針測試已涵蓋。
+
 **部署**：無 migration、無 schema／RPC 變更 ⇒ **A ✅／B ✅／R ✅**，可直接 merge → Promote。
 
 ---

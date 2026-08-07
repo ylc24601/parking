@@ -158,7 +158,6 @@
 - 這份文件可以整份轉給試跑同工，或只截「四個步驟」＋「常見狀況」兩段貼到 LINE 群組。
 - 「綁定完成之後，請記住三件事」與 [admin-operations-guide.md](admin-operations-guide.md) §4「給試跑同工的說明」是同一套話術，兩邊要改請一起改。
 - **LIFF 自助申請不會主動通知你有人申請**，要看 `/admin/bindings` 才知道，見 [binding-ops.md](binding-ops.md)。所以 Step 4 的「等很久沒核准」在實務上是真的會發生的——建議放行前先講好由誰、多久檢查一次待審清單。
-  - ⚠️ 本文提到的 `npm run binding:pending`／`job:outbox-status` 等 CLI **目前無法用 `npm run` 直接啟動**（`server-only` 與 `tsx` 的相容問題，2026-07-30 起）；繞行指令與影響範圍見 [binding-ops.md](binding-ops.md) 的「審核入口」註記。**`/admin/bindings` 這條主要路徑不受影響。**
 - **退回（reject）不會通知會友**，他們只會看到表單還在。退回後請主動聯繫本人。
 - 提高加好友比例的具體做法（歡迎訊息、圖文選單、現場 QR），見 [oa-onboarding-and-move-car-copy.md](oa-onboarding-and-move-car-copy.md)。
 - 若出現大量 `terminal_403` 失敗，代表「已綁定但沒加好友／已封鎖」，重送前必須先讓對方加回好友，見 [dispatcher-ops.md](dispatcher-ops.md)。

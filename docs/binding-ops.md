@@ -20,25 +20,6 @@
 - **Fallback：下方 CLI**（`binding:pending/approve/reject`/`issue`）；CLI 決行的 `decided_by_admin_id`
   為 null（「CLI／未具名」）。
 
-> ⚠️ **CLI 目前無法用 `npm run` 直接啟動（2026-07-30 起）**
->
-> `a199580`（#54）在 `lib/supabase/server.ts` 加了 `import 'server-only'` 守住 service-role client。
-> 該套件只有在 `react-server` export condition 下才是 no-op——Next.js 會設，**`tsx` 不會** ⇒ 本文所有
-> `npm run binding:*` / `job:*` 指令一啟動就 throw。
->
-> **繞行方式**（已實測可用）：到 `package.json` 找該 npm script 實際執行的 `.ts` 路徑，
-> 在 `tsx` 後加上 `--conditions=react-server` 直接跑，參數不變。**script 名稱與檔名不是機械對應**
-> （例如 `staff:set-pin` → `scripts/set-staff-pin.ts`，沒有 `run-` 前綴），務必以 `package.json` 為準：
->
-> ```bash
-> npx tsx --conditions=react-server scripts/run-binding-pending.ts -- --limit 50
-> npx tsx --conditions=react-server scripts/run-binding-approve.ts -- --pending-id <uuid>
-> npx tsx --conditions=react-server scripts/run-outbox-status.ts
-> ```
->
-> **不受影響**：`/admin/bindings` 這條**主要**路徑跑在 Next 裡面，完全正常；prod 的排程也正常
-> （cron 打的是 `/api/jobs/*` route）。壞的只有本機 CLI。修復已排入待辦，屆時本註記即可移除。
-
 ---
 
 ## 路徑 A（主要）：LIFF 自助申請
