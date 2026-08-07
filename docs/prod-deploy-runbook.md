@@ -655,6 +655,13 @@ only.
 - [x] Vercel env: `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `JOB_TRIGGER_SECRET` scoped to Production only (visually confirmed in Project Settings). _(operator-confirmed)_
 - [x] `https://<vercel-domain>/admin` reachable, renders login form.
 - [x] A Preview deployment was triggered once; confirmed it has no production DB access. _(operator-confirmed; exact outcome — build failure vs ConfigError — not separately recorded)_
+  - **2026-07-30 clean-tree probe (build half of that open question, closed):** with a
+    `git archive HEAD parking-system` export (tracked files only, so no `.env.local`) and no
+    Supabase / LINE / cron / `NEXT_PUBLIC_` app env in the environment, `npm ci` → `tsc --noEmit`
+    → `lint` → `test` → `npm run build` all exited 0. So under the current code, missing those
+    env vars does **not** cause a build-time failure. **Still not verified:** the actual Preview
+    failure mode at runtime (e.g. a `ConfigError`) — that needs a real Vercel Preview execution,
+    not a local build. The §2.3 statement that either outcome is acceptable is unchanged.
 - [x] `admin:create` (no `--stdin`) succeeded; logged into `/admin` with the generated credentials.
 - [x] `ensure-weekly-event` called twice: first `created:true`, second `created:false` with the same `eventId`.
 - [x] Staff PIN issued via `/admin/staff-pin`; login proven at `/staff` in an incognito window; session cookie confirmed; logged out.
