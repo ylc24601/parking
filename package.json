@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "check:repo": "bash scripts/check-repo.sh",
+    "check:docs": "python3 scripts/check-doc-refs.py",
+    "check:pii": "python3 scripts/check-staged-pii.py",
     "sync": "tsx sync-notion.ts",
     "sync:force-local": "tsx sync-notion.ts --force-local",
     "sync:force-notion": "tsx sync-notion.ts --force-notion"

@@ -9,7 +9,7 @@
 | `parking-system/` | Next.js 應用程式（Vercel 的 Root Directory 就是這裡）。另有 `parking-system/AGENTS.md`。 |
 | `scripts/` | 維運腳本：`review/`（審查用具）、`backup/`（DB 備份／還原）。 |
 | `docs/` | 權威文件。現況看 `current_handoff.md`，backlog 看 `feature-triage.md`。 |
-| 根目錄 `package.json` | 與應用程式無關的 Notion 同步工具，不要在這裡跑應用程式的指令。 |
+| 根目錄 `package.json` | Notion 同步工具，加上 repo 層的 `check:*`（見〈指令〉）。**應用程式的指令不在這裡跑。** |
 
 ## 指令
 
@@ -18,6 +18,19 @@ cd parking-system && npm run verify    # 唯一正規的驗證入口（tsc / lin
 ```
 
 CI 呼叫的是同一個 script，review pack 也是。不要另外複製一份命令清單。
+
+根目錄另有兩道 repo 層閘門，它們檢查的是 `docs/` 與 staging 內容，不是應用程式：
+
+```bash
+npm run check:repo     # 下面兩者 + 委派給上面那支（不重新定義四道閘門）
+npm run check:docs     # docs/ 指向程式碼的連結是否還指得到、行號是否超出檔案
+npm run check:pii      # 即將進 commit 的**新增行**有無個資樣式
+```
+
+## 工作約定
+
+語言、git staging、commit 與分支慣例、文件誠實、plan mode 自檢
+——見 [`docs/working-agreements.md`](docs/working-agreements.md)。
 
 ## Code review
 
