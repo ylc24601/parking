@@ -15,7 +15,7 @@
 #
 # Read the evidence first, then the narrative. Never the other way round.
 #
-# Four properties this script exists to guarantee:
+# Five properties this script exists to guarantee:
 #
 #   1. WHAT WAS VERIFIED IS WHAT IS PACKED. Every artifact is derived from one snapshot
 #      (MERGE_BASE_SHA..HEAD_SHA), resolved once at the start and then used as a literal.
@@ -33,6 +33,11 @@
 #      a pipeline can report tee's 0 while the command failed. Its status is captured
 #      explicitly and recorded in the manifest.
 #   4. NOTHING LEAKS. See the scan section below.
+#   5. THE PACK CAN BE CHECKED AFTER THE FACT. manifest.json carries a sha256 for every artifact
+#      and records the flags the run was given, so a reviewer can show that the DIFF.patch in
+#      front of them is the one that was verified, and can see when part of the scan was waived
+#      by --allow-pattern-file-change. Naming the artifacts proved only that files with those
+#      names existed. scripts/review/check-review-workspace.sh is what reads this.
 #
 # Verification runs against a `git archive HEAD` export in a scratch directory, not against
 # your working tree: same clean-tree guarantee the CI runner gives, and it does not blow
@@ -53,6 +58,14 @@ set -euo pipefail
 PROG="$(basename "$0")"
 BASE_REF="main"
 ALLOW_PATTERN_FILE_CHANGE=0
+
+# Captured before parsing, because the manifest has to say how the pack was asked for. A pack
+# built with --allow-pattern-file-change had part of its secret scan waived, and until this was
+# recorded the reviewer had no way to know that from the evidence.
+ORIG_ARGV=("$@")
+
+# One list, used for both the manifest's `artifacts` and its checksums, so the two cannot drift.
+ARTIFACTS=(DIFF.patch FILES.txt COMMITS.txt STATUS.txt REVIEW.md logs/npm-ci.log logs/verify.log)
 
 usage() {
   cat <<EOF
@@ -147,8 +160,42 @@ json_escape() {
   printf '%s' "$s"
 }
 
+# Same fallback order as scripts/backup/db-backup.sh: coreutils first, macOS second.
+sha256_of() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
 write_manifest() {
-  local status="${1:-failed}" extra=""
+  local status="${1:-failed}" extra="" argv_json="" artifacts_json="" hashes="" a sep
+
+  sep=""
+  for a in ${ORIG_ARGV[@]+"${ORIG_ARGV[@]}"}; do
+    argv_json="$argv_json$sep\"$(json_escape "$a")\""
+    sep=", "
+  done
+
+  sep=""
+  for a in "${ARTIFACTS[@]}"; do
+    artifacts_json="$artifacts_json$sep\"$a\""
+    sep=", "
+  done
+
+  # Checksums only on a complete pack. A failed run may have written half of an artifact, and a
+  # checksum over half a file is worse than none: it looks like verification and certifies the
+  # truncation. The `artifacts` list stays either way — it names what a pack should contain.
+  if [[ "$status" == "complete" ]]; then
+    sep=""
+    for a in "${ARTIFACTS[@]}"; do
+      hashes="$hashes$sep
+    \"$a\": \"$(sha256_of "$PACK/$a")\""
+      sep=","
+    done
+    hashes=",
+  \"artifact_sha256\": {$hashes
+  }"
+  fi
+
   if [[ "$status" != "complete" ]]; then
     # Leading newline lives in the value, so a complete manifest has no blank line here.
     extra="
@@ -157,9 +204,13 @@ write_manifest() {
   fi
   cat > "$PACK/manifest.json" <<EOF
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "$status",$extra
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "invocation": {
+    "argv": [$argv_json],
+    "allow_pattern_file_change": $([[ $ALLOW_PATTERN_FILE_CHANGE -eq 1 ]] && echo true || echo false)
+  },
   "repo": {
     "branch": "$(json_escape "${BRANCH:-}")",
     "base_ref": "$(json_escape "$BASE_REF")",
@@ -182,7 +233,7 @@ write_manifest() {
     "verify_exit": ${VERIFY_EXIT:-null},
     "verify_log": "logs/verify.log"
   },
-  "artifacts": ["DIFF.patch", "FILES.txt", "COMMITS.txt", "STATUS.txt", "REVIEW.md", "logs/npm-ci.log", "logs/verify.log"]
+  "artifacts": [$artifacts_json]$hashes
 }
 EOF
 }
@@ -340,6 +391,7 @@ STAGE="review-md"
   echo "| head_sha | \`$HEAD_SHA\` |"
   echo "| merge_base_sha | \`$MERGE_BASE_SHA\` |"
   echo "| tracked tree == HEAD | yes |"
+  echo "| pattern-file change waived | $([[ $ALLOW_PATTERN_FILE_CHANGE -eq 1 ]] && echo '**yes — part of the secret scan was skipped**' || echo no) |"
   echo "| npm ci | exit $INSTALL_EXIT |"
   echo "| npm run verify | exit $VERIFY_EXIT |"
   echo "| toolchain | node $NODE_V, npm $NPM_V, $(uname -sr) |"
