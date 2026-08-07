@@ -1,6 +1,6 @@
 # Feature Triage — 功能決策索引
 
-> 最後檢視：2026-07-30
+> 最後檢視：2026-08-04
 
 ## 本檔回答什麼
 
@@ -102,10 +102,15 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | 34-0b-A Import auditability | `Ready` | `Pre-pilot` | 影響最大的批次寫入是唯一沒有 audit 的路徑 |
 | 34a Profile completeness | **`Blocked`** | `Pre-pilot` | 仍是 pilot gate，但**先定 `profile_confirmed_at` 語意**再開工 |
 | #36 晚鳥即時預約 | **`Blocked`** | `Pre-pilot` | PRD 已寫、實作沒做，落差已教錯會友一次；**先釘並發／公平規則**再開工 |
+| **#37＋#39＋38a（同一刀）** | `Ready` | `Pilot-early` | **三份 mockup 皆已定案，可開工**；同屬 `StaffCheckIn.tsx`、presentation＋既有資料，拆刀只會三次 review 同一個檔 |
+| 40a 登記帶入姓名＋記錄比對 | `Ready` | `Pilot-early` | **使用者已放行**；⚠️「留記錄供分析」使其成為 **Migration + App**（新 nullable 欄位） |
 | 34b 會友自助維護 | `Deferred` | `Pilot-early` | 接 `0038` 已備妥的 vehicle lifecycle |
 | #11 P2 自助申請 | `Deferred` | `Pilot-early` | 與 34b 合併規劃，治理仍留 admin |
+| 38b 跨週車牌查詢（Staff 端） | `Deferred` | `Post-delivery` | **已放行**（遮罩姓名＋查閱紀錄），排在 #6A 之後——等的是 #6A 的目的地模型，不是決策 |
 
-**其餘 `Blocked`（不在近期視野）**：#13 P1 每週狀態生命週期未定／#14B override 與時間視窗互動規則未定／#28「至少留一台或允許零台」未定／#31 眷屬 model 與撤銷語意未定。
+**其餘 `Blocked`（不在近期視野）**：#13 P1 每週狀態生命週期未定／#14B override 與時間視窗互動規則未定／#28「至少留一台或允許零台」未定／#31 眷屬 model 與撤銷語意未定／**40b walk-in 歸戶與資格語意**（使用者 2026-08-04：「我跟你再討論一下」）。
+
+> **揭露邊界已定（2026-08-04）**：共用 PIN 裝置可查到本週清單以外的人，**線切在**——40a **放行**（車在現場、完整車牌全等、只帶姓名）✅／38b **放行**（主動查詢、遮罩姓名、寫查閱紀錄、聯絡走既有推播）✅／38c **不做**（姓名＋電話）❌。前綴／部分車牌搜尋**只給具名的 admin 帳號**（#6A），現場共用 PIN 一律完整車牌全等。
 
 ---
 
@@ -155,6 +160,10 @@ Done             ⇒ Acceptance 已由實作／驗證滿足
 | #34 | **Member Data Lifecycle**（Epic） | 匯入 UI／member LIFF／#10／綁定 | Do | **Ready** | **Pre-pilot** | L | TBD | — | 子刀狀態見 #34 Work items 表 |
 | #35 | 本週申請清單（點數字看名單） | admin/week（新頁） | Do | **Ready** | **Pre-pilot** | S–M | App-only | 3f | #32 的下游；pending／waiting 目前無任何 UI 可見 |
 | #36 | 週五分配後晚鳥即時預約 | member apply＋`0023` RPC | Do | **Blocked** | **Pre-pilot** | M | Migration + App | — | PRD §六.3 已寫、**未實作**；並發／公平規則待釘 |
+| #37 | 「結束當週點名」可發現性 | staff/StaffCheckIn | Do | **Ready** | **Pilot-early** | S | App-only | — | 定案＝拆掉只有一項的 `⋯` 選單、appbar 直接放有字的按鈕；收工卡不做 |
+| #38 | Staff 移車統一入口＋跨週車牌查詢 | staff/StaffCheckIn＋（38b 建於 #6A 之上） | Do | **Ready**(38a) | **Pilot-early**(38a) | S–M／M | App-only／TBD | — | 子刀狀態見 #38 Work items 表；38b 已放行排 #6A 之後、38c `Closed` |
+| #39 | Staff 主要動作色改 primary 綠 | staff/StaffCheckIn＋design-spec | Do | **Ready** | **Pilot-early** | S | App-only | — | info 藍同時當狀態 tone 與動作色＝雙重語意，presentation-only |
+| #40 | 登記現場車輛帶入既有車主資料 | staff walkInService＋新欄位 | Do | **Ready**(40a) | **Pilot-early**(40a) | M／M–L | Migration + App | — | `reservations_walkin_shape` 禁 walk-in 掛 `user_id` ⇒ 顯示姓名與歸戶必須分刀；40a 走新 nullable 欄位 |
 
 ---
 
@@ -784,16 +793,299 @@ Friday allocation 已完成
 2026-07-30 由 PR #60 的文件審查衍生——會友說明照 PRD 寫，才發現 PRD 與實作不一致。**獨立成條、不併入 #14B**（外部審查判定）：#36 是自動業務規則，#14B 是人工 override，把前者綁進一個自身仍 Blocked 的 feature 只會一起卡住。
 **文件分工**：面向會友的說明**一律描述今天 production 的真實行為**（＝分配後線上登記關閉）；PRD 保留這條產品需求，但標明尚未實作。現況與產品目標不再混為一談。
 
+---
+
+### #37 「結束當週點名」可發現性
+
+**Decision:** Do ｜ **Status:** **Ready** ｜ **Delivery:** **Pilot-early**
+**Size:** S ｜ **Deployment:** App-only ｜ **Migration:** No ｜ **Depends on:** —
+
+#### Problem
+**（2026-08-04 試營運回報）** 同工找不到「結束當週點名」——它藏在深綠 appbar 右上的 `⋯`（[StaffCheckIn.tsx:557-588](../parking-system/app/staff/StaffCheckIn.tsx#L557-L588)）。這**不是** bug：#24 刻意把它從拇指區移進 overflow menu，因為它不可復原、而拇指區旁邊就是每週要按很多次的「＋登記現場車輛」。放回拇指區＝把 #24 解掉的誤觸風險原封不動裝回去。
+
+真正壞掉的是**發現性**的三件事，與「放哪裡」無關：
+- ① 觸發器只有一個 `⋯` 字元，**沒有文字標籤**，全畫面唯一無標籤控制項；
+- ② 點名完成時**沒有任何完成訊號**——四欄計數列的「未到」歸零時畫面毫無反應，同工不知道「現在該收工了」；
+- ③ 它一週只按一次，**沒有肌肉記憶**可依靠，每週都是重新找一次。
+
+#### 影響評估（先查過才寫，不是猜的）
+**漏按不會造成資料錯誤。** `auto-finalize` cron（每日 04:07，grace 2 天）會對逾期仍 `open` 的週跑**同一支** `settle()` 再 `finalizeWeeklyEvent()`（[autoFinalizeService.ts:72-82](../parking-system/server/services/autoFinalizeService.ts#L72-L82)）⇒ no-show／罰則／牧養 alert 最終仍會產生，只是**延後至多約兩天**。
+⇒ 本項的必要性是**營運確定感**（同工當場知道自己收好工了、幹事不必事後追）與延遲，**不是正確性**。故列 `Pilot-early` 而非 `Pre-pilot`：值得做、但不擋 pilot。
+
+#### Decision（2026-08-04 使用者追問後修訂）
+
+**先回答「那個選單是不是留給未來功能的」——不是。** 查 #24 的紀錄，全文只有「結束鍵移 header 選單、保留二次確認」，**沒有任何擴充計畫**；而會進 Staff 頁的其他動作都已各自有去處：列印去了 `/admin/print`（#23）、重新整理與登出是 appbar 上的獨立按鈕。⇒ 這是一個**裝著唯一一項的選單**，而「只有一項的選單」比一顆有字的按鈕更糟：多一次點擊、少一個標籤。
+
+**再回答「為什麼不直接在那個位置寫『結束點名』」——可以，而且這就是本項的解法。** #24 要避免的是**拇指區誤觸**（footer 的「＋登記現場車輛」每週要按很多次，結束鍵在旁邊很危險），**不是**「要多幾次點擊才按得到」。appbar 右上**本來就在拇指區之外** ⇒ 把 `⋯` 換成有標籤的「結束點名」按鈕，**#24 的意圖完整保留**（遠離拇指區、二次確認不變），發現性問題直接消失。
+
+- **① 拆掉 overflow menu，改為 appbar 上有文字的「結束點名」按鈕**，維持 danger 色、維持二次確認 sheet、維持既有 disabled 條件。
+- **② 收工訊號（`notArrivedCount === 0 && releasedLateCount === 0` 時於清單末端顯示提示卡）＝可選**，見下方 Open question。
+
+#### ✅ 已定案（2026-08-04，看過 mockup 後使用者選 **提案 A**）
+- **結束點名以文字按鈕留在 appbar 右上**（`⋯` 選單整個拆掉），白框、深綠底、維持二次確認。
+- **收工卡不做**——`auto-finalize` 已 backstop，不值得為此多一塊 UI。②（收工訊號）自此從本項移除。
+📐 mockup：[staff-action-color-and-settle.html](ui-mockups/staff-action-color-and-settle.html) · <https://claude.ai/code/artifact/4e3ae95a-bd2e-4cc0-aaeb-cdea054221db>
+- **收工卡要不要做**：`auto-finalize` 已 backstop，收工卡的價值只剩「當場確認自己收好工了」。**建議先只做 ①**（幾乎零成本），收工卡看 mockup 再決定。
+
+#### Constraints
+- **⛔ 不得把結束點名放進 footer 拇指區**，也不得做成常駐固定浮層——那正是 #24 移走它的原因。若做收工卡，它是**清單末端的一般內容**，要捲到底才看得到。
+- **⛔ 不新增第二條結算路徑**：新按鈕只 `setSettleOpen(true)`，confirm sheet／`submitSettle()`／`disabled` 條件（`!event || finalized || settleBusy || offline`）**全部沿用同一份**。
+- 收工卡的顯示條件必須與計數列**同源**（既有 `notArrivedCount`／`releasedLateCount` memo），不得另算一次「是不是都到齊了」。
+- `finalized` 後不顯示收工卡（畫面已有「本週點名已結束，僅供檢視」橫幅）。
+
+#### Acceptance
+- 「結束點名」在 appbar 上**以文字呈現**，一次點擊即開既有 confirm sheet；`⋯` 選單與其 dismissal effect（`menuOpen` 的 keydown／pointerdown listener）一併移除。
+- confirm sheet／`submitSettle()`／disabled 條件（`!event || finalized || settleBusy || offline`）**完全沿用**，不新增第二條結算路徑。
+- 結束點名不出現在 footer 或任何常駐浮層。
+- 375px 寬下 appbar 首列（標題＋🔄＋結束點名＋登出）不折行、不溢出、各控制項仍 ≥44px 觸控區。
+- presentation＋既有 state 組合，無新 route／API／權限。
+
+#### History
+2026-08-04 試營運回報。查證 `auto-finalize` 後**降級為 UX 項**（原以為漏按會讓罰則永遠不跑）。
+同日使用者追問「為什麼不直接寫『結束點名』」⇒ 查 #24 確認 overflow menu **無擴充計畫、且 #24 針對的是拇指區而非點擊次數** ⇒ 解法從「幫選單加標籤」改為「**拆掉選單、直接放有字的按鈕**」。原提案的收工卡降為可選。
+
+---
+
+### #38 Staff 移車統一入口＋跨週車牌查詢
+
+**Decision:** Do ｜ **Status:** 子刀不同，見下表 ｜ **Delivery:** 見下表
+**Size:** S–M（38a）／M（38b）｜ **Deployment:** App-only（38a）／TBD（38b）｜ **Invariants:** INV-05
+
+#### Problem
+**（2026-08-04 試營運回報）** 移車按鈕**逐列散在每一張卡上**（[StaffCheckIn.tsx:713-722](../parking-system/app/staff/StaffCheckIn.tsx#L713-L722)），現場的實際情境卻是反過來的：同工手上先有一個**車牌**（被擋住的那台），要從車牌找到人。今天得先在清單裡找到那一列、再看那列有沒有「請移車」。
+
+且**擋路的車常常根本不在本週清單上**——訪客、沒申請就開進來的、未綁定 LINE 的。Staff 頁只讀 `staff_checkin_view`（本週 9 欄投影），對這些車**完全查不到是誰**。
+
+#### Work items
+
+| 子刀 | 範圍 | Status | Delivery | Size |
+|---|---|---|---|---|
+| **38a** | 移車統一入口（本週清單內，零新增揭露）— **mockup 已定案** | **`Ready`** | `Pilot-early` | S–M |
+| **38b** | 跨週車籍**精確**車牌查詢（遮罩姓名＋可否通知，**不含電話**） | **`Deferred`** | `Post-delivery` | M |
+| **38c** | Staff 畫面顯示全車籍姓名＋電話 | **`Closed`** | — | — |
+
+> **2026-08-04 使用者定案**：38b **放行**（遮罩姓名＋寫查閱紀錄，聯絡走既有推播）；38c **不做**（使用者：「38c 不做是對的，是我忘了定案內容」——指 2026-06-29 同工會議）。原本的 Unresolved decision 已解除，38b 從 `Blocked` 轉 `Deferred`（規格已足，純粹排在 #6A 之後）。
+
+#### 38a — 移車統一入口（可以直接做）
+
+**先釐清一個誤解**：「輸入同時快速篩選」**今天已經有了**。搜尋框走 `normalizePlate` 後 `plate.includes(q)`（[StaffCheckIn.tsx:348-360](../parking-system/app/staff/StaffCheckIn.tsx#L348-L360)），輸入 `76` 就已經同時列出 `DEA-7611` 與 `EAB-1762`。它只是**看起來不像**——placeholder 寫死「輸入車牌**後四碼**」，把一個任意位置子字串搜尋講成只能打末四碼。
+
+⇒ 38a 要做的是**把既有能力露出來**，不是重寫搜尋：
+- **footer 右側**增設「🚗 通知移車」入口（與「＋登記現場車輛」並排）→ 開 sheet；
+- sheet 內一個車牌輸入框，**沿用同一份** `normalizePlate` + `includes` 比對本週 rows，邊打邊列出候選（顯示姓名／車牌／`owner_notifiable`），**命中片段於候選列標示**；
+- 點候選 → 進**既有** move-car 確認 sheet → 既有 `POST /api/staff/move-car`；
+- 搜尋框 placeholder 改為「輸入車牌任意數字」之類的真話。
+
+##### ✅ 四項定案（2026-08-04，使用者看過 mockup 後逐項回覆）
+| 項目 | 定案 |
+|---|---|
+| 入口位置 | **footer 右側**，名稱**「通知移車」**（非「請移車」） |
+| 逐列「請移車」按鈕 | **拿掉**——通知移車自此**只有這一個入口** |
+| 未綁定 LINE 的車 | **照樣列出**，寫明「無法通知」，不可送出（不假送、也不假裝那台車不存在） |
+| 查無車牌 | 說明查得到什麼＋給「＋ 登記為現場車輛」出口；**⛔ 不得承諾未來功能**（不寫「跨週查詢規劃中」——會讓同工一直回來試） |
+
+**拿掉逐列按鈕的連帶影響（實作時要意識到）**：那顆按鈕的 `disabled` 狀態原本兼任「這位車主有沒有綁定 LINE」的**唯一列上指示**。拿掉後清單不再顯示綁定狀態，該資訊只在通知移車的候選清單中出現。**這是刻意的**——綁定狀態只在「要通知他」的當下有意義。
+
+**命名一致性**：入口按鈕與搜尋 sheet 標題都用「通知移車」；**最終確認 sheet 維持既有的「請車主移車」與既有文案，一個字不改**。
+
+**Constraints**：不新增 API、不新增欄位、不碰 `staff_checkin_view`；未綁定者維持既有 gating（disabled ＋「此車主未綁定 LINE，無法通知」），**不假送**。
+
+📐 **mockup 已產出並逐項定案**（2026-08-04，開工前）：[staff-move-car-entry.html](ui-mockups/staff-move-car-entry.html) · <https://claude.ai/code/artifact/9191660a-5eb8-4b7e-817e-ef816f4d1743>（四格動線：入口／輸入即篩選／確認／查無）
+
+**Acceptance**
+- footer 出現「通知移車」入口；**逐列的「請移車」按鈕已不存在**。
+- 輸入車牌任意連續數字即縮出候選，**命中片段於候選列中標示**（輸入 `76` → `DEA-`**`76`**`11`、`EAB-1`**`76`**`2` 皆列出）。
+- 未綁定候選**仍列出**但不可送出，且列上寫明無法通知的理由。
+- 選定候選後進入的是**既有**確認 sheet 與既有文案，送出走既有 `POST /api/staff/move-car`。
+- 查無車牌時說明查詢範圍並提供「＋ 登記為現場車輛」出口，**文案不提及任何未來功能**。
+- 無新 API、無新欄位、`staff_checkin_view` 未變動。
+
+#### 38b — 跨週車籍精確車牌查詢（`Deferred`，已放行、等 #6A）
+
+**這才是回報裡真正沒被滿足的需求**：擋路的車不在本週清單上時，同工現在無解。
+
+**提議的形狀**（若使用者同意放行）——刻意做成**查詢**而非**瀏覽**：
+- 只接受**完整車牌 exact match**（正規化後全等），**不做前綴／子字串搜尋、不分頁、不列全表**。理由：子字串搜尋等於把整份車籍變成可枚舉清單，那是另一個東西。
+- 回傳**遮罩姓名**（例「張○龍」）＋ `owner_notifiable` 布林 ＋ 可否送移車通知，**不回電話、不回 user_id、不回 line_id**。
+- 命中即可直接送既有 move-car 通知（需擴充：現行 endpoint 綁 `reservationId`，跨週車輛沒有本週 reservation ⇒ 走 `INV-05` 的 `context_kind='vehicle'` 目的地模型，正是 #6A 已經定好的路，**不另開第二套**）。
+- 每次查詢**寫 audit**（actor＝PIN session），因為它跨出了本週投影。
+
+**與 #6A 的關係（2026-08-04 使用者追問「後台是不是早就說要做車牌搜尋移車」——是）**：
+[#6A](#6a-admin-憑車牌移車第一版) 早已列 `Do`／`Deferred`／`Post-delivery`，範圍明寫「**憑車牌搜尋、車主解析、未綁 LINE gating、二次確認、遮罩姓名＋完整車牌核對、可選原因、冷卻、dedupe、enqueue、audit**」。它就是後台版的同一件事，只是尚未實作。
+
+⇒ 兩端的搜尋強度**刻意不同，這裡釘死**：
+
+| | 誰在用 | 允許的比對 | 姓名 | 電話 |
+|---|---|---|---|---|
+| **#6A**（Admin 後台） | **具名** admin/幹事帳號 | **可前綴／部分比對** | 遮罩＋完整車牌核對 | 依 #5B 分級 |
+| **38b**（Staff 現場） | **共用 PIN**、共用裝置 | **僅完整車牌全等** | 遮罩 | **不給**（38c 已結案） |
+
+差別的理由只有一個：**後台查得到是誰查的，現場查不到**。前綴搜尋在具名帳號下是效率、在共用 PIN 下是可枚舉的車籍名冊。
+
+**實作順序**：38b ≒ #6A 的 Staff 端投影 ⇒ **必須建在 #6A 的服務與目的地模型之上**（`INV-05` 的 `context_kind='vehicle'`），不得在 Staff 路徑上自己長一套車主解析。這也是 38b 排在 `Post-delivery` 的原因——不是還在猶豫，是等 #6A。
+
+##### 揭露邊界（已定，2026-08-04）
+Staff session 是**一支週輪替 PIN、全體同工共用、跑在地下室的共用裝置上**（[staff-page-slice1-scope]、`0010`）。38b 把揭露上限從「本週有申請的人」抬到「全教會任何一台車的車主」⇒ **使用者已決定放行**，條件為：完整車牌全等、遮罩姓名、**不給電話**、**每次查詢寫 audit**（actor 只能記到 PIN session，這是已知且接受的限制）、聯絡一律走既有 OA 推播。
+
+#### 38c — Staff 顯示姓名＋電話（**Closed，2026-08-04 使用者定案不做**）
+
+回報明確要求「顯示是否綁定與姓名電話，就算沒有綁定也可以找到是誰的車」。**電話這一項建議不做**，三個理由都不是偏好問題：
+- ① **2026-06-29 同工會議已定案「不在 Staff 畫面加電話／個人聯絡方式」**，而且**移車推播這整條線就是那次會議的替代方案**（見 [staff-meeting-v1-feedback]）。要改，是推翻該定案，須明確做一次決定，不能靠一條 UI 需求默默翻案。
+- ② **地下室只有 WiFi、沒有 4G/5G** ⇒ 拿到號碼也撥不出去。當初正是因為 `tel:` 打不通才走 OA 推播。電話在現場**解不了任何問題**，卻把最敏感的欄位放上共用裝置。
+- ③ 共用 PIN ⇒ 誰看了查不出來。電話是全系統最敏感的欄位（`0027` 的 binding PII retention 整套就是為它做的）。
+
+**滿足原始意圖的替代路徑**：「這是誰的車」由 38b 的遮罩姓名回答；「打給他」由既有 OA 推播回答；真的需要完整聯絡資訊時，走**具名 admin 帳號**的 `/admin/members`（幹事已可看），而非現場共用裝置。
+
+**已結案，不再保留「若仍要做」的退路**：留著一條寫好的實作路徑，等於邀請下一個人繞過這個決定。真的要重開，走一次新的決策並註明推翻了 2026-06-29 與 2026-08-04 兩次定案。
+
+#### History
+2026-08-04 試營運回報。拆成 38a/38b/38c 而非一條：38a 沒有任何待決事項、當週可做；38b/38c 動到共用 PIN 裝置的揭露邊界，混在一起會讓可以馬上做的部分一起卡住。
+
+---
+
+### #39 Staff 主要動作色改用 primary 綠
+
+**Decision:** Do ｜ **Status:** **Ready** ｜ **Delivery:** **Pilot-early**
+**Size:** S ｜ **Deployment:** App-only ｜ **Migration:** No ｜ **Depends on:** —
+
+#### Problem
+**（2026-08-04 試營運回報：「藍色按鈕是先前說好的顏色嗎？看起來有點不協調」）**
+
+**是說好的**——[design-spec.md:95](ui-mockups/design-spec.md) 明寫「大鈕：點名 info 藍、補點名 warn 琥珀、＋現場散客 info」，來自選定的 Staff 方向 C。所以這不是實作走鐘，是**當初的規格選擇在真機上不成立**。
+
+不協調的來源可以指出來：`--color-info-fg` `#1D4ED8` 在整個綠色系介面裡是**唯一的冷色**，卻被放在**視覺份量最大的位置**（每一列的點名鈕＋footer 通欄鈕）。更關鍵的是它**一色兩用**——同一個藍同時是「現場 walk-in」的**狀態 tone**（`Badge tone="info"`）與「主要動作」的**動作色**。看到藍色時，它到底在說狀態還是在說「按這裡」，畫面沒有回答。
+
+#### Decision
+**動作色與狀態色分家**（這條規則本身比換色更重要）：
+- **動作**：主要動作 → `--color-primary` 實色白字（`#15803D`，白字通過 AA）；補點名維持 warning 琥珀（**刻意與一般點名不同**，那是有意義的區別）；結束點名維持 danger；移車維持 priority 紫框——但**位置改到 footer 入口**（38a 拿掉了逐列按鈕），紫色仍是移車的識別色。
+- **狀態**：`info` 藍**只留給 Badge**（現場／暫時核准），不再出現在任何按鈕背景。
+
+改動點共 4 處 `bg-info-fg` 按鈕（[StaffCheckIn.tsx:663](../parking-system/app/staff/StaffCheckIn.tsx#L663)、[707](../parking-system/app/staff/StaffCheckIn.tsx#L707)、[739](../parking-system/app/staff/StaffCheckIn.tsx#L739)、[782](../parking-system/app/staff/StaffCheckIn.tsx#L782)）。
+
+#### Constraints
+- **必須同時改 `docs/ui-mockups/design-spec.md`**（第 95 行那句與 tone 表）。只改 code 就是留下一份說「點名是藍的」的規格 ⇒ 第二個真相。
+- **presentation-only**：不動邏輯、不動 `Badge` 語意、不動 Member／Admin 兩端（藍在那兩端沒有承擔動作色，別順手改）。
+- **綠色不可壓過深綠 appbar**：`primary` `#15803D` 用在**白色卡片與白底 footer 上**，與 `primary-deep` `#14532D` 的 appbar 分屬不同層，不並排出現。
+- 點名（primary 綠）與補點名（warning 琥珀）**必須維持可辨差異**——那是「正常到場」與「已釋出後補登」兩種不同後果的操作。
+- 沿用既有 focus ring（`ring-primary`）；綠底鈕的 focus ring 需檢查對比，必要時比照 appbar 用 `ring-white`。
+
+#### Acceptance
+- Staff 頁不再有任何 `bg-info-fg` 按鈕；`info` 只出現在 Badge。
+- 點名（綠）／補點名（琥珀）／結束點名（紅）／通知移車（紫框）四種動作在畫面上仍互相可辨。
+- design-spec.md 的動作色規則與實作一致。
+- tsc／eslint／build 綠，vitest 不受影響（純樣式）。
+
+#### Process（使用者 2026-08-04 定）
+**先出 mockup、看完實際樣子再改 code**——原話「免得改來改去」。與 #37 共用同一份，因為兩者動的是同一塊畫面。
+📐 [staff-action-color-and-settle.html](ui-mockups/staff-action-color-and-settle.html) · <https://claude.ai/code/artifact/4e3ae95a-bd2e-4cc0-aaeb-cdea054221db>
+
+#### History
+2026-08-04 試營運回報。查證後確認藍色是 Slice 3.5 方向 C 的既有規格（非誤植）⇒ 這是**規格修訂**，不是 bug fix，因此連 design-spec 一起改。
+
+---
+
+### #40 登記現場車輛時帶入既有車主資料
+
+**Decision:** Do ｜ **Status:** 子刀不同，見下表 ｜ **Delivery:** 見下表
+**Size:** S–M（40a）／M–L（40b）｜ **Deployment:** App-only（40a）／Migration + App（40b）｜ **Depends on:** 與 #38b 共用同一個 plate→owner primitive ｜ **Invariants:** INV-03
+
+#### Problem
+**（2026-08-04 試營運回報）** 登記現場車輛時，**即使該車牌已在資料庫中，也不會自動帶入姓名與資格**。同工得手打姓名，或乾脆留空 ⇒ 清單上只剩一串車牌。
+
+查證：`registerWalkIn` **從頭到尾沒有碰過 `vehicles`／`users`**（[walkInService.ts:27-38](../parking-system/server/services/walkInService.ts#L27-L38)）。它只用車牌對**本週清單**做一次去重（防重複登記），對不上就直接以自由文字 `walk_in_license_plate` ＋ `walk_in_name` 建列。所以「已在資料庫中的車」與「完全陌生的車」在這條路徑上**根本沒有區別**——系統沒去問過。
+
+會踩到這個情境的是**本週沒申請卻開來的會友**（申請並核准的人本來就已在清單上、不走 walk-in）。
+
+#### 影響（不只是要多打幾個字）
+- ① 現場清單上該列只有車牌，同工認不出是誰；
+- ② 手打姓名是**自由文字**，同一個人每週可能被打成不同寫法，與名冊對不起來；
+- ③ **這次到場不會記在那個人身上**——walk-in 列的 `user_id` 是 null（見下方 constraint），所以出席歷史、牧養、#16 分析都看不到這一筆；
+- ④ walk-in 一律 P3，**有 P2 資格的人臨時到場，現場看不出來**。
+
+#### 決定性的 schema 事實（決定這件事怎麼切）
+`0002` 有硬約束：
+
+```sql
+constraint reservations_walkin_shape
+  check (status <> 'walk_in'
+         or (user_id is null and vehicle_id is null and walk_in_license_plate is not null))
+```
+
+⇒ **`walk_in` 列在結構上不可能掛 `user_id`**。「顯示姓名」與「歸戶到那個人」因此是**兩件不同大小的事**，必須分開：前者純 App，後者要動 CHECK constraint（migration）並回答「未申請卻到場」在罰則／統計裡算什麼。
+
+#### Work items
+
+| 子刀 | 範圍 | Status | Delivery | Size | Deployment |
+|---|---|---|---|---|---|
+| **40a** | 登記時 exact-match 帶入**姓名**＋**記錄比對結果供後續分析** | **`Ready`** | `Pilot-early` | M | **Migration + App** |
+| **40b** | 真正**歸戶**（walk-in 綁 `user_id`）＋資格語意 | **`Blocked`** | `Post-delivery` | M–L | Migration + App |
+
+#### 40a — 帶入姓名＋記錄比對（**2026-08-04 使用者放行**）
+
+**使用者定案**：帶姓名、**不帶資格**、**比對結果要留下來供後續分析**。
+
+**形狀**：`registerWalkIn` 在既有去重之後，多做一次**正規化後完全相等**的 `vehicles` 查詢（`license_plate_normalized`，`0001` 的 generated column，`is_active` 為真者）：
+- 命中 → 以車主姓名填入 `walk_in_name`（**同工未自行輸入時才填**，手打的一律優先）、寫入 `walk_in_matched_user_id`（見下）、回傳的 Staff-safe row 多一個 `matched_member: boolean`，清單顯示「會友」標記；
+- 未命中 → 行為與今天完全一致。
+
+##### ⚠️ 「留下記錄」把這刀從 App-only 推成 Migration + App
+`walk_in_name` 是**自由文字快照**——同一個人每週可能被打成不同寫法，事後**無法可靠地 join 回名冊** ⇒ 只把姓名填進去，等於沒有留下可分析的記錄。要能分析，必須存**ID**。
+
+兩條路，**建議第二條**：
+
+| | 做法 | 判斷 |
+|---|---|---|
+| ✗ | 寫 `audit_logs` | **不適用**。`append_audit_log` 的 forbidden key 清單直接擋掉 `name`／`license_plate`（[0030:209-221](../parking-system/supabase/migrations/0030_audit_substrate.sql#L209-L221)）；且 `INV-04` 要求 audit 與業務**同一 transaction**，而 `createWalkInReservation` 目前是**直接 insert 不是 RPC**（[parkingRepository.ts:1230-1242](../parking-system/server/repositories/parkingRepository.ts#L1230-L1242)）⇒ 得先把 walk-in 建立整個搬進 RPC。**而且 audit 24 個月會被 purge（`0034`）——它是治理紀錄，不是分析倉庫。** |
+| ✓ | 新增 nullable 欄位 `reservations.walk_in_matched_user_id uuid references users(id)` | **不牴觸 `reservations_walkin_shape`**——該 CHECK 只管 `user_id`／`vehicle_id` 兩欄，新欄位不在其中 ⇒ **不必動既有約束**。單一 INSERT 本身就是原子的，不需要 RPC。永久保存、可直接 join 分析。 |
+
+**這個欄位的語意必須寫進 migration 標頭並嚴格守住**：
+> `walk_in_matched_user_id` ＝「登記當下，這個車牌對到名冊上的誰」——**是一個觀察事實，不是權利主張**。它**不**代表這次到場算在該會友頭上（那是 40b 的產品決定）。**任何分配／罰則／候補／資格邏輯都不得讀這個欄位**；它只服務 #16 分析與人工查對。
+
+##### Constraints
+- **只接受完整車牌 exact match**，不做前綴／模糊比對——同 #38b 的理由（共用 PIN 裝置不得產生可枚舉的車籍清單）。
+- **⛔ 不碰 `effective_priority`**（使用者明確：不要帶資格）：walk-in 維持 P3。顯示成「⭐優先」會與該列實際存的 P3 互相矛盾；釋出時點（`release.ts`）正是讀 priority 在跑。資格語意留給 40b。
+- **⛔ `user_id` 仍為 null**：不繞過 `reservations_walkin_shape`，新欄位是**另一個**欄位、不是它的替身。
+- 回傳仍是 Staff-safe DTO：只多 `matched_member` 布林，**不回電話、不回 `user_id`／`walk_in_matched_user_id`、不回 P2 事由**。
+- 沿用既有 `normalizePlate`（TS／DB generated column／`0009` unique index 三處同一規則），不新寫比對邏輯。
+- 與 #38b 共用同一支 plate→owner service，不各寫一套。
+
+##### 揭露邊界（已定，2026-08-04）
+與 38b 同一條線但暴露面更窄：① 車就停在現場、車牌已在同工手上，不是主動翻查；② 完整車牌全等、一次一筆，無法枚舉；③ 帶出來的「姓名」正是本週清單上**對核准會友本來就會顯示**的同一個欄位 ⇒ 實際新增的資訊只有「這個人本週沒申請」。**使用者已放行。**
+
+#### 40b — 歸戶與資格（Post-delivery）
+
+要讓這次到場真的算在那個人身上，得一併回答：
+- 放寬 `reservations_walkin_shape` 允許 `user_id` 非空（或另立 status），且**不得**讓 walk-in 因此被誤算成一筆「核准」；
+- 「未申請卻到場」在 no-show／罰則／牧養／#16 分析裡**算什麼**——這是產品規則，不是實作細節；
+- 有 P2 資格者現場到場，要不要、以及**怎麼**在不洩漏事由的前提下顯示。
+
+⇒ 這些都不是實作者能自己決定的，故 `Blocked` 且排 `Post-delivery`。**40a 不依賴 40b**，可先做。
+**2026-08-04 使用者：「40b 我跟你再討論一下」** ⇒ 維持 `Blocked`，待該次討論定案。40a 先寫入的 `walk_in_matched_user_id` **正好是 40b 的原料**——屆時要不要把它升格為真正的歸戶，資料已經在了，不必回頭補建。
+
+#### Acceptance（40a）
+- 登記一個**已在名冊且啟用中**的車牌，姓名欄留空 → 建立後清單顯示該車主姓名與「會友」標記。
+- 同工自行輸入姓名時，**以輸入為準**，不被覆寫。
+- 登記陌生車牌 → 行為與現行完全相同（自由文字、無標記、`walk_in_matched_user_id` 為 null）。
+- 比對只在完整車牌相等時成立；部分車牌不得帶出任何人。
+- 命中時 `walk_in_matched_user_id` 寫入該車主 ID，且 `user_id`／`vehicle_id` **仍為 null**、`effective_priority` **仍為 3**。
+- 回應 DTO 未新增電話／任何 user ID／P2 事由。
+- grep 全 repo：`walk_in_matched_user_id` **不被任何分配／罰則／候補／資格程式碼讀取**。
+
+#### History
+2026-08-04 試營運回報（與 #37／#38／#39 同一批）。獨立成條而非併入 #38：#38 的入口是「手上有車牌要找人」，本條的入口是「正在建立一筆現場登記」——後者的資料是**要寫進去**的，牽涉 `reservations_walkin_shape` 與歸戶語意，#38 沒有這一層。兩者共用同一個 plate→owner 查詢 primitive，實作時應共用一支 service。
+
+---
+
 > **compatibility view。** 依 `Delivery` token 分組投影 `Feature inventory`；狀態權威仍在 inventory，本節不建立新語意。
 > 舊版「交付前必修／強烈建議交付前／可交付後迭代」的敘述已完成其任務，移入 Archive 保存。
 
 - **`Pre-delivery`（交付前）**：#33a
 - **`Pre-pilot`（pilot 前）**：34-0、34-0b-A、34a、#35、#36
-- **`Pilot-early`（pilot 初期）**：34b、#11
-- **`Post-delivery`（交付後）**：#3、#4、#5B（5B-b／5B-c）、#6A、#6B、#7、#10（2B-2c）、#16、#26、#28、#31、34-0b-B、34c
-- **No delivery target（`Blocked`，等產品決策）**：#13、#14B
+- **`Pilot-early`（pilot 初期）**：34b、#11、#37、38a、#39、40a
+- **`Post-delivery`（交付後）**：#3、#4、#5B（5B-b／5B-c）、#6A、#6B、#7、#10（2B-2c）、#16、#26、#28、#31、34-0b-B、34c、38b、40b
+- **No delivery target（`Blocked`，等產品決策）**：#13、#14B、40b
 - **`Done`**：#1、#5A、#8、#9、#12、#14A、#15、#17、#18、#19、#20、#21、#22、#23、#24、#25、#27、#29、#30、#32
-- **`Closed`**：#2、#33b
+- **`Closed`**：#2、#33b、38c
 
 ---
 

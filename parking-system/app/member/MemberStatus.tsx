@@ -275,7 +275,7 @@ function OfferActions({ disabled }: { disabled: boolean }) {
             type="button"
             onClick={() => respond('confirm')}
             disabled={submitting !== null || disabled}
-            className={`${BTN} bg-info-fg text-white active:bg-info-fg/90`}
+            className={`${BTN} bg-primary text-white active:bg-primary/90`}
           >
             {submitting === 'confirm' ? '確認中…' : '確認保留車位'}
           </button>
